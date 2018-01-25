@@ -1,4 +1,4 @@
-Copyright (c) 2017, 2018, Hannes Mehnert (robur.io, Centre for the Cultivation of Technology)
+Copyright (c) 2017, 2018, Hannes Mehnert (robur.io, Center for the Cultivation of Technology)
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
