@@ -139,8 +139,8 @@ rr:
          Dns_enum.int_to_tlsa_selector $5,
          Dns_enum.int_to_tlsa_matching_type $7
        with
-       | Some tlsa_usage, Some tlsa_selector, Some tlsa_matching_type ->
-          Dns_packet.TLSA { Dns_packet.tlsa_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data = $9 }
+       | Some tlsa_cert_usage, Some tlsa_selector, Some tlsa_matching_type ->
+          Dns_packet.TLSA { Dns_packet.tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data = $9 }
        | _ -> raise Parsing.Parse_error
      }
  | TYPE_SSHFP s int8 s int8 s hex

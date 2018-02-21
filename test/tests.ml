@@ -300,7 +300,7 @@ module Packet = struct
                | `NonZeroTTL of int32
                | `NonZeroRdlen of int | `InvalidZoneCount of int
                | `InvalidZoneRR of Dns_enum.rr_typ
-               | `BadTlsaUsage of int | `BadTlsaSelector of int | `BadTlsaMatchingType of int
+               | `BadTlsaCertUsage of int | `BadTlsaSelector of int | `BadTlsaMatchingType of int
                | `BadSshfpAlgorithm of int | `BadSshfpType of int
              ]
       let pp = pp_err
@@ -330,7 +330,7 @@ module Packet = struct
         | `NonZeroRdlen a, `NonZeroRdlen b -> a = b
         | `InvalidZoneCount a, `InvalidZoneCount b -> a = b
         | `InvalidZoneRR a, `InvalidZoneRR b -> a = b
-        | `BadTlsaUsage u, `BadTlsaUsage v -> u = v
+        | `BadTlsaCertUsage u, `BadTlsaCertUsage v -> u = v
         | `BadTlsaSelector s, `BadTlsaSelector t -> s = t
         | `BadTlsaMatchingType m, `BadTlsaMatchingType n -> m = n
         | `BadSshfpAlgorithm i, `BadSshfpAlgorithm j -> i = j

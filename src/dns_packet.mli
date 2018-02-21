@@ -12,7 +12,7 @@ val pp_err : [< Dns_name.err | `BadTTL of int32
              | `InvalidTimestamp of int64 | `InvalidAlgorithm of Dns_name.t
              | `BadProto of int | `BadAlgorithm of int
              | `BadOpt | `BadKeepalive
-             | `BadTlsaUsage of int | `BadTlsaSelector of int | `BadTlsaMatchingType of int
+             | `BadTlsaCertUsage of int | `BadTlsaSelector of int | `BadTlsaMatchingType of int
              | `BadSshfpAlgorithm of int | `BadSshfpType of int
              ] Fmt.t
 
@@ -165,7 +165,7 @@ val pp_opt : opt Fmt.t
 val pp_opts : opts Fmt.t
 
 type tlsa = {
-  tlsa_usage : Dns_enum.tlsa_cert_usage ;
+  tlsa_cert_usage : Dns_enum.tlsa_cert_usage ;
   tlsa_selector : Dns_enum.tlsa_selector ;
   tlsa_matching_type : Dns_enum.tlsa_matching_type ;
   tlsa_data : Cstruct.t ;
@@ -291,7 +291,7 @@ val decode : Cstruct.t ->
    | `NonZeroTTL of int32
    | `NonZeroRdlen of int | `InvalidZoneCount of int
    | `InvalidZoneRR of Dns_enum.rr_typ
-   | `BadTlsaUsage of int | `BadTlsaSelector of int | `BadTlsaMatchingType of int
+   | `BadTlsaCertUsage of int | `BadTlsaSelector of int | `BadTlsaMatchingType of int
    | `BadSshfpAlgorithm of int | `BadSshfpType of int
    ]) result
 

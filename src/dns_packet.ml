@@ -28,7 +28,7 @@ let pp_err ppf = function
   | `BadAlgorithm num -> Fmt.pf ppf "bad algorithm %d" num
   | `BadOpt -> Fmt.pf ppf "bad option"
   | `BadKeepalive -> Fmt.pf ppf "bad keepalive"
-  | `BadTlsaUsage usage -> Fmt.pf ppf "bad TLSA cert usage %d" usage
+  | `BadTlsaCertUsage usage -> Fmt.pf ppf "bad TLSA cert usage %d" usage
   | `BadTlsaSelector selector -> Fmt.pf ppf "bad TLSA selector %d" selector
   | `BadTlsaMatchingType matching_type -> Fmt.pf ppf "bad TLSA matching type %d" matching_type
   | `BadSshfpAlgorithm i -> Fmt.pf ppf "bad SSHFP algorithm %d" i
@@ -728,7 +728,7 @@ let encode_opts t buf off =
   List.fold_left (fun off opt -> encode_opt opt buf off) off t
 
 type tlsa = {
-  tlsa_usage : Dns_enum.tlsa_cert_usage ;
+  tlsa_cert_usage : Dns_enum.tlsa_cert_usage ;
   tlsa_selector : Dns_enum.tlsa_selector ;
   tlsa_matching_type : Dns_enum.tlsa_matching_type ;
   tlsa_data : Cstruct.t ;
@@ -737,14 +737,14 @@ type tlsa = {
 (*BISECT-IGNORE-BEGIN*)
 let pp_tlsa ppf tlsa =
   Fmt.pf ppf "TLSA %a %a %a %a"
-    Dns_enum.pp_tlsa_cert_usage tlsa.tlsa_usage
+    Dns_enum.pp_tlsa_cert_usage tlsa.tlsa_cert_usage
     Dns_enum.pp_tlsa_selector tlsa.tlsa_selector
     Dns_enum.pp_tlsa_matching_type tlsa.tlsa_matching_type
     Cstruct.hexdump_pp tlsa.tlsa_data
 (*BISECT-IGNORE-END*)
 
 let compare_tlsa t1 t2 =
-  andThen (compare t1.tlsa_usage t2.tlsa_usage)
+  andThen (compare t1.tlsa_cert_usage t2.tlsa_cert_usage)
     (andThen (compare t1.tlsa_selector t2.tlsa_selector)
        (andThen (compare t1.tlsa_matching_type t2.tlsa_matching_type)
           (Cstruct.compare t1.tlsa_data t2.tlsa_data)))
@@ -761,14 +761,14 @@ let decode_tlsa buf off len =
     Dns_enum.int_to_tlsa_selector selector,
     Dns_enum.int_to_tlsa_matching_type matching_type
   with
-  | Some tlsa_usage, Some tlsa_selector, Some tlsa_matching_type ->
-    Ok { tlsa_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data }
-  | None, _, _ -> Error (`BadTlsaUsage usage)
+  | Some tlsa_cert_usage, Some tlsa_selector, Some tlsa_matching_type ->
+    Ok { tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data }
+  | None, _, _ -> Error (`BadTlsaCertUsage usage)
   | _, None, _ -> Error (`BadTlsaSelector selector)
   | _, _, None -> Error (`BadTlsaMatchingType matching_type)
 
 let encode_tlsa tlsa buf off =
-  Cstruct.set_uint8 buf off (Dns_enum.tlsa_cert_usage_to_int tlsa.tlsa_usage) ;
+  Cstruct.set_uint8 buf off (Dns_enum.tlsa_cert_usage_to_int tlsa.tlsa_cert_usage) ;
   Cstruct.set_uint8 buf (off + 1) (Dns_enum.tlsa_selector_to_int tlsa.tlsa_selector) ;
   Cstruct.set_uint8 buf (off + 2) (Dns_enum.tlsa_matching_type_to_int tlsa.tlsa_matching_type) ;
   let l = Cstruct.len tlsa.tlsa_data in
