@@ -274,6 +274,7 @@ let handle_primary t now ts proto sender header v tsig_off buf =
 let supported = [ Dns_enum.A ; Dns_enum.NS ; Dns_enum.CNAME ;
                   Dns_enum.SOA ; Dns_enum.PTR ; Dns_enum.MX ;
                   Dns_enum.TXT ; Dns_enum.AAAA ; Dns_enum.SRV ;
+                  Dns_enum.SSHFP ; Dns_enum.TLSA ;
                   Dns_enum.ANY ]
 
 let handle_awaiting_queries ?retry t ts q =
