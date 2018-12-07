@@ -18,6 +18,7 @@ module TlsaSet : Set.S with type elt = Dns_packet.tlsa
 
 module SshfpSet : Set.S with type elt = Dns_packet.sshfp
 
+(** the `int32`s below here are the TTL counters *)
 type _ k =
   | Any : (Dns_packet.rr list * Domain_name.Set.t) k
   | Cname : (int32 * Domain_name.t) k
@@ -47,6 +48,7 @@ val glue :
 val of_rdata : int32 -> Dns_packet.rdata -> b option
 
 val lookup_rr : Dns_enum.rr_typ -> t -> b option
+
 val remove_rr : Dns_enum.rr_typ -> t -> t
 
 val add_rdata : b -> Dns_packet.rdata -> b option
