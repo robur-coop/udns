@@ -1,38 +1,49 @@
 open Lwt.Infix
 
-module Make (Time : Mirage_time_lwt.S) (IPv4 : Mirage_stack_lwt.V4) = struct
+let src = Logs.Src.create "dns_mirage_client" ~doc:"effectful DNS client layer"
+module Log = (val Logs.src_log src : Logs.LOG)
 
-  module S : Udns_client_flow.S = struct
-    type flow = IPv4.TCPV4.flow
-    type implementation = IPv4.t
-    type io_addr = IPv4.ipv4addr * int
+module Make (S : Mirage_stack_lwt.V4) = struct
+
+  module Uflow : Udns_client_flow.S
+    with type flow = S.TCPV4.flow
+     and type stack = S.tcpv4
+     and type (+'a,+'b) io = ('a, 'b) Lwt_result.t
+           constraint 'b = [> `Msg of string]
+     and type io_addr = Ipaddr.V4.t * int = struct
+    type flow = S.TCPV4.flow
+    type stack = S.tcpv4
+    type io_addr = Ipaddr.V4.t * int
     type ns_addr = [`TCP | `UDP] * io_addr
-    type (+'a,+'b) io = 'a Mirage_flow_lwt.io
+    type (+'a,+'b) io = ('a, 'b) Lwt_result.t
       constraint 'b = [> `Msg of string]
 
-    let default_ns =
-      `TCP, (Ipaddr.V4.of_string_exn "91.239.100.100", 53)
-
-    let implementation = IPv4.tcpv4 (IPv4.IPV4.t)
+    let default_ns = `TCP, (Ipaddr.V4.of_string_exn "91.239.100.100", 53)
 
     let map = Lwt_result.bind
     let resolve = Lwt_result.bind_result
 
     let connect stack ((_proto, (ip, port)):ns_addr) =
-      IPv4.TCPV4.create_connection stack (ip, port)
+      S.TCPV4.create_connection stack (ip, port) >|= function
+      | Error e ->
+        Log.err (fun m -> m "error connecting to nameserver %a"
+                    S.TCPV4.pp_error e) ;
+        Error (`Msg "connect failure")
+      | Ok flow -> Ok flow
 
     let recv flow =
-        let open Lwt_result.Infix in
-        IPv4.TCPV4.read flow >|= function
-        | `Data cs -> cs
-        | `Eof -> Cstruct.empty
+      S.TCPV4.read flow >|= function
+      | Error e -> Error (`Msg (Fmt.to_to_string S.TCPV4.pp_error e))
+      | Ok (`Data cs) -> Ok cs
+      | Ok `Eof -> Ok Cstruct.empty
 
-      let send flow s =
-        IPv4.TCPV4.write flow s
-          >|= fun always_works -> Ok always_works
-    end
+    let send flow s =
+      S.TCPV4.write flow s >|= fun _always_works ->
+      Ok ()
+  end
 
-  
+  include Udns_client_flow.Make(Uflow)
+
 end
 
 (*

@@ -1,11 +1,12 @@
+
 module Make (S : Mirage_stack_lwt.V4) : sig
+  module Uflow : Udns_client_flow.S
+    with type flow = S.TCPV4.flow
+     and type io_addr = Ipaddr.V4.t * int
+     and type (+'a, +'b) io = ('a, 'b) Lwt_result.t
+     and type stack = S.tcpv4
 
-  type t
-
-  val connect : S.t -> t
-
-  val getaddrinfo : Domain_name.t -> unit Lwt.t
-
+  include module type of Udns_client_flow.Make(Uflow)
 end
 
 (*
