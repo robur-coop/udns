@@ -312,16 +312,6 @@ let equal_b b b' = match b, b' with
     SshfpSet.equal sshfps sshfps'
   | _, _ -> false
 
-let glue map =
-  Domain_name.Map.fold (fun name ((ttla, a), (ttlaaaa, aaaa)) acc ->
-      (List.map (fun a ->
-           { Udns_packet.name ; ttl = ttla ; rdata = Udns_packet.A a })
-          a @
-       List.map (fun aaaa ->
-           { Udns_packet.name ; ttl = ttlaaaa ; rdata = Udns_packet.AAAA aaaa })
-          aaaa) @ acc)
-    map []
-
 let k_to_rr_typ : type a. a key -> Udns_enum.rr_typ = function
   | Any -> Udns_enum.ANY
   | Cname -> Udns_enum.CNAME

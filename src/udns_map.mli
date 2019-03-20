@@ -69,12 +69,6 @@ val to_rr : Domain_name.t -> b -> Udns_packet.rr list
 val names : b -> Domain_name.Set.t
 (** [names binding] are the referenced domain names in the given binding. *)
 
-val glue :
-  ((int32 * Ipaddr.V4.t list) * (int32 * Ipaddr.V6.t list)) Domain_name.Map.t ->
-  Udns_packet.rr list
-(** [glue map] results in a resource record list to be appended in the
-   additional section in a DNS frame as answer. *)
-
 val of_rdata : int32 -> Udns_packet.rdata -> b option
 (** [of_rdata ttl rdata] is a binding using data from rdata. *)
 
