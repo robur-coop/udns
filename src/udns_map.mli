@@ -49,7 +49,11 @@ type _ k =
   (** The type of resource record sets - keys and their values. The int32 is the
      time-to-live TTL of the resource record set.  *)
 
+val combine : 'a k -> 'a -> 'a option -> 'a option
+
 include Gmap.S with type 'a key = 'a k
+
+val with_ttl : b -> int32 -> b
 
 (** {2 Conversion functions} *)
 
@@ -98,3 +102,5 @@ val of_rrs : Udns_packet.rr list -> t Domain_name.Map.t
 val text : ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> b -> string
 (** [text ~origin ~default_ttl domain-name binding] is the zone file format of [binding] using
    [domain-name]. *)
+
+val add_entry : t Domain_name.Map.t -> Domain_name.t -> b -> t Domain_name.Map.t

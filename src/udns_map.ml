@@ -66,6 +66,27 @@ type _ k =
   | Tlsa : (int32 * TlsaSet.t) k
   | Sshfp : (int32 * SshfpSet.t) k
 
+let combine : type a. a k -> a -> a option -> a option = fun k v old ->
+  match k, v, old with
+  | Any, _, _ -> assert false
+  | _, v, None -> Some v
+  | t, v, Some old ->
+    Some (match t, v, old with
+        | Any, _, _ -> assert false
+        | Cname, _, cname -> cname
+        | Mx, (_, mxs), (ttl, mxs') -> (ttl, MxSet.union mxs mxs')
+        | Ns, (_, ns), (ttl, ns') -> (ttl, Domain_name.Set.union ns ns')
+        | Ptr, _, ptr -> ptr
+        | Soa, _, soa -> soa
+        | Txt, (_, txts), (ttl, txts') -> (ttl, TxtSet.union txts txts')
+        | A, (_, ips), (ttl, ips') -> (ttl, Ipv4Set.union ips ips')
+        | Aaaa, (_, ips), (ttl, ips') -> (ttl, Ipv6Set.union ips ips')
+        | Srv, (_, srvs), (ttl, srvs') -> (ttl, SrvSet.union srvs srvs')
+        | Dnskey, keys, keys' -> DnskeySet.union keys keys'
+        | Caa, (_, caas), (ttl, caas') -> (ttl, CaaSet.union caas caas')
+        | Tlsa, (_, tlsas), (ttl, tlsas') -> (ttl, TlsaSet.union tlsas tlsas')
+        | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, SshfpSet.union sshfps sshfps'))
+
 module K = struct
   type 'a t = 'a k
 
@@ -237,6 +258,23 @@ module K = struct
 end
 
 include Gmap.Make(K)
+
+let with_ttl : b -> int32 -> b = fun (B (k, v)) ttl ->
+  match k, v with
+  | Any, _ -> assert false
+  | Cname, (_, cname) -> B (k, (ttl, cname))
+  | Mx, (_, mxs) -> B (k, (ttl, mxs))
+  | Ns, (_, ns) -> B (k, (ttl, ns))
+  | Ptr, (_, ptr) -> B (k, (ttl, ptr))
+  | Soa, (_, soa) -> B (k, (ttl, soa))
+  | Txt, (_, txts) -> B (k, (ttl, txts))
+  | A, (_, ips) -> B (k, (ttl, ips))
+  | Aaaa, (_, ips) -> B (k, (ttl, ips))
+  | Srv, (_, srvs) -> B (k, (ttl, srvs))
+  | Dnskey, keys -> B (k, keys)
+  | Caa, (_, caas) -> B (k, (ttl, caas))
+  | Tlsa, (_, tlsas) -> B (k, (ttl, tlsas))
+  | Sshfp, (_, sshfps) -> B (k, (ttl, sshfps))
 
 let pp_b ppf (B (k, v)) = K.pp ppf k v
 
@@ -488,6 +526,14 @@ let of_rrs rrs =
       in
       Domain_name.Map.add rr.Udns_packet.name m' map)
     Domain_name.Map.empty rrs
+
+let add_entry dmap name (B (k, v)) =
+  let m = match Domain_name.Map.find name dmap with
+    | None -> empty
+    | Some map -> map
+  in
+  let m' = update k (combine k v) m in
+  Domain_name.Map.add name m' dmap
 
 let text ?origin ?default_ttl name (B (key, v)) =
   K.text ?origin ?default_ttl name key v

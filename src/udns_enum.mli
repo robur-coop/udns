@@ -5,7 +5,7 @@
 type clas =
   (* Reserved0 [@id 0] RFC6895 *)
   | IN (* RFC1035 *)
-  (* 2 Uassigned *)
+  (* 2 Unassigned *)
   | CHAOS (* D. Moon, "Chaosnet", A.I. Memo 628, Massachusetts Institute of Technology Artificial Intelligence Laboratory, June 1981. *)
   | HESIOD (* Dyer, S., and F. Hsu, "Hesiod", Project Athena Technical Plan - Name Service, April 1987. *)
   | NONE (* RFC2136 *)
