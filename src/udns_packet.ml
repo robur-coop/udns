@@ -197,6 +197,40 @@ let dec_character_str buf off =
   let data = Cstruct.to_string (Cstruct.sub buf (succ off) l) in
   (data, off + l + 1)
 
+let decode_txt buf ~off ~len =
+  let sub = Cstruct.sub buf off len in
+  let rec more acc off =
+    if len = off then List.rev acc
+    else
+      let d, off = dec_character_str sub off in
+      more (d::acc) off
+  in
+  more [] 0
+
+let decode_soa names buf off =
+  let hostname = false in
+  Udns_name.decode ~hostname names buf off >>= fun (nameserver, names, off) ->
+  Udns_name.decode ~hostname names buf off >>| fun (hostmaster, names, off) ->
+  let serial = Cstruct.BE.get_uint32 buf off in
+  let refresh = Cstruct.BE.get_uint32 buf (off + 4) in
+  let retry = Cstruct.BE.get_uint32 buf (off + 8) in
+  let expiry = Cstruct.BE.get_uint32 buf (off + 12) in
+  let minimum = Cstruct.BE.get_uint32 buf (off + 16) in
+  let soa =
+    { nameserver ; hostmaster ; serial ; refresh ; retry ; expiry ; minimum }
+  in
+  (soa, names, off + 20)
+
+let encode_soa offs buf off soa =
+  let offs, off = Udns_name.encode offs buf off soa.nameserver in
+  let offs, off = Udns_name.encode offs buf off soa.hostmaster in
+  Cstruct.BE.set_uint32 buf off soa.serial ;
+  Cstruct.BE.set_uint32 buf (off + 4) soa.refresh ;
+  Cstruct.BE.set_uint32 buf (off + 8) soa.retry ;
+  Cstruct.BE.set_uint32 buf (off + 12) soa.expiry ;
+  Cstruct.BE.set_uint32 buf (off + 16) soa.minimum ;
+  offs, off + 20
+
 (* TODO: not clear whether this is a good idea, or just reuse nocrypto's polyvars *)
 type tsig_algo =
   | SHA1
@@ -791,27 +825,11 @@ let decode_rdata names buf off len = function
     Udns_name.decode names buf off >>= fun (name, names, off) ->
     Ok (PTR name, names, off)
   | Udns_enum.SOA ->
-    let hostname = false in
-    Udns_name.decode ~hostname names buf off >>= fun (nameserver, names, off) ->
-    Udns_name.decode ~hostname names buf off >>= fun (hostmaster, names, off) ->
-    let serial = Cstruct.BE.get_uint32 buf off in
-    let refresh = Cstruct.BE.get_uint32 buf (off + 4) in
-    let retry = Cstruct.BE.get_uint32 buf (off + 8) in
-    let expiry = Cstruct.BE.get_uint32 buf (off + 12) in
-    let minimum = Cstruct.BE.get_uint32 buf (off + 16) in
-    let soa =
-      { nameserver ; hostmaster ; serial ; refresh ; retry ; expiry ; minimum }
-    in
-    Ok (SOA soa, names, off + 20)
+    decode_soa names buf off >>= fun (soa, names, off) ->
+    Ok (SOA soa, names, off)
   | Udns_enum.TXT ->
-    let sub = Cstruct.sub buf off len in
-    let rec more acc off =
-      if len = off then List.rev acc
-      else
-        let d, off = dec_character_str sub off in
-        more (d::acc) off
-    in
-    Ok (TXT (more [] 0), names, off + len)
+    let txts = decode_txt buf ~off ~len in
+    Ok (TXT txts, names, off + len)
   | Udns_enum.A ->
     let ip = Cstruct.BE.get_uint32 buf off in
     Ok (A (Ipaddr.V4.of_int32 ip), names, off + 4)
@@ -847,15 +865,7 @@ let encode_rdata offs buf off = function
     Udns_name.encode offs buf (off + 2) nam
   | NS nam -> Udns_name.encode offs buf off nam
   | PTR nam -> Udns_name.encode offs buf off nam
-  | SOA soa ->
-    let offs, off = Udns_name.encode offs buf off soa.nameserver in
-    let offs, off = Udns_name.encode offs buf off soa.hostmaster in
-    Cstruct.BE.set_uint32 buf off soa.serial ;
-    Cstruct.BE.set_uint32 buf (off + 4) soa.refresh ;
-    Cstruct.BE.set_uint32 buf (off + 8) soa.retry ;
-    Cstruct.BE.set_uint32 buf (off + 12) soa.expiry ;
-    Cstruct.BE.set_uint32 buf (off + 16) soa.minimum ;
-    offs, off + 20
+  | SOA soa -> encode_soa offs buf off soa
   | TXT ds ->
     let off = List.fold_left (enc_character_str buf) off ds in
     offs, off

@@ -65,6 +65,19 @@ val decode_question : (Domain_name.t * int) Udns_name.IntMap.t ->
    [buffer], applying label decompression. The new offset and offset to names
    map are returned together with the question, or an error. *)
 
+val encode_question : int Domain_name.Map.t ->
+  Cstruct.t -> int -> question -> int Domain_name.Map.t * int
+
+val decode_txt : Cstruct.t -> off:int -> len:int -> string list
+
+
+val decode_soa : (Domain_name.t * int) Udns_name.IntMap.t ->
+  Cstruct.t -> int ->
+  (soa * (Domain_name.t * int) Udns_name.IntMap.t * int, [> Udns_name.err ]) result
+
+val encode_soa : int Domain_name.Map.t ->
+  Cstruct.t -> int -> soa -> int Domain_name.Map.t * int
+
 type tsig_algo =
   | SHA1
   | SHA224
