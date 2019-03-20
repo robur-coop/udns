@@ -239,6 +239,7 @@ end
 
 
 module Packet = struct
+  open Udns_types
   open Udns_packet
 
   let p_err =

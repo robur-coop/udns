@@ -9,17 +9,17 @@ module Trie = struct
     let module M = struct
       type t =
         [ `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
-        | `EmptyNonTerminal of Domain_name.t * int32 * Udns_packet.soa
+        | `EmptyNonTerminal of Domain_name.t * int32 * Udns_types.soa
         | `NotAuthoritative
-        | `NotFound of Domain_name.t * int32 * Udns_packet.soa ]
+        | `NotFound of Domain_name.t * int32 * Udns_types.soa ]
       let pp = Udns_trie.pp_e
       let equal a b = match a, b with
         | `Delegation (na, (ttl, n)), `Delegation (na', (ttl', n')) ->
           Domain_name.equal na na' && ttl = ttl' && Domain_name.Set.equal n n'
         | `EmptyNonTerminal (nam, ttl, soa), `EmptyNonTerminal (nam', ttl', soa') ->
-          Domain_name.equal nam nam' && ttl = ttl' && Udns_packet.compare_soa soa soa' = 0
+          Domain_name.equal nam nam' && ttl = ttl' && Udns_types.compare_soa soa soa' = 0
         | `NotFound (nam, ttl, soa), `NotFound (nam', ttl', soa') ->
-          Domain_name.equal nam nam' && ttl = ttl' && Udns_packet.compare_soa soa soa' = 0
+          Domain_name.equal nam nam' && ttl = ttl' && Udns_types.compare_soa soa soa' = 0
         | `NotAuthoritative, `NotAuthoritative -> true
         | _ -> false
     end in
@@ -50,7 +50,7 @@ module Trie = struct
 
   let ins_zone name soa ttl ns t =
     insert name Udns_map.Ns (ttl, ns)
-      (insert name Udns_map.Soa (soa.Udns_packet.minimum, soa) t)
+      (insert name Udns_map.Soa (soa.Udns_types.minimum, soa) t)
 
   let simple () =
     Alcotest.(check (result l_ok e)
@@ -58,7 +58,7 @@ module Trie = struct
                 (Error `NotAuthoritative)
                 (lookupb Domain_name.root Udns_enum.A empty)) ;
     let soa = {
-      Udns_packet.nameserver = n_of_s "a" ; hostmaster = n_of_s "hs" ;
+      Udns_types.nameserver = n_of_s "a" ; hostmaster = n_of_s "hs" ;
       serial = 1l ; refresh = 10l ; retry = 5l ; expiry = 3l ; minimum = 4l
     } in
     let t = ins_zone Domain_name.root soa 6l (sn (n_of_s "a")) empty in
@@ -84,7 +84,7 @@ module Trie = struct
 
   let basic () =
     let soa = {
-      Udns_packet.nameserver = n_of_s "ns1.foo.com" ;
+      Udns_types.nameserver = n_of_s "ns1.foo.com" ;
       hostmaster = n_of_s "hs.foo.com" ;
       serial = 1l ; refresh = 10l ; retry = 5l ; expiry = 3l ; minimum = 4l
     } in
@@ -148,7 +148,7 @@ module Trie = struct
 
   let alias () =
     let soa = {
-      Udns_packet.nameserver = n_of_s "ns1.foo.com" ;
+      Udns_types.nameserver = n_of_s "ns1.foo.com" ;
       hostmaster = n_of_s "hs.foo.com" ;
       serial = 1l ; refresh = 10l ; retry = 5l ; expiry = 3l ; minimum = 4l
     } in
@@ -164,7 +164,7 @@ module Trie = struct
 
   let dele () =
     let soa = {
-      Udns_packet.nameserver = n_of_s "ns1.foo.com" ;
+      Udns_types.nameserver = n_of_s "ns1.foo.com" ;
       hostmaster = n_of_s "hs.foo.com" ;
       serial = 1l ; refresh = 10l ; retry = 5l ; expiry = 3l ; minimum = 4l
     } in
@@ -204,7 +204,7 @@ module Trie = struct
 
   let rmzone () =
     let soa = {
-      Udns_packet.nameserver = n_of_s "ns1.foo.com" ;
+      Udns_types.nameserver = n_of_s "ns1.foo.com" ;
       hostmaster = n_of_s "hs.foo.com" ;
       serial = 1l ; refresh = 10l ; retry = 5l ; expiry = 3l ; minimum = 4l
     } in

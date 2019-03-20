@@ -3,6 +3,7 @@
 open Udns_resolver_entry
 open Udns_resolver_cache
 open Udns_packet
+open Udns_types
 
 let empty = empty 100
 

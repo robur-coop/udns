@@ -1,8 +1,10 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
+open Udns_types
+
 open Rresult.R.Infix
 
-type proto = [ `Tcp | `Udp ]
+let andThen v f = match v with 0 -> f | x -> x
 
 (*BISECT-IGNORE-BEGIN*)
 let pp_err ppf = function
@@ -174,16 +176,6 @@ let encode_ntc offs buf off (n, t, c) =
   Cstruct.BE.set_uint16 buf (off + 2) c ;
   (offs, off + 4)
 
-type question = {
-  q_name : Domain_name.t ;
-  q_type : Udns_enum.rr_typ ;
-}
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_question ppf q =
-  Fmt.pf ppf "%a %a?" Domain_name.pp q.q_name Udns_enum.pp_rr_typ q.q_type
-(*BISECT-IGNORE-END*)
-
 let decode_question names buf off =
   decode_ntc names buf off >>= fun ((q_name, q_type, c), names, off) ->
   match Udns_enum.int_to_clas c with
@@ -204,34 +196,6 @@ let dec_character_str buf off =
   let l = Cstruct.get_uint8 buf off in
   let data = Cstruct.to_string (Cstruct.sub buf (succ off) l) in
   (data, off + l + 1)
-
-type soa = {
-  nameserver : Domain_name.t ;
-  hostmaster : Domain_name.t ;
-  serial : int32 ;
-  refresh : int32 ;
-  retry : int32 ;
-  expiry : int32 ;
-  minimum : int32 ;
-}
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_soa ppf soa =
-  Fmt.pf ppf "SOA %a %a %lu %lu %lu %lu %lu"
-    Domain_name.pp soa.nameserver Domain_name.pp soa.hostmaster
-    soa.serial soa.refresh soa.retry soa.expiry soa.minimum
-(*BISECT-IGNORE-END*)
-
-let andThen v f = match v with 0 -> f | x -> x
-
-let compare_soa soa soa' =
-  andThen (compare soa.serial soa.serial)
-    (andThen (Domain_name.compare soa.nameserver soa'.nameserver)
-       (andThen (Domain_name.compare soa.hostmaster soa'.hostmaster)
-          (andThen (compare soa.refresh soa'.refresh)
-             (andThen (compare soa.retry soa'.retry)
-                (andThen (compare soa.expiry soa'.expiry)
-                   (compare soa.minimum soa'.minimum))))))
 
 (* TODO: not clear whether this is a good idea, or just reuse nocrypto's polyvars *)
 type tsig_algo =
@@ -495,16 +459,6 @@ let encode_full_tsig name t =
   in
   Cstruct.concat [ name ; typ ; clttl ; len ; rdata ]
 
-type dnskey = {
-  flags : int ; (* uint16 *)
-  key_algorithm :  Udns_enum.dnskey ; (* u_int8_t *)
-  key : Cstruct.t ;
-}
-
-let compare_dnskey a b =
-  andThen (compare a.key_algorithm b.key_algorithm)
-    (Cstruct.compare a.key b.key)
-
 let dnskey_to_tsig_algo key =
   match key.key_algorithm with
   | Udns_enum.MD5 -> None
@@ -513,37 +467,6 @@ let dnskey_to_tsig_algo key =
   | Udns_enum.SHA256 -> Some SHA256
   | Udns_enum.SHA384 -> Some SHA384
   | Udns_enum.SHA512 -> Some SHA512
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_dnskey ppf t =
-  Fmt.pf ppf
-    "DNSKEY flags %u algo %a key %a"
-    t.flags Udns_enum.pp_dnskey t.key_algorithm
-    Cstruct.hexdump_pp t.key
-(*BISECT-IGNORE-END*)
-
-let dnskey_of_string key =
-  let parse flags algo key =
-    let key = Cstruct.of_string key in
-    match Udns_enum.string_to_dnskey algo with
-    | None -> None
-    | Some key_algorithm -> Some { flags ; key_algorithm ; key }
-  in
-  match Astring.String.cuts ~sep:":" key with
-  | [ flags ; algo ; key ] ->
-    begin match try Some (int_of_string flags) with Failure _ -> None with
-      | Some flags -> parse flags algo key
-      | None -> None
-    end
-  | [ algo ; key ] -> parse 0 algo key
-  | _ -> None
-
-let name_dnskey_of_string str =
-  match Astring.String.cut ~sep:":" str with
-  | None -> Error (`Msg ("couldn't parse " ^ str))
-  | Some (name, key) -> match Domain_name.of_string ~hostname:false name, dnskey_of_string key with
-    | Error _, _ | _, None -> Error (`Msg ("failed to parse key " ^ key))
-    | Ok name, Some dnskey -> Ok (name, dnskey)
 
 let decode_dnskey names buf off =
   let flags = Cstruct.BE.get_uint16 buf off
@@ -566,26 +489,6 @@ let encode_dnskey t offs buf off =
   Cstruct.blit t.key 0 buf (off + 4) kl ;
   offs, off + 4 + kl
 
-type srv = {
-  priority : int ;
-  weight : int ;
-  port : int ;
-  target : Domain_name.t
-}
-
-let compare_srv a b =
-  andThen (compare a.priority b.priority)
-    (andThen (compare a.weight b.weight)
-       (andThen (compare a.port b.port)
-          (Domain_name.compare a.target b.target)))
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_srv ppf t =
-  Fmt.pf ppf
-    "SRV priority %d weight %d port %d target %a"
-    t.priority t.weight t.port Domain_name.pp t.target
-(*BISECT-IGNORE-END*)
-
 let decode_srv names buf off =
   let priority = Cstruct.BE.get_uint16 buf off
   and weight = Cstruct.BE.get_uint16 buf (off + 2)
@@ -599,27 +502,6 @@ let encode_srv t offs buf off =
   Cstruct.BE.set_uint16 buf (off + 2) t.weight ;
   Cstruct.BE.set_uint16 buf (off + 4) t.port ;
   Udns_name.encode offs buf (off + 6) t.target
-
-type caa = {
-  critical : bool ;
-  tag : string ;
-  value : string list ;
-}
-
-let compare_caa a b =
-  andThen (compare a.critical b.critical)
-    (andThen (String.compare a.tag b.tag)
-       (List.fold_left2 (fun r a b -> match r with
-            | 0 -> String.compare a b
-            | x -> x)
-           0 a.value b.value))
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_caa ppf t =
-  Fmt.pf ppf
-    "CAA critical %b tag %s value %a"
-    t.critical t.tag Fmt.(list ~sep:(unit "; ") string) t.value
-(*BISECT-IGNORE-END*)
 
 let decode_caa buf off len =
   let critical = Cstruct.get_uint8 buf off = 0x80
@@ -751,28 +633,6 @@ let encode_extension t buf off =
 let encode_extensions t buf off =
   List.fold_left (fun off opt -> encode_extension opt buf off) off t
 
-type tlsa = {
-  tlsa_cert_usage : Udns_enum.tlsa_cert_usage ;
-  tlsa_selector : Udns_enum.tlsa_selector ;
-  tlsa_matching_type : Udns_enum.tlsa_matching_type ;
-  tlsa_data : Cstruct.t ;
-}
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_tlsa ppf tlsa =
-  Fmt.pf ppf "TLSA @[<v>%a %a %a@ %a@]"
-    Udns_enum.pp_tlsa_cert_usage tlsa.tlsa_cert_usage
-    Udns_enum.pp_tlsa_selector tlsa.tlsa_selector
-    Udns_enum.pp_tlsa_matching_type tlsa.tlsa_matching_type
-    Cstruct.hexdump_pp tlsa.tlsa_data
-(*BISECT-IGNORE-END*)
-
-let compare_tlsa t1 t2 =
-  andThen (compare t1.tlsa_cert_usage t2.tlsa_cert_usage)
-    (andThen (compare t1.tlsa_selector t2.tlsa_selector)
-       (andThen (compare t1.tlsa_matching_type t2.tlsa_matching_type)
-          (Cstruct.compare t1.tlsa_data t2.tlsa_data)))
-
 let decode_tlsa buf off len =
   let usage, selector, matching_type =
     Cstruct.get_uint8 buf off,
@@ -798,25 +658,6 @@ let encode_tlsa tlsa buf off =
   let l = Cstruct.len tlsa.tlsa_data in
   Cstruct.blit tlsa.tlsa_data 0 buf (off + 3) l ;
   off + 3 + l
-
-type sshfp = {
-  sshfp_algorithm : Udns_enum.sshfp_algorithm ;
-  sshfp_type : Udns_enum.sshfp_type ;
-  sshfp_fingerprint : Cstruct.t ;
-}
-
-let compare_sshfp s1 s2 =
-  andThen (compare s1.sshfp_algorithm s2.sshfp_algorithm)
-    (andThen (compare s1.sshfp_type s2.sshfp_type)
-       (Cstruct.compare s1.sshfp_fingerprint s2.sshfp_fingerprint))
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_sshfp ppf sshfp =
-  Fmt.pf ppf "SSHFP %a %a %a"
-    Udns_enum.pp_sshfp_algorithm sshfp.sshfp_algorithm
-    Udns_enum.pp_sshfp_type sshfp.sshfp_type
-    Cstruct.hexdump_pp sshfp.sshfp_fingerprint
-(*BISECT-IGNORE-END*)
 
 let decode_sshfp buf off len =
   let algo, typ = Cstruct.get_uint8 buf off, Cstruct.get_uint8 buf (succ off) in

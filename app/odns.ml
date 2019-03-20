@@ -7,7 +7,7 @@ let pp_zone ppf (domain,query_type,query_value) =
   Fmt.string ppf
     (Udns_map.text domain (Udns_map.B (query_type, query_value)))
 
-let pp_zone_tlsa ppf (domain,ttl,(tlsa:Udns_packet.tlsa)) =
+let pp_zone_tlsa ppf (domain,ttl,(tlsa:Udns_types.tlsa)) =
   (* TODO this implementation differs a bit from Udns_map.text and tries to
      follow the `dig` output to make it easier to port existing scripts *)
   Fmt.pf ppf "%a.\t%ld\tIN\t%d\t%d\t%d\t%s"

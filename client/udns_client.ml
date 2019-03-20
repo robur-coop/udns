@@ -1,8 +1,8 @@
 type 'key query_state =
-  { protocol : Udns_packet.proto ;
+  { protocol : Udns_types.proto ;
     key: 'key ;
     header : Udns_packet.header ;
-    question : Udns_packet.question ; (* we only handle one *)
+    question : Udns_types.question ; (* we only handle one *)
   } constraint 'key = 'a Udns_map.key
 
 let make_query protocol hostname
@@ -10,7 +10,7 @@ let make_query protocol hostname
       Cstruct.t * 'xy query_state =
   (* SRV records: Service + Protocol are case-insensitive, see RFC2728 pg2. *)
   fun record_type ->
-  let question : Udns_packet.question =
+  let question : Udns_types.question =
     (* Udns_map.k_to_rr_typ *)
     { q_name = hostname ; q_type = Udns_map.k_to_rr_typ record_type } in
   let query : Udns_packet.query =

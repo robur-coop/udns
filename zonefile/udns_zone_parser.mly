@@ -121,7 +121,7 @@ rr:
  | TYPE_NS s domain { B (Ns, (0l, Domain_name.Set.singleton $3)) }
  | TYPE_CNAME s domain { B (Cname, (0l, $3)) }
  | TYPE_SOA s domain s domain s int32 s int32 s int32 s int32 s int32
-     { B (Soa, (0l, { Udns_packet.nameserver = $3 ; hostmaster = $5 ;
+     { B (Soa, (0l, { Udns_types.nameserver = $3 ; hostmaster = $5 ;
                       serial = $7 ; refresh = $9 ; retry = $11 ; expiry = $13 ;
                       minimum = $15 })) }
  | TYPE_PTR s domain { B (Ptr, (0l, $3)) }
@@ -129,7 +129,7 @@ rr:
  | TYPE_TXT s charstrings { B (Txt, (0l, TxtSet.singleton $3)) }
      /* RFC 2782 */
  | TYPE_SRV s int16 s int16 s int16 s domain
-     { B (Srv, (0l, SrvSet.singleton { Udns_packet.priority = $3 ; weight = $5 ; port = $7 ; target = $9 })) }
+     { B (Srv, (0l, SrvSet.singleton { Udns_types.priority = $3 ; weight = $5 ; port = $7 ; target = $9 })) }
      /* RFC 3596 */
  | TYPE_TLSA s int8 s int8 s int8 s hex
      { match
@@ -138,7 +138,7 @@ rr:
          Udns_enum.int_to_tlsa_matching_type $7
        with
        | Some tlsa_cert_usage, Some tlsa_selector, Some tlsa_matching_type ->
-          let tlsa = { Udns_packet.tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data = $9 } in
+          let tlsa = { Udns_types.tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data = $9 } in
           B (Tlsa, (0l, TlsaSet.singleton tlsa ))
        | _ -> raise Parsing.Parse_error
      }
@@ -148,7 +148,7 @@ rr:
          Udns_enum.int_to_sshfp_type $5
        with
        | Some sshfp_algorithm, Some sshfp_type ->
-          let sshfp = { Udns_packet.sshfp_algorithm ; sshfp_type ; sshfp_fingerprint = $7 } in
+          let sshfp = { Udns_types.sshfp_algorithm ; sshfp_type ; sshfp_fingerprint = $7 } in
           B (Sshfp, (0l, SshfpSet.singleton sshfp))
        | _ -> raise Parsing.Parse_error
      }
@@ -159,12 +159,12 @@ rr:
        match Udns_enum.int_to_dnskey $7 with
        | None -> parse_error ("DNSKEY algorithm not supported " ^ string_of_int $7)
        | Some x ->
-          let dnskey = { Udns_packet.flags = $3 ; key_algorithm = x ; key = Cstruct.of_string $9 } in
+          let dnskey = { Udns_types.flags = $3 ; key_algorithm = x ; key = Cstruct.of_string $9 } in
           B (Dnskey, DnskeySet.singleton dnskey)
      }
  | TYPE_CAA s int16 s charstring s charstrings
      { let critical = if $3 = 0x80 then true else false in
-       let caa = { Udns_packet.critical ; tag = $5 ; value = $7 } in
+       let caa = { Udns_types.critical ; tag = $5 ; value = $7 } in
        B (Caa, (0l, CaaSet.singleton caa)) }
  | CHARSTRING s { parse_error ("TYPE " ^ $1 ^ " not supported") }
 

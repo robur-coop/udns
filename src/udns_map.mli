@@ -16,19 +16,19 @@ module Ipv4Set : Set.S with type elt = Ipaddr.V4.t
 module Ipv6Set : Set.S with type elt = Ipaddr.V6.t
 (** A set of IPv6 addresses. *)
 
-module SrvSet : Set.S with type elt = Udns_packet.srv
+module SrvSet : Set.S with type elt = Udns_types.srv
 (** A set of SRV records. *)
 
-module DnskeySet : Set.S with type elt = Udns_packet.dnskey
+module DnskeySet : Set.S with type elt = Udns_types.dnskey
 (** A set of DNS KEY records. *)
 
-module CaaSet : Set.S with type elt = Udns_packet.caa
+module CaaSet : Set.S with type elt = Udns_types.caa
 (** A set of CAA records. *)
 
-module TlsaSet : Set.S with type elt = Udns_packet.tlsa
+module TlsaSet : Set.S with type elt = Udns_types.tlsa
 (** A set of TLSA records. *)
 
-module SshfpSet : Set.S with type elt = Udns_packet.sshfp
+module SshfpSet : Set.S with type elt = Udns_types.sshfp
 (** A set of SSH FP records. *)
 
 type _ k =
@@ -37,7 +37,7 @@ type _ k =
   | Mx : (int32 * MxSet.t) k
   | Ns : (int32 * Domain_name.Set.t) k
   | Ptr : (int32 * Domain_name.t) k
-  | Soa : (int32 * Udns_packet.soa) k
+  | Soa : (int32 * Udns_types.soa) k
   | Txt : (int32 * TxtSet.t) k
   | A : (int32 * Ipv4Set.t) k
   | Aaaa : (int32 * Ipv6Set.t) k

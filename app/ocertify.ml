@@ -32,11 +32,11 @@ let dns_header () =
 let query_certificate sock public_key fqdn =
   let good_tlsa tlsa =
     if
-      tlsa.Udns_packet.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
-      && tlsa.Udns_packet.tlsa_selector = Udns_enum.Tlsa_full_certificate
-      && tlsa.Udns_packet.tlsa_matching_type = Udns_enum.Tlsa_no_hash
+      tlsa.Udns_types.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
+      && tlsa.Udns_types.tlsa_selector = Udns_enum.Tlsa_full_certificate
+      && tlsa.Udns_types.tlsa_matching_type = Udns_enum.Tlsa_no_hash
     then
-      match X509.Encoding.parse tlsa.Udns_packet.tlsa_data with
+      match X509.Encoding.parse tlsa.Udns_types.tlsa_data with
       | Some cert ->
         let keys_equal a b = Cstruct.equal (X509.key_id a) (X509.key_id b) in
         if keys_equal (X509.public_key cert) public_key then
@@ -48,7 +48,7 @@ let query_certificate sock public_key fqdn =
       None
   in
   let header = dns_header ()
-  and question = { Udns_packet.q_name = fqdn ; q_type = Udns_enum.TLSA }
+  and question = { Udns_types.q_name = fqdn ; q_type = Udns_enum.TLSA }
   in
   let query = { Udns_packet.question = [ question ] ; answer = [] ; authority = [] ; additional = [] } in
   let buf, _ = Udns_packet.encode `Tcp header (`Query query) in
@@ -79,14 +79,14 @@ let query_certificate sock public_key fqdn =
 
 let nsupdate_csr sock now hostname keyname zone dnskey csr =
   let tlsa =
-    { Udns_packet.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
+    { Udns_types.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
       tlsa_selector = Udns_enum.Tlsa_selector_private ;
       tlsa_matching_type = Udns_enum.Tlsa_no_hash ;
       tlsa_data = X509.Encoding.cs_of_signing_request csr ;
     }
   in
   let nsupdate =
-    let zone = { Udns_packet.q_name = zone ; q_type = Udns_enum.SOA }
+    let zone = { Udns_types.q_name = zone ; q_type = Udns_enum.SOA }
     and update = [
       Udns_packet.Remove (hostname, Udns_enum.TLSA) ;
       Udns_packet.Add ({ Udns_packet.name = hostname ; ttl = 600l ; rdata = Udns_packet.TLSA tlsa })

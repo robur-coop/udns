@@ -3,7 +3,7 @@
 
     The key is a {!Dns_name}, whereas the value may be any resource record.  The
     representation is a tree, where the edges are domain name labels, and the
-    nodes carry the {{!Udns_packet.rdata}resources}, indexed by resource typ.
+    nodes carry a {{!Udns_map.t}resource map}.
     Some special treatment is applied for zones, which must have a start of
     authority entry and a set of name servers.  End of authority, also known as
     delegation, is supported.  Aliases (canonical names, CNAME records) are also
@@ -72,26 +72,26 @@ val check : t -> (unit, err) result
 (** {2 Lookup} *)
 
 val pp_e : [< `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
-           | `EmptyNonTerminal of Domain_name.t * int32 * Udns_packet.soa
+           | `EmptyNonTerminal of Domain_name.t * int32 * Udns_types.soa
            | `NotAuthoritative
-           | `NotFound of Domain_name.t * int32 * Udns_packet.soa ] Fmt.t
+           | `NotFound of Domain_name.t * int32 * Udns_types.soa ] Fmt.t
 
 
 val lookupb : Domain_name.t -> Udns_enum.rr_typ -> t ->
   (Udns_map.b * (Domain_name.t * int32 * Domain_name.Set.t),
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
-   | `EmptyNonTerminal of Domain_name.t * int32 * Udns_packet.soa
+   | `EmptyNonTerminal of Domain_name.t * int32 * Udns_types.soa
    | `NotAuthoritative
-   | `NotFound of Domain_name.t * int32 * Udns_packet.soa ]) result
+   | `NotFound of Domain_name.t * int32 * Udns_types.soa ]) result
 (** [lookupb k ty t] finds [k, ty] in [t], which may lead to an error.  The
     authority information is returned as well. *)
 
 val lookup : Domain_name.t -> 'a Udns_map.key -> t ->
   ('a,
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
-   | `EmptyNonTerminal of Domain_name.t * int32 * Udns_packet.soa
+   | `EmptyNonTerminal of Domain_name.t * int32 * Udns_types.soa
    | `NotAuthoritative
-   | `NotFound of Domain_name.t * int32 * Udns_packet.soa ]) result
+   | `NotFound of Domain_name.t * int32 * Udns_types.soa ]) result
 (** [lookup k ty t] finds [k, ty] in [t], which may lead to an error. *)
 
 val lookup_ignore : Domain_name.t -> Udns_enum.rr_typ -> t ->
@@ -103,19 +103,19 @@ val entries : Domain_name.t -> t ->
   (Udns_packet.rr * Udns_packet.rr list,
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
    | `NotAuthoritative
-   | `NotFound of Domain_name.t * int32 * Udns_packet.soa ]) result
+   | `NotFound of Domain_name.t * int32 * Udns_types.soa ]) result
 (** [entries name t] returns either the SOA and all entries for the requested
     [name], or an error. *)
 
 val fold : Domain_name.t -> t -> (Domain_name.t -> Udns_map.b -> 'a -> 'a) -> 'a ->
   ('a, [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
        | `NotAuthoritative
-       | `NotFound of Domain_name.t * int32 * Udns_packet.soa ]) result
+       | `NotFound of Domain_name.t * int32 * Udns_types.soa ]) result
 
 val folde : Domain_name.t -> 'a Udns_map.key -> t ->
   (Domain_name.t -> 'a -> 'b -> 'b) -> 'b ->
   ('b, [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
        | `NotAuthoritative
-       | `NotFound of Domain_name.t * int32 * Udns_packet.soa ]) result
+       | `NotFound of Domain_name.t * int32 * Udns_types.soa ]) result
 (** [folde name key t f acc] calls [f] with [dname value acc] element in [t]
     where [dname] has [name] as prefix, or an error. *)

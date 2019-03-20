@@ -169,7 +169,7 @@ let collect_entries name sub map =
     match Udns_map.find Udns_map.Soa map with
     | Some v -> Some v
     | None when Domain_name.(equal root name) ->
-      Some (0l, { Udns_packet.nameserver = Domain_name.root ;
+      Some (0l, { Udns_types.nameserver = Domain_name.root ;
                   hostmaster = Domain_name.root ;
                   serial = 0l ; refresh = 0l ; retry = 0l ;
                   expiry = 0l ; minimum = 0l })
@@ -260,10 +260,10 @@ let check trie =
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else begin match Udns_map.find Udns_map.Ns map with
             | Some (_, names) ->
-              if Domain_name.Set.mem soa.Udns_packet.nameserver names then
+              if Domain_name.Set.mem soa.Udns_types.nameserver names then
                 Ok ()
               else
-                Error (`Soa_not_ns soa.Udns_packet.nameserver)
+                Error (`Soa_not_ns soa.Udns_types.nameserver)
             | None -> Ok () (* we're happy to only have a soa, but nothing else -- useful for grounding zones! *)
           end
         | Udns_map.B (Udns_map.Txt, (ttl, txts)) ->
@@ -399,7 +399,7 @@ let pp_e ppf = function
     Fmt.pf ppf "delegation %a to TTL %lu %a" Domain_name.pp name ttl
       Fmt.(list ~sep:(unit ",@,") Domain_name.pp) (Domain_name.Set.elements ns)
   | `EmptyNonTerminal (name, ttl, soa) ->
-    Fmt.pf ppf "empty non terminal %a TTL %lu SOA %a" Domain_name.pp name ttl Udns_packet.pp_soa soa
+    Fmt.pf ppf "empty non terminal %a TTL %lu SOA %a" Domain_name.pp name ttl Udns_types.pp_soa soa
   | `NotAuthoritative -> Fmt.string ppf "not authoritative"
-  | `NotFound (name, ttl, soa) -> Fmt.pf ppf "not found %a TTL %lu soa %a" Domain_name.pp name ttl Udns_packet.pp_soa soa
+  | `NotFound (name, ttl, soa) -> Fmt.pf ppf "not found %a TTL %lu soa %a" Domain_name.pp name ttl Udns_types.pp_soa soa
 (*BISECT-IGNORE-END*)

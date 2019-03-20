@@ -74,14 +74,14 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
 
   let nsupdate_csr flow hostname keyname zone dnskey csr =
     let tlsa =
-      { Udns_packet.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
+      { Udns_types.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
         tlsa_selector = Udns_enum.Tlsa_selector_private ;
         tlsa_matching_type = Udns_enum.Tlsa_no_hash ;
         tlsa_data = X509.Encoding.cs_of_signing_request csr ;
       }
     in
     let nsupdate =
-      let zone = { Udns_packet.q_name = zone ; q_type = Udns_enum.SOA }
+      let zone = { Udns_types.q_name = zone ; q_type = Udns_enum.SOA }
       and update = [
         Udns_packet.Remove (hostname, Udns_enum.TLSA) ;
         Udns_packet.Add ({ Udns_packet.name = hostname ; ttl = 600l ; rdata = Udns_packet.TLSA tlsa })
@@ -108,11 +108,11 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
   let query_certificate flow public_key q_name =
     let good_tlsa tlsa =
       if
-        tlsa.Udns_packet.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
-        && tlsa.Udns_packet.tlsa_selector = Udns_enum.Tlsa_full_certificate
-        && tlsa.Udns_packet.tlsa_matching_type = Udns_enum.Tlsa_no_hash
+        tlsa.Udns_types.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
+        && tlsa.Udns_types.tlsa_selector = Udns_enum.Tlsa_full_certificate
+        && tlsa.Udns_types.tlsa_matching_type = Udns_enum.Tlsa_no_hash
       then
-        match X509.Encoding.parse tlsa.Udns_packet.tlsa_data with
+        match X509.Encoding.parse tlsa.Udns_types.tlsa_data with
         | Some cert ->
           let keys_equal a b =
             Cstruct.equal (X509.key_id a) (X509.key_id b)
@@ -126,7 +126,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
         None
     in
     let header = dns_header ()
-    and question = { Udns_packet.q_name ; q_type = Udns_enum.TLSA }
+    and question = { Udns_types.q_name ; q_type = Udns_enum.TLSA }
     in
     let query = { Udns_packet.question = [ question ] ; answer = [] ; authority = [] ; additional = [] } in
     let buf, _ = Udns_packet.encode `Tcp header (`Query query) in
@@ -217,7 +217,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
       match Astring.String.cut ~sep:":" dns_key with
       | None -> invalid_arg "couldn't parse dnskey"
       | Some (name, key) ->
-        match Domain_name.of_string ~hostname:false name, Udns_packet.dnskey_of_string key with
+        match Domain_name.of_string ~hostname:false name, Udns_types.dnskey_of_string key with
         | Error _, _ | _, None -> invalid_arg "failed to parse dnskey"
         | Ok name, Some dnskey ->
           let zone = Domain_name.drop_labels_exn ~amount:2 name in

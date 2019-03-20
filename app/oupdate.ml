@@ -2,7 +2,7 @@
 
 let update zone hostname ip_address keyname dnskey now =
   let nsupdate =
-    let zone = { Udns_packet.q_name = zone ; q_type = Udns_enum.SOA }
+    let zone = { Udns_types.q_name = zone ; q_type = Udns_enum.SOA }
     and update = [
       Udns_packet.Remove (hostname, Udns_enum.A) ;
       Udns_packet.Add ({ Udns_packet.name = hostname ; ttl = 60l ; rdata = Udns_packet.A ip_address })
@@ -23,7 +23,7 @@ let jump _ serverip port (keyname, zone, dnskey) hostname ip_address =
                Domain_name.pp zone
                Domain_name.pp hostname
                Ipaddr.V4.pp ip_address) ;
-  Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns_packet.pp_dnskey dnskey) ;
+  Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns_types.pp_dnskey dnskey) ;
   match update zone hostname ip_address keyname dnskey now with
   | Error msg -> `Error (false, msg)
   | Ok (data, mac) ->

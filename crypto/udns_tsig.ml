@@ -33,7 +33,7 @@ let mac_to_prep = function
     Cstruct.append l mac
 
 let sign ?mac ?max_size name tsig ~key buf =
-  match Nocrypto.Base64.decode key.Udns_packet.key with
+  match Nocrypto.Base64.decode key.Udns_types.key with
   | None -> None
   | Some key ->
     let prep = mac_to_prep mac in
@@ -64,13 +64,13 @@ let sign ?mac ?max_size name tsig ~key buf =
         match add_tsig name tsig new_buf with
         | None ->
           Logs.err (fun m -> m "dns_tsig sign: query %a with tsig %a too big %a:@.%a"
-                       Udns_packet.pp_question q Udns_packet.pp_tsig tsig Fmt.(option ~none:(unit "none") int) max_size Cstruct.hexdump_pp new_buf) ;
+                       Udns_types.pp_question q Udns_packet.pp_tsig tsig Fmt.(option ~none:(unit "none") int) max_size Cstruct.hexdump_pp new_buf) ;
           None
         | Some out -> Some (out, mac)
 
 let verify_raw ?mac now name ~key tsig tbs =
   Rresult.R.of_option ~none:(fun () -> Error (`BadKey (name, tsig)))
-    (Nocrypto.Base64.decode key.Udns_packet.key) >>= fun priv ->
+    (Nocrypto.Base64.decode key.Udns_types.key) >>= fun priv ->
   let ac = Cstruct.BE.get_uint16 tbs 10 in
   Cstruct.BE.set_uint16 tbs 10 (pred ac) ;
   let prep = mac_to_prep mac in

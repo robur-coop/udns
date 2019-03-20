@@ -2,9 +2,9 @@
 
 let notify zone serial key now =
   let notify =
-    let question = [ { Udns_packet.q_name = zone ; q_type = Udns_enum.SOA } ]
+    let question = [ { Udns_types.q_name = zone ; q_type = Udns_enum.SOA } ]
     and answer =
-      let soa = { Udns_packet.nameserver = zone ; hostmaster = zone ; serial ;
+      let soa = { Udns_types.nameserver = zone ; hostmaster = zone ; serial ;
                   refresh = 0l; retry = 0l ; expiry = 0l ; minimum = 0l }
       in
       [ { Udns_packet.name = zone ; ttl = 0l ; rdata = Udns_packet.SOA soa } ]
@@ -18,7 +18,7 @@ let notify zone serial key now =
   match key with
   | None -> Ok (fst (Udns_packet.encode `Tcp header v), Cstruct.empty)
   | Some (keyname, _, dnskey) ->
-    Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns_packet.pp_dnskey dnskey) ;
+    Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns_types.pp_dnskey dnskey) ;
     Udns_tsig.encode_and_sign ~proto:`Tcp header (`Notify notify) now dnskey keyname
 
 let jump _ serverip port zone key serial =

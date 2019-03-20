@@ -14,7 +14,7 @@ let invalid_soa name =
     | Error _ -> name
   in
   let soa = {
-    Udns_packet.nameserver = p "ns" ; hostmaster = p "hostmaster" ;
+    Udns_types.nameserver = p "ns" ; hostmaster = p "hostmaster" ;
     serial = 1l ; refresh = 16384l ; retry = 2048l ;
     expiry = 1048576l ; minimum = 300l
   } in
@@ -26,7 +26,7 @@ let noerror bailiwick q hdr dns =
   (* ANSWER *)
   let typ_matches rr =
     let rtyp = Udns_packet.rdata_to_rr_typ rr.Udns_packet.rdata in
-    match q.Udns_packet.q_type, rtyp with
+    match q.Udns_types.q_type, rtyp with
     | Udns_enum.ANY, _ -> true
     | _, Udns_enum.CNAME -> true
     | t, t' -> t = t'
@@ -159,14 +159,14 @@ let nxdomain q hdr dns =
   let cname_opt =
     List.fold_left (fun r rr ->
         match r, rr.Udns_packet.rdata with
-        | None, Udns_packet.CNAME _ when Domain_name.equal rr.Udns_packet.name q.Udns_packet.q_name -> Some rr
+        | None, Udns_packet.CNAME _ when Domain_name.equal rr.Udns_packet.name q.Udns_types.q_name -> Some rr
         | a, _ -> a)
       None dns.Udns_packet.answer
   in
   let soa =
     List.fold_left (fun r rr ->
         match r, rr.Udns_packet.rdata with
-        | None, Udns_packet.SOA _ when Domain_name.sub ~subdomain:q.Udns_packet.q_name ~domain:rr.Udns_packet.name -> Some rr
+        | None, Udns_packet.SOA _ when Domain_name.sub ~subdomain:q.Udns_types.q_name ~domain:rr.Udns_packet.name -> Some rr
         | a, _ -> a)
       None dns.authority
   in
@@ -184,7 +184,7 @@ let nxdomain q hdr dns =
 
 let noerror_stub q dns =
   (* no glue, just answers - but get all the cnames *)
-  let typ = q.Udns_packet.q_type in
+  let typ = q.Udns_types.q_type in
   let find_entry_or_cname name = List.fold_left (fun acc rr ->
       if Domain_name.equal rr.Udns_packet.name name then
         let add =
@@ -214,12 +214,12 @@ let noerror_stub q dns =
     | Some (`Cname (alias, rr)) -> go ((Udns_enum.CNAME, name, NonAuthoritativeAnswer, NoErr [ rr ]) :: acc) alias
     | Some (`Entry rrs) -> (typ, name, NonAuthoritativeAnswer, NoErr rrs) :: acc
   in
-  go [] q.Udns_packet.q_name
+  go [] q.Udns_types.q_name
 
 (* stub vs recursive: maybe sufficient to look into *)
 let scrub ?(mode = `Recursive) zone q hdr dns =
   Logs.debug (fun m -> m "scrubbing (bailiwick %a) q %a rcode %a"
-                 Domain_name.pp zone Udns_packet.pp_question q
+                 Domain_name.pp zone Udns_types.pp_question q
                  Udns_enum.pp_rcode hdr.Udns_packet.rcode) ;
   match mode, hdr.rcode with
   | `Recursive, Udns_enum.NoError -> Ok (noerror zone q hdr dns)

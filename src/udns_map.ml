@@ -26,28 +26,28 @@ module Ipv4Set = Set.Make (Ipaddr.V4)
 module Ipv6Set = Set.Make (Ipaddr.V6)
 
 module SrvSet = Set.Make (struct
-    type t = Udns_packet.srv
-    let compare = Udns_packet.compare_srv
+    type t = Udns_types.srv
+    let compare = Udns_types.compare_srv
   end)
 
 module DnskeySet = Set.Make (struct
-    type t = Udns_packet.dnskey
-    let compare = Udns_packet.compare_dnskey
+    type t = Udns_types.dnskey
+    let compare = Udns_types.compare_dnskey
   end)
 
 module CaaSet = Set.Make (struct
-    type t = Udns_packet.caa
-    let compare = Udns_packet.compare_caa
+    type t = Udns_types.caa
+    let compare = Udns_types.compare_caa
   end)
 
 module TlsaSet = Set.Make (struct
-    type t = Udns_packet.tlsa
-    let compare = Udns_packet.compare_tlsa
+    type t = Udns_types.tlsa
+    let compare = Udns_types.compare_tlsa
   end)
 
 module SshfpSet = Set.Make (struct
-    type t = Udns_packet.sshfp
-    let compare = Udns_packet.compare_sshfp
+    type t = Udns_types.sshfp
+    let compare = Udns_types.compare_sshfp
   end)
 
 type _ k =
@@ -56,7 +56,7 @@ type _ k =
   | Mx : (int32 * MxSet.t) k
   | Ns : (int32 * Domain_name.Set.t) k
   | Ptr : (int32 * Domain_name.t) k
-  | Soa : (int32 * Udns_packet.soa) k
+  | Soa : (int32 * Udns_types.soa) k
   | Txt : (int32 * TxtSet.t) k
   | A : (int32 * Ipv4Set.t) k
   | Aaaa : (int32 * Ipv6Set.t) k
@@ -122,7 +122,7 @@ module K = struct
         Fmt.(list ~sep:(unit ";@,") Domain_name.pp)
         (Domain_name.Set.elements names)
     | Ptr, (ttl, name) -> Fmt.pf ppf "ptr ttl %lu %a" ttl Domain_name.pp name
-    | Soa, (ttl, soa) -> Fmt.pf ppf "soa ttl %lu %a" ttl Udns_packet.pp_soa soa
+    | Soa, (ttl, soa) -> Fmt.pf ppf "soa ttl %lu %a" ttl Udns_types.pp_soa soa
     | Txt, (ttl, txts) ->
       Fmt.pf ppf "txt ttl %lu %a" ttl
         Fmt.(list ~sep:(unit ";@,") (list ~sep:(unit " ") string))
@@ -135,20 +135,20 @@ module K = struct
         Fmt.(list ~sep:(unit ";@,") Ipaddr.V6.pp) (Ipv6Set.elements aaaas)
     | Srv, (ttl, srvs) ->
       Fmt.pf ppf "srv ttl %lu %a" ttl
-        Fmt.(list ~sep:(unit ";@,") Udns_packet.pp_srv) (SrvSet.elements srvs)
+        Fmt.(list ~sep:(unit ";@,") Udns_types.pp_srv) (SrvSet.elements srvs)
     | Dnskey, keys ->
       Fmt.pf ppf "dnskey %a"
-        Fmt.(list ~sep:(unit ";@,") Udns_packet.pp_dnskey)
+        Fmt.(list ~sep:(unit ";@,") Udns_types.pp_dnskey)
         (DnskeySet.elements keys)
     | Caa, (ttl, caas) ->
       Fmt.pf ppf "caa ttl %lu %a" ttl
-        Fmt.(list ~sep:(unit ";@,") Udns_packet.pp_caa) (CaaSet.elements caas)
+        Fmt.(list ~sep:(unit ";@,") Udns_types.pp_caa) (CaaSet.elements caas)
     | Tlsa, (ttl, tlsas) ->
       Fmt.pf ppf "tlsa ttl %lu %a" ttl
-        Fmt.(list ~sep:(unit ";@,") Udns_packet.pp_tlsa) (TlsaSet.elements tlsas)
+        Fmt.(list ~sep:(unit ";@,") Udns_types.pp_tlsa) (TlsaSet.elements tlsas)
     | Sshfp, (ttl, sshfps) ->
       Fmt.pf ppf "sshfp ttl %lu %a" ttl
-        Fmt.(list ~sep:(unit ";@,") Udns_packet.pp_sshfp)
+        Fmt.(list ~sep:(unit ";@,") Udns_types.pp_sshfp)
         (SshfpSet.elements sshfps)
 
   let text : type a. ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> a t -> a -> string = fun ?origin ?default_ttl n t v ->
@@ -200,10 +200,10 @@ module K = struct
       | Soa, (ttl, soa) ->
         [ Fmt.strf "%s\t%aSOA\t%s\t%s\t%lu\t%lu\t%lu\t%lu\t%lu" str_name
             ttl_fmt (ttl_opt ttl)
-            (name soa.Udns_packet.nameserver)
-            (name soa.Udns_packet.hostmaster)
-            soa.Udns_packet.serial soa.Udns_packet.refresh soa.Udns_packet.retry
-            soa.Udns_packet.expiry soa.Udns_packet.minimum ]
+            (name soa.Udns_types.nameserver)
+            (name soa.Udns_types.hostmaster)
+            soa.Udns_types.serial soa.Udns_types.refresh soa.Udns_types.retry
+            soa.Udns_types.expiry soa.Udns_types.minimum ]
       | Txt, (ttl, txts) ->
         TxtSet.fold (fun txt acc ->
             Fmt.strf "%s\t%aTXT\t%s" str_name ttl_fmt (ttl_opt ttl) (String.concat "" txt) :: acc)
@@ -220,38 +220,38 @@ module K = struct
         SrvSet.fold (fun srv acc ->
             Fmt.strf "%s\t%aSRV\t%u\t%u\t%u\t%s"
               str_name ttl_fmt (ttl_opt ttl)
-              srv.Udns_packet.priority srv.Udns_packet.weight srv.Udns_packet.port
-              (name srv.Udns_packet.target) :: acc)
+              srv.Udns_types.priority srv.Udns_types.weight srv.Udns_types.port
+              (name srv.Udns_types.target) :: acc)
           srvs []
       | Dnskey, keys ->
         DnskeySet.fold (fun key acc ->
             Fmt.strf "%s\t300\tDNSKEY\t%u\t3\t%d\t%s"
-              str_name key.Udns_packet.flags
-              (Udns_enum.dnskey_to_int key.Udns_packet.key_algorithm)
-              (hex key.Udns_packet.key) :: acc)
+              str_name key.Udns_types.flags
+              (Udns_enum.dnskey_to_int key.Udns_types.key_algorithm)
+              (hex key.Udns_types.key) :: acc)
           keys []
       | Caa, (ttl, caas) ->
         CaaSet.fold (fun caa acc ->
             Fmt.strf "%s\t%aCAA\t%s\t%s\t%s"
               str_name ttl_fmt (ttl_opt ttl)
-              (if caa.Udns_packet.critical then "128" else "0")
-              caa.Udns_packet.tag (String.concat ";" caa.Udns_packet.value) :: acc)
+              (if caa.Udns_types.critical then "128" else "0")
+              caa.Udns_types.tag (String.concat ";" caa.Udns_types.value) :: acc)
           caas []
       | Tlsa, (ttl, tlsas) ->
         TlsaSet.fold (fun tlsa acc ->
             Fmt.strf "%s\t%aTLSA\t%u\t%u\t%u\t%s"
               str_name ttl_fmt (ttl_opt ttl)
-              (Udns_enum.tlsa_cert_usage_to_int tlsa.Udns_packet.tlsa_cert_usage)
-              (Udns_enum.tlsa_selector_to_int tlsa.Udns_packet.tlsa_selector)
-              (Udns_enum.tlsa_matching_type_to_int tlsa.Udns_packet.tlsa_matching_type)
-              (hex tlsa.Udns_packet.tlsa_data) :: acc)
+              (Udns_enum.tlsa_cert_usage_to_int tlsa.Udns_types.tlsa_cert_usage)
+              (Udns_enum.tlsa_selector_to_int tlsa.Udns_types.tlsa_selector)
+              (Udns_enum.tlsa_matching_type_to_int tlsa.Udns_types.tlsa_matching_type)
+              (hex tlsa.Udns_types.tlsa_data) :: acc)
           tlsas []
       | Sshfp, (ttl, sshfps) ->
         SshfpSet.fold (fun sshfp acc ->
             Fmt.strf "%s\t%aSSHFP\t%u\t%u\t%s" str_name ttl_fmt (ttl_opt ttl)
-              (Udns_enum.sshfp_algorithm_to_int sshfp.Udns_packet.sshfp_algorithm)
-              (Udns_enum.sshfp_type_to_int sshfp.Udns_packet.sshfp_type)
-              (hex sshfp.Udns_packet.sshfp_fingerprint) :: acc)
+              (Udns_enum.sshfp_algorithm_to_int sshfp.Udns_types.sshfp_algorithm)
+              (Udns_enum.sshfp_type_to_int sshfp.Udns_types.sshfp_type)
+              (hex sshfp.Udns_types.sshfp_fingerprint) :: acc)
           sshfps []
     in
     String.concat "\n" strs
@@ -293,7 +293,7 @@ let equal_b b b' = match b, b' with
   | B (Ptr, (_, name)), B (Ptr, (_, name')) ->
     Domain_name.equal name name'
   | B (Soa, (_, soa)), B (Soa, (_, soa')) ->
-    Udns_packet.compare_soa soa soa' = 0
+    Udns_types.compare_soa soa soa' = 0
   | B (Txt, (_, txts)), B (Txt, (_, txts')) ->
     TxtSet.equal txts txts'
   | B (A, (_, aas)), B (A, (_, aas')) ->
@@ -384,7 +384,7 @@ let names = function
       mxs Domain_name.Set.empty
   | B (Ns, (_, names)) -> names
   | B (Srv, (_, srvs)) ->
-    SrvSet.fold (fun x acc -> Domain_name.Set.add x.Udns_packet.target acc)
+    SrvSet.fold (fun x acc -> Domain_name.Set.add x.Udns_types.target acc)
       srvs Domain_name.Set.empty
   | _ -> Domain_name.Set.empty
 

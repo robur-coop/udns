@@ -505,18 +505,18 @@ let answer t ts q id =
     in
     (header, `Query { Udns_packet.question ; answer ; authority ; additional }, t)
   in
-  match cached t ts q.Udns_packet.q_type q.Udns_packet.q_name with
-  | Error _ -> `Query (q.Udns_packet.q_name, t)
+  match cached t ts q.Udns_types.q_type q.Udns_types.q_name with
+  | Error _ -> `Query (q.Udns_types.q_name, t)
   | Ok (NoDom authority, t) ->
     `Packet (packet t false Udns_enum.NXDomain [] [authority])
   | Ok (NoData authority, t) ->
     `Packet (packet t false Udns_enum.NoError [] [authority])
   | Ok (ServFail authority, t) ->
     `Packet (packet t false Udns_enum.ServFail [] [authority])
-  | Ok (NoErr answer, t) -> match q.Udns_packet.q_type with
+  | Ok (NoErr answer, t) -> match q.Udns_types.q_type with
     | Udns_enum.CNAME -> `Packet (packet t false Udns_enum.NoError answer [])
     | _ ->
-      match follow_cname t ts q.Udns_packet.q_type q.Udns_packet.q_name answer with
+      match follow_cname t ts q.Udns_types.q_type q.Udns_types.q_name answer with
       | `NoError (answer, t) -> `Packet (packet t true Udns_enum.NoError answer [])
       | `Cycle (answer, t) -> `Packet (packet t true Udns_enum.NoError answer [])
       | `Query (n, t) -> `Query (n, t)
@@ -529,7 +529,7 @@ let handle_query t ~rng ts q qid =
   | `Packet (hdr, pkt, t) -> `Answer (hdr, pkt), t
   | `Query (name, t) ->
     let r =
-      match q.Udns_packet.q_type with
+      match q.Udns_types.q_type with
       (* similar for TLSA, which uses _443._tcp.<name> (not a service name!) *)
       | Udns_enum.SRV when Domain_name.is_service name ->
         Ok (Domain_name.drop_labels_exn ~amount:2 name, Udns_enum.NS)
@@ -548,7 +548,7 @@ let handle_query t ~rng ts q qid =
         `Nothing, t
       | Ok (zone, name', typ, ip, t) ->
         let name, typ =
-          match Domain_name.equal name' qname, q.Udns_packet.q_type with
+          match Domain_name.equal name' qname, q.Udns_types.q_type with
           | true, Udns_enum.SRV -> name, Udns_enum.SRV
           | _ -> name', typ
         in

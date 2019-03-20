@@ -75,7 +75,7 @@ let reserved_zone_records =
 
 let reserved_zones =
   let inv s =
-    let soa = { Udns_packet.nameserver = s ; hostmaster = s ;
+    let soa = { Udns_types.nameserver = s ; hostmaster = s ;
                 serial = 0l ; refresh = 300l ; retry = 300l ;
                 expiry = 300l ; minimum = 300l }
     in

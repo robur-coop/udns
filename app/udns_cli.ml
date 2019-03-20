@@ -70,14 +70,14 @@ let namekey_c =
   let parse s =
     match Astring.String.cut ~sep:":" s with
     | None -> `Error "invalid key"
-    | Some (name, key) -> match Domain_name.of_string ~hostname:false name, Udns_packet.dnskey_of_string key with
+    | Some (name, key) -> match Domain_name.of_string ~hostname:false name, Udns_types.dnskey_of_string key with
       | Error _, _ | _, None -> `Error "failed to parse key"
       | Ok name, Some dnskey -> match Domain_name.drop_labels ~amount:2 name with
         | Error _ -> `Error "failed to parse key (couldn't find zone)"
         | Ok zone -> `Ok (name, zone, dnskey)
   in
   parse, fun ppf (name, zone, key) -> Fmt.pf ppf "key name %a zone %a dnskey %a"
-      Domain_name.pp name Domain_name.pp zone Udns_packet.pp_dnskey key
+      Domain_name.pp name Domain_name.pp zone Udns_types.pp_dnskey key
 
 let name_c =
   (fun s -> match Domain_name.of_string s with

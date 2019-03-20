@@ -18,7 +18,7 @@ type 'key query_state constraint 'key = 'a Udns_map.k
 *)
 
 val make_query :
-  Udns_packet.proto -> Domain_name.t ->
+  Udns_types.proto -> Domain_name.t ->
   'query_type Udns_map.k->
   Cstruct.t * 'query_type Udns_map.k query_state
 (** [make_query protocol name query_type] is [query, query_state]
