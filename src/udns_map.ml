@@ -50,8 +50,8 @@ module SshfpSet = Set.Make (struct
     let compare = Udns_types.compare_sshfp
   end)
 
-type _ k =
-  | Any : Udns_packet.rr list k
+type 'a k =
+  | Any : b list k
   | Cname : (int32 * Domain_name.t) k
   | Mx : (int32 * MxSet.t) k
   | Ns : (int32 * Domain_name.Set.t) k
@@ -65,6 +65,7 @@ type _ k =
   | Caa : (int32 * CaaSet.t) k
   | Tlsa : (int32 * TlsaSet.t) k
   | Sshfp : (int32 * SshfpSet.t) k
+and b = B : 'a k * 'a -> b
 
 let combine : type a. a k -> a -> a option -> a option = fun k v old ->
   match k, v, old with
@@ -106,12 +107,12 @@ module K = struct
     | Tlsa, Tlsa -> Eq | Tlsa, _ -> Lt | _, Tlsa -> Gt
     | Sshfp, Sshfp -> Eq | Sshfp, _ -> Lt | _, Sshfp -> Gt
     | Txt, Txt -> Eq | Txt, _ -> Lt | _, Txt -> Gt
-    | Any, Any -> Eq (* | Any, _ -> Lt | _, Any -> Gt *)
+    | Any, Any -> assert false (* | Any, _ -> Lt | _, Any -> Gt *)
 
-  let pp : type a. Format.formatter -> a t -> a -> unit = fun ppf t v ->
+  let rec pp : type a. Format.formatter -> a t -> a -> unit = fun ppf t v ->
     match t, v with
     | Any, entries ->
-      Fmt.pf ppf "any %a" Udns_packet.pp_rrs entries
+      Fmt.pf ppf "any %a" Fmt.(list ~sep:(unit "; ") pp_b) entries
     | Cname, (ttl, alias) -> Fmt.pf ppf "cname ttl %lu %a" ttl Domain_name.pp alias
     | Mx, (ttl, mxs) ->
       Fmt.pf ppf "mx ttl %lu %a" ttl
@@ -150,6 +151,7 @@ module K = struct
       Fmt.pf ppf "sshfp ttl %lu %a" ttl
         Fmt.(list ~sep:(unit ";@,") Udns_types.pp_sshfp)
         (SshfpSet.elements sshfps)
+  and pp_b ppf (B (k, v)) = pp ppf k v
 
   let text : type a. ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> a t -> a -> string = fun ?origin ?default_ttl n t v ->
     let hex cs =
@@ -278,12 +280,8 @@ let with_ttl : b -> int32 -> b = fun (B (k, v)) ttl ->
 
 let pp_b ppf (B (k, v)) = K.pp ppf k v
 
-let equal_b b b' = match b, b' with
-  | B (Any, entries), B (Any, entries') ->
-    List.length entries = List.length entries' &&
-    List.for_all (fun e ->
-        List.exists (fun e' -> Udns_packet.rr_equal e e') entries')
-      entries
+let rec equal_b b b' = match b, b' with
+  | B (Any, entries), B (Any, entries') -> assert false
   | B (Cname, (_, alias)), B (Cname, (_, alias')) ->
     Domain_name.equal alias alias'
   | B (Mx, (_, mxs)), B (Mx, (_, mxs')) ->

@@ -44,30 +44,26 @@ let to_ns name map =
   in
   (name, ttl, ns)
 
-let lookup_res name zone ty m =
-  match zone with
+let check_zone = function
   | None -> Error `NotAuthoritative
-  | Some (`Delegation (name, (ttl, ns))) ->
-    Error (`Delegation (name, (ttl, ns)))
-  | Some (`Soa (z, zmap)) ->
-    guard (not (Udns_map.is_empty m)) (ent z zmap) >>= fun () ->
-    match ty with
-    | Udns_enum.ANY ->
-      let bindings = Udns_map.bindings m in
-      let rrs = List.(flatten (map (Udns_map.to_rr name) bindings)) in
-      Ok (Udns_map.B (Udns_map.Any, rrs), to_ns z zmap)
-    | _ -> match Udns_map.lookup_rr ty m with
-      | Some v -> Ok (v, to_ns z zmap)
-      | None -> match Udns_map.findb Udns_map.Cname m with
-        | None when Udns_map.cardinal m = 1 && Udns_map.(mem Soa m) ->
-          (* this is primary a hack for localhost, which must be NXDomain,
-             but there's a SOA for localhost (to handle it authoritatively) *)
-          (* TODO should we check that the label-node map is empty?
-                well, if we have a proper authoritative zone, there'll be a NS *)
-          let ttl, soa = Udns_map.get Udns_map.Soa zmap in
-          Error (`NotFound (z, ttl, soa))
-        | None -> Error (ent z zmap)
-        | Some cname -> Ok (cname, to_ns z zmap)
+  | Some (`Delegation (name, (ttl, ns))) -> Error (`Delegation (name, (ttl, ns)))
+  | Some (`Soa (z, zmap)) -> Ok (z, zmap)
+
+let lookup_res zone ty m =
+  check_zone zone >>= fun (z, zmap) ->
+  guard (not (Udns_map.is_empty m)) (ent z zmap) >>= fun () ->
+  match Udns_map.lookup_rr ty m with
+  | Some v -> Ok (v, to_ns z zmap)
+  | None -> match Udns_map.findb Udns_map.Cname m with
+    | None when Udns_map.cardinal m = 1 && Udns_map.(mem Soa m) ->
+      (* this is primary a hack for localhost, which must be NXDomain,
+         but there's a SOA for localhost (to handle it authoritatively) *)
+      (* TODO should we check that the label-node map is empty?
+         well, if we have a proper authoritative zone, there'll be a NS *)
+      let ttl, soa = Udns_map.get Udns_map.Soa zmap in
+      Error (`NotFound (z, ttl, soa))
+    | None -> Error (ent z zmap)
+    | Some cname -> Ok (cname, to_ns z zmap)
 
 let lookup_aux name t =
   let k = Domain_name.to_array name in
@@ -99,7 +95,7 @@ let lookup_aux name t =
 
 let lookupb name ty t =
   lookup_aux name t >>= fun (zone, _sub, map) ->
-  lookup_res name zone ty map
+  lookup_res zone ty map
 
 let lookup name key t =
   match lookup_aux name t with
@@ -110,6 +106,15 @@ let lookup name key t =
     | None -> match Udns_map.find Udns_map.Soa map with
       | None -> Error `NotAuthoritative
       | Some (ttl, soa) -> Error (`NotFound (name, ttl, soa))
+
+let lookup_any name t =
+  match lookup_aux name t with
+  | Error e -> Error e
+  | Ok (zone, _sub, m) ->
+    check_zone zone >>= fun (z, zmap) ->
+    let bindings = Udns_map.bindings m in
+    let rrs = List.(flatten (map (Udns_map.to_rr name) bindings)) in
+    Ok (rrs, to_ns z zmap)
 
 let lookup_ignore name ty t =
   match lookup_aux name t with
@@ -225,7 +230,6 @@ let check trie =
         r >>= fun () ->
         match v with
         | Udns_map.B (Udns_map.Dnskey, _) -> Ok ()
-        | Udns_map.B (Udns_map.Any, _) -> Error (`Any_not_allowed name)
         | Udns_map.B (Udns_map.Ns, (ttl, names)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Domain_name.Set.cardinal names = 0 then

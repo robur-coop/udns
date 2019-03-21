@@ -94,6 +94,12 @@ val lookup : Domain_name.t -> 'a Udns_map.key -> t ->
    | `NotFound of Domain_name.t * int32 * Udns_types.soa ]) result
 (** [lookup k ty t] finds [k, ty] in [t], which may lead to an error. *)
 
+val lookup_any : Domain_name.t -> t ->
+  (Udns_packet.rr list * (Domain_name.t * int32 * Domain_name.Set.t),
+   [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
+   | `NotAuthoritative
+   | `NotFound of Domain_name.t * int32 * Udns_types.soa ]) result
+
 val lookup_ignore : Domain_name.t -> Udns_enum.rr_typ -> t ->
   (Udns_map.b, unit) result
 (** [lookup_ignore k ty t] finds a [k, ty] in [t], which may lead to an error.
