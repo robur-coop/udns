@@ -72,20 +72,15 @@ let parse_response (type requested)
               Domain_name.pp q_name
               Udns_packet.pp_rrs resp.answer
           ) >>= fun relevant_map ->
-      begin match (state.key : requested Udns_map.k) with
-        | (Udns_map.Any : requested Udns_map.k) ->
-          Ok (resp.answer:requested)
-        | _ ->
-          begin match Udns_map.find state.key relevant_map with
-            | Some response -> Ok response
-            | None ->
-              begin match Udns_map.find Cname relevant_map with
-                | None -> Error (`Msg "Invalid DNS response")
-                | Some (_ttl, redirected_host) ->
-                  follow_cname (pred counter) redirected_host
-              end
-          end
-      end
+        begin match Udns_map.find state.key relevant_map with
+          | Some response -> Ok response
+          | None ->
+            begin match Udns_map.find Cname relevant_map with
+              | None -> Error (`Msg "Invalid DNS response")
+              | Some (_ttl, redirected_host) ->
+                follow_cname (pred counter) redirected_host
+            end
+        end
     in
     follow_cname 20 state.question.q_name
   | Ok ((h, `Query q, opt, dsig), optint) ->

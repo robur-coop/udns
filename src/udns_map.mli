@@ -32,7 +32,6 @@ module SshfpSet : Set.S with type elt = Udns_types.sshfp
 (** A set of SSH FP records. *)
 
 type 'a k =
-  | Any : 'a k list k
   | Cname : (int32 * Domain_name.t) k
   | Mx : (int32 * MxSet.t) k
   | Ns : (int32 * Domain_name.Set.t) k

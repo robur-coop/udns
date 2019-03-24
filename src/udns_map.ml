@@ -51,7 +51,6 @@ module SshfpSet = Set.Make (struct
   end)
 
 type 'a k =
-  | Any : b list k
   | Cname : (int32 * Domain_name.t) k
   | Mx : (int32 * MxSet.t) k
   | Ns : (int32 * Domain_name.Set.t) k
@@ -65,15 +64,12 @@ type 'a k =
   | Caa : (int32 * CaaSet.t) k
   | Tlsa : (int32 * TlsaSet.t) k
   | Sshfp : (int32 * SshfpSet.t) k
-and b = B : 'a k * 'a -> b
 
 let combine : type a. a k -> a -> a option -> a option = fun k v old ->
   match k, v, old with
-  | Any, _, _ -> assert false
   | _, v, None -> Some v
   | t, v, Some old ->
     Some (match t, v, old with
-        | Any, _, _ -> assert false
         | Cname, _, cname -> cname
         | Mx, (_, mxs), (ttl, mxs') -> (ttl, MxSet.union mxs mxs')
         | Ns, (_, ns), (ttl, ns') -> (ttl, Domain_name.Set.union ns ns')
@@ -106,13 +102,10 @@ module K = struct
     | Caa, Caa -> Eq | Caa, _ -> Lt | _, Caa -> Gt
     | Tlsa, Tlsa -> Eq | Tlsa, _ -> Lt | _, Tlsa -> Gt
     | Sshfp, Sshfp -> Eq | Sshfp, _ -> Lt | _, Sshfp -> Gt
-    | Txt, Txt -> Eq | Txt, _ -> Lt | _, Txt -> Gt
-    | Any, Any -> assert false (* | Any, _ -> Lt | _, Any -> Gt *)
+    | Txt, Txt -> Eq (* | Txt, _ -> Lt | _, Txt -> Gt *)
 
-  let rec pp : type a. Format.formatter -> a t -> a -> unit = fun ppf t v ->
+  let pp : type a. Format.formatter -> a t -> a -> unit = fun ppf t v ->
     match t, v with
-    | Any, entries ->
-      Fmt.pf ppf "any %a" Fmt.(list ~sep:(unit "; ") pp_b) entries
     | Cname, (ttl, alias) -> Fmt.pf ppf "cname ttl %lu %a" ttl Domain_name.pp alias
     | Mx, (ttl, mxs) ->
       Fmt.pf ppf "mx ttl %lu %a" ttl
@@ -151,7 +144,6 @@ module K = struct
       Fmt.pf ppf "sshfp ttl %lu %a" ttl
         Fmt.(list ~sep:(unit ";@,") Udns_types.pp_sshfp)
         (SshfpSet.elements sshfps)
-  and pp_b ppf (B (k, v)) = pp ppf k v
 
   let text : type a. ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> a t -> a -> string = fun ?origin ?default_ttl n t v ->
     let hex cs =
@@ -186,7 +178,6 @@ module K = struct
     let str_name = name n in
     let strs =
       match t, v with
-      | Any, _ -> (* no *) []
       | Cname, (ttl, alias) ->
         [ Fmt.strf "%s\t%aCNAME\t%s" str_name ttl_fmt (ttl_opt ttl) (name alias) ]
       | Mx, (ttl, mxs) ->
@@ -263,7 +254,6 @@ include Gmap.Make(K)
 
 let with_ttl : b -> int32 -> b = fun (B (k, v)) ttl ->
   match k, v with
-  | Any, _ -> assert false
   | Cname, (_, cname) -> B (k, (ttl, cname))
   | Mx, (_, mxs) -> B (k, (ttl, mxs))
   | Ns, (_, ns) -> B (k, (ttl, ns))
@@ -280,8 +270,7 @@ let with_ttl : b -> int32 -> b = fun (B (k, v)) ttl ->
 
 let pp_b ppf (B (k, v)) = K.pp ppf k v
 
-let rec equal_b b b' = match b, b' with
-  | B (Any, entries), B (Any, entries') -> assert false
+let equal_b b b' = match b, b' with
   | B (Cname, (_, alias)), B (Cname, (_, alias')) ->
     Domain_name.equal alias alias'
   | B (Mx, (_, mxs)), B (Mx, (_, mxs')) ->
@@ -311,7 +300,6 @@ let rec equal_b b b' = match b, b' with
   | _, _ -> false
 
 let k_to_rr_typ : type a. a key -> Udns_enum.rr_typ = function
-  | Any -> Udns_enum.ANY
   | Cname -> Udns_enum.CNAME
   | Mx -> Udns_enum.MX
   | Ns -> Udns_enum.NS
@@ -356,17 +344,12 @@ let to_rdata : b -> int32 * Udns_packet.rdata list = fun (B (k, v)) ->
     ttl, TlsaSet.fold (fun tlsa acc -> Udns_packet.TLSA tlsa :: acc) tlsas []
   | Sshfp, (ttl, sshfps) ->
     ttl, SshfpSet.fold (fun fp acc -> Udns_packet.SSHFP fp :: acc) sshfps []
-  | Any, _ -> assert false
 
 let to_rr : Domain_name.t -> b -> Udns_packet.rr list = fun name b ->
-  match b with
-  | B (Any, entries) -> entries
-  | _ ->
     let ttl, rdatas = to_rdata b in
     List.map (fun rdata -> { Udns_packet.name ; ttl ; rdata }) rdatas
 
 let names = function
-  | B (Any, rrs) -> Udns_packet.rr_names rrs
   | B (Mx, (_, mxs)) ->
     MxSet.fold (fun (_, name) acc -> Domain_name.Set.add name acc)
       mxs Domain_name.Set.empty

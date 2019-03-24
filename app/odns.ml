@@ -96,15 +96,7 @@ let do_txt nameserver domains _ =
                       Domain_name.pp domain msg))
 
 
-let do_any nameserver domains _ =
-  for_all_domains nameserver ~domains Udns_map.Any
-    (fun domain -> function
-       | Ok rr_list ->
-         List.iter (fun rr -> Logs.app (fun m -> m "%a" Udns_packet.pp_rr rr))
-           rr_list
-       | Error (`Msg msg) ->
-         Logs.err (fun m -> m "Failed to lookup %a: %s\n%!"
-                      Domain_name.pp domain msg))
+let do_any _nameserver _domains _ = assert false
 
 
 let do_dkim nameserver (selector:string) domains _ =
