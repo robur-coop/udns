@@ -65,8 +65,33 @@ val decode_question : Udns_name.offset_name_map ->
    [buffer], applying label decompression. The new offset and offset to names
    map are returned together with the question, or an error. *)
 
+val encode_ntc : Udns_name.name_offset_map ->
+  Cstruct.t -> int -> (Domain_name.t * Udns_enum.rr_typ * int) ->
+  (Udns_name.name_offset_map * int)
+
+val decode_ntc : Udns_name.offset_name_map -> Cstruct.t -> int ->
+  ((Domain_name.t * Udns_enum.rr_typ * int) * Udns_name.offset_name_map * int,
+   [> `BadContent of string
+   | `BadOffset of int
+   | `BadRRTyp of int
+   | `BadTag of int
+   | `Partial
+   | `TooLong ]) result
+
 val encode_question : Udns_name.name_offset_map ->
   Cstruct.t -> int -> question -> Udns_name.name_offset_map * int
+
+val decode_mx : Udns_names.offset_name_map -> Cstruct.t -> int ->
+  (Udns_types.mx * Udns_name.name_offset_map * int, ..) result
+
+val encode_mx : Udns_types.mx -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
+
+val encode_a : Ipaddr.V4.t -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
+
+val encode_aaaa : Ipaddr.V6.t -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
 
 val decode_txt : Cstruct.t -> off:int -> len:int -> string list
 
@@ -74,8 +99,26 @@ val decode_soa : Udns_name.offset_name_map ->
   Cstruct.t -> int ->
   (soa * Udns_name.offset_name_map * int, [> Udns_name.err ]) result
 
-val encode_soa : Udns_name.name_offset_map ->
-  Cstruct.t -> int -> soa -> Udns_name.name_offset_map * int
+val encode_soa : Udns_types.soa -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
+
+val encode_srv : Udns_types.srv -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
+
+val encode_dnskey : Udns_types.dnskey -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
+
+val encode_caa : Udns_types.caa -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
+
+val encode_txt : string list -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
+
+val encode_tlsa : Udns_types.tlsa -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
+
+val encode_sshfp : Udns_types.sshfp -> Udns_name.name_offset_map ->
+  Cstruct.t -> int -> Udns_name.name_offset_map * int
 
 type tsig_algo =
   | SHA1

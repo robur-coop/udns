@@ -32,6 +32,19 @@ val compare_soa : soa -> soa -> int
 (** [compare_soa soa soa'] compares the serial, nameserver, hostmaster, refresh,
     retry, expiry, and minimum of two SOA records. *)
 
+type mx = {
+  preference : int ;
+  mail_exchange : Domain_name.t ;
+}
+(** The type of Mail Exchanges. *)
+
+val pp_mx : mx Fmt.t
+(** [pp_mx ppf mx] pretty-printf the [mx] on [ppf]. *)
+
+val compare_mx : mx -> mx -> int
+(** [compare_mx mx mx'] compares the preference and mail exchange name of the
+    two MX records. *)
+
 type dnskey = {
   flags : int ; (* uint16 *)
   key_algorithm :  Udns_enum.dnskey ; (* u_int8_t *)

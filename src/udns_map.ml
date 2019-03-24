@@ -3,11 +3,8 @@
 let int_compare : int -> int -> int = fun a b -> compare a b
 
 module MxSet = Set.Make (struct
-    type t = int * Domain_name.t
-    let compare (pri, name) (pri', name') =
-      match int_compare pri pri' with
-      | 0 -> Domain_name.compare name name'
-      | x -> x
+    type t = Udns_types.mx
+    let compare = Udns_types.compare_mx
   end)
 
 module TxtSet = Set.Make (struct
@@ -50,20 +47,20 @@ module SshfpSet = Set.Make (struct
     let compare = Udns_types.compare_sshfp
   end)
 
-type 'a k =
-  | Cname : (int32 * Domain_name.t) k
-  | Mx : (int32 * MxSet.t) k
-  | Ns : (int32 * Domain_name.Set.t) k
-  | Ptr : (int32 * Domain_name.t) k
+type _ k =
   | Soa : (int32 * Udns_types.soa) k
-  | Txt : (int32 * TxtSet.t) k
+  | Ns : (int32 * Domain_name.Set.t) k
+  | Mx : (int32 * MxSet.t) k
+  | Cname : (int32 * Domain_name.t) k
   | A : (int32 * Ipv4Set.t) k
   | Aaaa : (int32 * Ipv6Set.t) k
+  | Ptr : (int32 * Domain_name.t) k
   | Srv : (int32 * SrvSet.t) k
   | Dnskey : (int32 * DnskeySet.t) k
   | Caa : (int32 * CaaSet.t) k
   | Tlsa : (int32 * TlsaSet.t) k
   | Sshfp : (int32 * SshfpSet.t) k
+  | Txt : (int32 * TxtSet.t) k
 
 let combine : type a. a k -> a -> a option -> a option = fun k v old ->
   match k, v, old with
@@ -109,7 +106,7 @@ module K = struct
     | Cname, (ttl, alias) -> Fmt.pf ppf "cname ttl %lu %a" ttl Domain_name.pp alias
     | Mx, (ttl, mxs) ->
       Fmt.pf ppf "mx ttl %lu %a" ttl
-        Fmt.(list ~sep:(unit ";@,") (pair ~sep:(unit " ") int Domain_name.pp))
+        Fmt.(list ~sep:(unit ";@,") Udns_types.pp_mx)
         (MxSet.elements mxs)
     | Ns, (ttl, names) ->
       Fmt.pf ppf "ns ttl %lu %a" ttl
@@ -181,8 +178,8 @@ module K = struct
       | Cname, (ttl, alias) ->
         [ Fmt.strf "%s\t%aCNAME\t%s" str_name ttl_fmt (ttl_opt ttl) (name alias) ]
       | Mx, (ttl, mxs) ->
-        MxSet.fold (fun (prio, mx) acc ->
-            Fmt.strf "%s\t%aMX\t%u\t%s" str_name ttl_fmt (ttl_opt ttl) prio (name mx) :: acc)
+        MxSet.fold (fun { Udns_types.preference ; mail_exchange } acc ->
+            Fmt.strf "%s\t%aMX\t%u\t%s" str_name ttl_fmt (ttl_opt ttl) preference (name mail_exchange) :: acc)
           mxs []
       | Ns, (ttl, ns) ->
         Domain_name.Set.fold (fun ns acc ->
@@ -318,11 +315,129 @@ let k_to_rr_typ : type a. a key -> Udns_enum.rr_typ = function
 let to_rr_typ : b -> Udns_enum.rr_typ = fun (B (k, _)) ->
   k_to_rr_typ k
 
+let encode : type a. Domain_name.t -> a key -> a -> Udns_name.name_offset_map -> Cstruct.t -> int ->
+  Udns_name.name_offset_map * int = fun name k v offs buf off ->
+  let typ = k_to_rr_typ k
+  and clas = Udns_enum.clas_to_int Udns_enum.IN
+  in
+  let rr offs f off ttl =
+    let offs', off' = Udns_packet.encode_ntc offs buf off (name, typ, clas) in
+    (* leave 6 bytes space for TTL and length *)
+    let rdata_start = off' + 6 in
+    let offs'', rdata_end = f offs' buf rdata_start in
+    let rdata_len = rdata_end - rdata_start in
+    Cstruct.BE.set_uint32 buf off' ttl ;
+    Cstruct.BE.set_uint16 buf (off' + 4) rdata_len ;
+    (offs'', rdata_end)
+  in
+  match k, v with
+  | Soa, (ttl, soa) -> rr offs (Udns_packet.encode_soa soa) off ttl
+  | Ns, (ttl, ns) ->
+    Domain_name.Set.fold (fun name (offs, off) ->
+        rr offs (fun offs buf off -> Udns_name.encode offs buf off name) off ttl)
+      ns (offs, off)
+  | Mx, (ttl, mx) ->
+    MxSet.fold (fun mx (offs, off) ->
+        rr offs (Udns_packet.encode_mx mx) off ttl)
+      mx (offs, off)
+  | Cname, (ttl, alias) ->
+    rr offs (fun offs buf off -> Udns_name.encode offs buf off alias) off ttl
+  | A, (ttl, addresses) ->
+    Ipv4Set.fold (fun address (offs, off) ->
+        rr offs (Udns_packet.encode_a address) off ttl)
+      addresses (offs, off)
+  | Aaaa, (ttl, aaaas) ->
+    Ipv6Set.fold (fun address (offs, off) ->
+        rr offs (Udns_packet.encode_aaaa address) off ttl)
+      aaaas (offs, off)
+  | Ptr, (ttl, rev) ->
+    rr offs (fun offs buf off -> Udns_name.encode offs buf off rev) off ttl
+  | Srv, (ttl, srvs) ->
+    SrvSet.fold (fun srv (offs, off) ->
+        rr offs (Udns_packet.encode_srv srv) off ttl)
+      srvs (offs, off)
+  | Dnskey, (ttl, dnskeys) ->
+    DnskeySet.fold (fun dnskey (offs, off) ->
+        rr offs (Udns_packet.encode_dnskey dnskey) off ttl)
+      dnskeys (offs, off)
+  | Caa, (ttl, caas) ->
+    CaaSet.fold (fun caa (offs, off) ->
+        rr offs (Udns_packet.encode_caa caa) off ttl)
+      caas (offs, off)
+  | Tlsa, (ttl, tlsas) ->
+    TlsaSet.fold (fun tlsa (offs, off) ->
+        rr offs (Udns_packet.encode_tlsa tlsa) off ttl)
+      tlsas (offs, off)
+  | Sshfp, (ttl, sshfps) ->
+    SshfpSet.fold (fun sshfp (offs, off) ->
+        rr offs (Udns_packet.encode_sshfp sshfp) off ttl)
+      sshfps (offs, off)
+  | Txt, (ttl, txts) ->
+    TxtSet.fold (fun txt (offs, off) ->
+        rr offs (Udns_packet.encode_txt txt) off ttl)
+      txts (offs, off)
+
+let to_unit = function
+  | Ok x -> Ok x
+  | Error _ -> Error ()
+
+let decode : Udns_name.offset_name_map -> Cstruct.t -> int -> Udns_enum.rr_typ ->
+  (b * Udns_name.offset_name_map * int, unit) result = fun names buf off typ ->
+  let open Rresult.R.Infix in
+  to_unit (
+    let ttl = Cstruct.BE.get_uint32 buf off
+    and len = Cstruct.BE.get_uint16 buf (off + 4)
+    (* TODO assert len == off - rdata_start *)
+    and rdata_start = off + 6
+    in
+    match typ with
+    | Udns_enum.SOA ->
+      Udns_packet.decode_soa names buf rdata_start >>| fun (soa, names, off) ->
+      (B (Soa, (ttl, soa)), names, off)
+    | Udns_enum.NS ->
+      Udns_name.decode names buf rdata_start >>| fun (ns, names, off) ->
+      (B (Ns, (ttl, Domain_name.Set.singleton ns)), names, off)
+    | Udns_enum.MX ->
+      Udns_packet.decode_mx names buf rdata_start >>| fun (mx, names, off) ->
+      (B (Mx, (ttl, MxSet.singleton mx)), names, off)
+    | Udns_enum.CNAME ->
+      Udns_name.decode names buf rdata_start >>| fun (alias, names, off) ->
+      (B (Cname, (ttl, alias)), names, off)
+    | Udns_enum.A ->
+      Udns_packet.decode_a names buf rdata_start >>| fun (address, names, off) ->
+      (B (A, (ttl, Ipv4Set.singleton address)), names, off)
+    | Udns_enum.AAAA ->
+      Udns_packet.decode_aaaa names buf rdata_start >>| fun (address, names, off) ->
+      (B (Aaaa, (ttl, Ipv6Set.singleton address)), names, off)
+    | Udns_enum.PTR ->
+      Udns_name.decode names buf rdata_start >>| fun (rev, names, off) ->
+      (B (Ptr, (ttl, rev)), names, off)
+    | Udns_enum.SRV ->
+      Udns_packet.decode_srv names buf rdata_start >>| fun (srv, names, off) ->
+      (B (Srv, (ttl, SrvSet.singleton srv)), names, off)
+    | Udns_enum.DNSKEY ->
+      Udns_packet.decode_dnskey names buf rdata_start >>| fun (dnskey, names, off) ->
+      (B (Dnskey, (ttl, DnskeySet.singleton dnskey)), names, off)
+    | Udns_enum.CAA ->
+      Udns_packet.decode_caa names buf rdata_start >>| fun (caa, names, off) ->
+      (B (Caa, (ttl, CaaSet.singleton caa)), names, off)
+    | Udns_enum.TLSA ->
+      Udns_packet.decode_tlsa names buf rdata_start >>| fun (tlsa, names, off) ->
+      (B (Tlsa, (ttl, TlsaSet.singleton tlsa)), names, off)
+    | Udns_enum.SSHFP ->
+      Udns_packet.decode_sshfp names buf rdata_start >>| fun (sshfp, names, off) ->
+      (B (Sshfp, (ttl, SshfpSet.singleton sshfp)), names, off)
+    | Udns_enum.TXT ->
+      Udns_packet.decode_txt names buf rdata_start >>| fun (txt, names, off) ->
+      (B (Txt, (ttl, TxtSet.singleton txt)), names, off)
+    | other -> Error (other, )
+
 let to_rdata : b -> int32 * Udns_packet.rdata list = fun (B (k, v)) ->
   match k, v with
   | Cname, (ttl, alias) -> ttl, [ Udns_packet.CNAME alias ]
   | Mx, (ttl, mxs) ->
-    ttl, MxSet.fold (fun (pri, mx) acc -> Udns_packet.MX (pri, mx) :: acc) mxs []
+    ttl, MxSet.fold (fun { Udns_types.preference ; mail_exchange } acc ->
+        Udns_packet.MX (preference, mail_exchange) :: acc) mxs []
   | Ns, (ttl, names) ->
     ttl, Domain_name.Set.fold (fun ns acc -> Udns_packet.NS ns :: acc) names []
   | Ptr, (ttl, ptrname) ->
@@ -352,7 +467,8 @@ let to_rr : Domain_name.t -> b -> Udns_packet.rr list = fun name b ->
 
 let names = function
   | B (Mx, (_, mxs)) ->
-    MxSet.fold (fun (_, name) acc -> Domain_name.Set.add name acc)
+    MxSet.fold (fun { Udns_types.mail_exchange ; _} acc ->
+        Domain_name.Set.add mail_exchange acc)
       mxs Domain_name.Set.empty
   | B (Ns, (_, names)) -> names
   | B (Srv, (_, srvs)) ->
@@ -364,8 +480,8 @@ let of_rdata : int32 -> Udns_packet.rdata -> b option = fun ttl rd ->
   match rd with
   | Udns_packet.CNAME alias ->
     Some (B (Cname, (ttl, alias)))
-  | Udns_packet.MX (pri, name) ->
-    Some (B (Mx, (ttl, MxSet.singleton (pri, name))))
+  | Udns_packet.MX (preference, mail_exchange) ->
+    Some (B (Mx, (ttl, MxSet.singleton { Udns_types.preference ; mail_exchange })))
   | Udns_packet.NS ns ->
     Some (B (Ns, (ttl, Domain_name.Set.singleton ns)))
   | Udns_packet.PTR ptr ->
@@ -392,8 +508,8 @@ let of_rdata : int32 -> Udns_packet.rdata -> b option = fun ttl rd ->
 
 let add_rdata : b -> Udns_packet.rdata -> b option = fun v rdata ->
   match v, rdata with
-  | B (Mx, (ttl, mxs)), Udns_packet.MX (pri, name) ->
-    Some (B (Mx, (ttl, MxSet.add (pri, name) mxs)))
+  | B (Mx, (ttl, mxs)), Udns_packet.MX (preference, mail_exchange) ->
+    Some (B (Mx, (ttl, MxSet.add { Udns_types.preference ; mail_exchange } mxs)))
   | B (Ns, (ttl, nss)), Udns_packet.NS ns ->
     Some (B (Ns, (ttl, Domain_name.Set.add ns nss)))
   | B (Txt, (ttl, txts)), Udns_packet.TXT txt ->
@@ -416,8 +532,8 @@ let add_rdata : b -> Udns_packet.rdata -> b option = fun v rdata ->
 
 let remove_rdata : b -> Udns_packet.rdata -> b option = fun v rdata ->
   match v, rdata with
-  | B (Mx, (ttl, mxs)), Udns_packet.MX (prio, name) ->
-    let mxs' = MxSet.remove (prio, name) mxs in
+  | B (Mx, (ttl, mxs)), Udns_packet.MX (preference, mail_exchange) ->
+    let mxs' = MxSet.remove { Udns_types.preference ; mail_exchange } mxs in
     if MxSet.is_empty mxs' then None else Some (B (Mx, (ttl, mxs')))
   | B (Ns, (ttl, nss)), Udns_packet.NS ns ->
     let nss' = Domain_name.Set.remove ns nss in

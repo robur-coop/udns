@@ -4,7 +4,7 @@
    to live and the resource record. This module uses a GADT to express the
    binding between record type and resource record. *)
 
-module MxSet : Set.S with type elt = int * Domain_name.t
+module MxSet : Set.S with type elt = Udns_types.mx
 (** A set of MX records. *)
 
 module TxtSet : Set.S with type elt = string list
@@ -31,20 +31,20 @@ module TlsaSet : Set.S with type elt = Udns_types.tlsa
 module SshfpSet : Set.S with type elt = Udns_types.sshfp
 (** A set of SSH FP records. *)
 
-type 'a k =
-  | Cname : (int32 * Domain_name.t) k
-  | Mx : (int32 * MxSet.t) k
-  | Ns : (int32 * Domain_name.Set.t) k
-  | Ptr : (int32 * Domain_name.t) k
+type _ k =
   | Soa : (int32 * Udns_types.soa) k
-  | Txt : (int32 * TxtSet.t) k
+  | Ns : (int32 * Domain_name.Set.t) k
+  | Mx : (int32 * MxSet.t) k
+  | Cname : (int32 * Domain_name.t) k
   | A : (int32 * Ipv4Set.t) k
   | Aaaa : (int32 * Ipv6Set.t) k
+  | Ptr : (int32 * Domain_name.t) k
   | Srv : (int32 * SrvSet.t) k
   | Dnskey : (int32 * DnskeySet.t) k
   | Caa : (int32 * CaaSet.t) k
   | Tlsa : (int32 * TlsaSet.t) k
   | Sshfp : (int32 * SshfpSet.t) k
+  | Txt : (int32 * TxtSet.t) k
   (** The type of resource record sets - keys and their values. The int32 is the
      time-to-live TTL of the resource record set.  *)
 
@@ -61,6 +61,13 @@ val k_to_rr_typ : 'a k -> Udns_enum.rr_typ
 
 val to_rr_typ : b -> Udns_enum.rr_typ
 (** [to_rr_typ binding] is the resource record typ of the binding [k]. *)
+
+val encode : Domain_name.t -> 'a k -> 'a ->
+  Udns_name.name_offset_map -> Cstruct.t -> int ->
+  Udns_name.name_offset_map * int
+
+val decode : Udns_name.offset_name_map -> Cstruct.t -> int ->
+  (Domain_name.t * b * Udns_name.offset_name_map * int, unit) result
 
 val to_rr : Domain_name.t -> b -> Udns_packet.rr list
 (** [to_rr name binding] results in a resource record list. *)

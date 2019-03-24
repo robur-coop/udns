@@ -125,7 +125,7 @@ rr:
                       serial = $7 ; refresh = $9 ; retry = $11 ; expiry = $13 ;
                       minimum = $15 })) }
  | TYPE_PTR s domain { B (Ptr, (0l, $3)) }
- | TYPE_MX s int16 s domain { B (Mx, (0l, MxSet.singleton ($3, $5))) }
+ | TYPE_MX s int16 s domain { B (Mx, (0l, MxSet.singleton { Udns_types.preference = $3 ; mail_exchange = $5 })) }
  | TYPE_TXT s charstrings { B (Txt, (0l, TxtSet.singleton $3)) }
      /* RFC 2782 */
  | TYPE_SRV s int16 s int16 s int16 s domain

@@ -251,10 +251,10 @@ let check trie =
             Error (`Empty (name, Udns_enum.MX))
           else
             let domain = match state' with `None -> name | `Soa zone -> zone in
-            Udns_map.MxSet.fold (fun (_, name) r ->
+            Udns_map.MxSet.fold (fun { Udns_types.mail_exchange ; _ } r ->
                 r >>= fun () ->
-                if Domain_name.sub ~subdomain:name ~domain then
-                  guard (has_address name) (`Missing_address name)
+                if Domain_name.sub ~subdomain:mail_exchange ~domain then
+                  guard (has_address mail_exchange) (`Missing_address mail_exchange)
                 else
                   Ok ())
               mxs (Ok ())

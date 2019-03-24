@@ -41,9 +41,6 @@ let pp_err ppf = function
   | `Tsig_not_last -> Fmt.string ppf "TSIG not last"
 (*BISECT-IGNORE-END*)
 
-let guard p err = if p then Ok () else Error err
-
-
 (* HEADER *)
 let hdr_len = 12
 
@@ -185,51 +182,6 @@ let decode_question names buf off =
 
 let encode_question offs buf off q =
   encode_ntc offs buf off (q.q_name, q.q_type, Udns_enum.clas_to_int Udns_enum.IN)
-
-let enc_character_str buf off s =
-  let l = String.length s in
-  Cstruct.set_uint8 buf off l ;
-  Cstruct.blit_from_string s 0 buf (succ off) l ;
-  off + l + 1
-
-let dec_character_str buf off =
-  let l = Cstruct.get_uint8 buf off in
-  let data = Cstruct.to_string (Cstruct.sub buf (succ off) l) in
-  (data, off + l + 1)
-
-let decode_txt buf ~off ~len =
-  let sub = Cstruct.sub buf off len in
-  let rec more acc off =
-    if len = off then List.rev acc
-    else
-      let d, off = dec_character_str sub off in
-      more (d::acc) off
-  in
-  more [] 0
-
-let decode_soa names buf off =
-  let hostname = false in
-  Udns_name.decode ~hostname names buf off >>= fun (nameserver, names, off) ->
-  Udns_name.decode ~hostname names buf off >>| fun (hostmaster, names, off) ->
-  let serial = Cstruct.BE.get_uint32 buf off in
-  let refresh = Cstruct.BE.get_uint32 buf (off + 4) in
-  let retry = Cstruct.BE.get_uint32 buf (off + 8) in
-  let expiry = Cstruct.BE.get_uint32 buf (off + 12) in
-  let minimum = Cstruct.BE.get_uint32 buf (off + 16) in
-  let soa =
-    { nameserver ; hostmaster ; serial ; refresh ; retry ; expiry ; minimum }
-  in
-  (soa, names, off + 20)
-
-let encode_soa offs buf off soa =
-  let offs, off = Udns_name.encode offs buf off soa.nameserver in
-  let offs, off = Udns_name.encode offs buf off soa.hostmaster in
-  Cstruct.BE.set_uint32 buf off soa.serial ;
-  Cstruct.BE.set_uint32 buf (off + 4) soa.refresh ;
-  Cstruct.BE.set_uint32 buf (off + 8) soa.retry ;
-  Cstruct.BE.set_uint32 buf (off + 12) soa.expiry ;
-  Cstruct.BE.set_uint32 buf (off + 16) soa.minimum ;
-  offs, off + 20
 
 (* TODO: not clear whether this is a good idea, or just reuse nocrypto's polyvars *)
 type tsig_algo =
@@ -502,63 +454,6 @@ let dnskey_to_tsig_algo key =
   | Udns_enum.SHA384 -> Some SHA384
   | Udns_enum.SHA512 -> Some SHA512
 
-let decode_dnskey names buf off =
-  let flags = Cstruct.BE.get_uint16 buf off
-  and proto = Cstruct.get_uint8 buf (off + 2)
-  and algo = Cstruct.get_uint8 buf (off + 3)
-  in
-  guard (proto = 3) (`BadProto proto) >>= fun () ->
-  match Udns_enum.int_to_dnskey algo with
-  | None -> Error (`BadAlgorithm algo)
-  | Some key_algorithm ->
-    let len = Udns_enum.dnskey_len key_algorithm in
-    let key = Cstruct.sub buf (off + 4) len in
-    Ok ({ flags ; key_algorithm ; key }, names, off + len + 4)
-
-let encode_dnskey t offs buf off =
-  Cstruct.BE.set_uint16 buf off t.flags ;
-  Cstruct.set_uint8 buf (off + 2) 3 ;
-  Cstruct.set_uint8 buf (off + 3) (Udns_enum.dnskey_to_int t.key_algorithm) ;
-  let kl = Cstruct.len t.key in
-  Cstruct.blit t.key 0 buf (off + 4) kl ;
-  offs, off + 4 + kl
-
-let decode_srv names buf off =
-  let priority = Cstruct.BE.get_uint16 buf off
-  and weight = Cstruct.BE.get_uint16 buf (off + 2)
-  and port = Cstruct.BE.get_uint16 buf (off + 4)
-  in
-  Udns_name.decode names buf (off + 6) >>= fun (target, names, off) ->
-  Ok ({ priority ; weight ; port ; target }, names, off)
-
-let encode_srv t offs buf off =
-  Cstruct.BE.set_uint16 buf off t.priority ;
-  Cstruct.BE.set_uint16 buf (off + 2) t.weight ;
-  Cstruct.BE.set_uint16 buf (off + 4) t.port ;
-  Udns_name.encode offs buf (off + 6) t.target
-
-let decode_caa buf off len =
-  let critical = Cstruct.get_uint8 buf off = 0x80
-  and tl = Cstruct.get_uint8 buf (succ off)
-  in
-  guard (tl > 0 && tl < 16) `BadCaaTag >>= fun () ->
-  let tag = Cstruct.sub buf (off + 2) tl in
-  let tag = Cstruct.to_string tag in
-  let vs = 2 + tl in
-  let value = Cstruct.sub buf (off + vs) (len - vs) in
-  let value = Astring.String.cuts ~sep:";" (Cstruct.to_string value) in
-  Ok { critical ; tag ; value }
-
-let encode_caa t buf off =
-  Cstruct.set_uint8 buf off (if t.critical then 0x80 else 0x0) ;
-  let tl = String.length t.tag in
-  Cstruct.set_uint8 buf (succ off) tl ;
-  Cstruct.blit_from_string t.tag 0 buf (off + 2) tl ;
-  let value = Astring.String.concat ~sep:";" t.value in
-  let vl = String.length value in
-  Cstruct.blit_from_string value 0 buf (off + 2 + tl) vl ;
-  off + tl + 2 + vl
-
 type extension =
   | Nsid of Cstruct.t
   | Cookie of Cstruct.t
@@ -667,47 +562,6 @@ let encode_extension t buf off =
 let encode_extensions t buf off =
   List.fold_left (fun off opt -> encode_extension opt buf off) off t
 
-let decode_tlsa buf off len =
-  let usage, selector, matching_type =
-    Cstruct.get_uint8 buf off,
-    Cstruct.get_uint8 buf (off + 1),
-    Cstruct.get_uint8 buf (off + 2)
-  in
-  let tlsa_data = Cstruct.sub buf (off + 3) (len - 3) in
-  match
-    Udns_enum.int_to_tlsa_cert_usage usage,
-    Udns_enum.int_to_tlsa_selector selector,
-    Udns_enum.int_to_tlsa_matching_type matching_type
-  with
-  | Some tlsa_cert_usage, Some tlsa_selector, Some tlsa_matching_type ->
-    Ok { tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data }
-  | None, _, _ -> Error (`BadTlsaCertUsage usage)
-  | _, None, _ -> Error (`BadTlsaSelector selector)
-  | _, _, None -> Error (`BadTlsaMatchingType matching_type)
-
-let encode_tlsa tlsa buf off =
-  Cstruct.set_uint8 buf off (Udns_enum.tlsa_cert_usage_to_int tlsa.tlsa_cert_usage) ;
-  Cstruct.set_uint8 buf (off + 1) (Udns_enum.tlsa_selector_to_int tlsa.tlsa_selector) ;
-  Cstruct.set_uint8 buf (off + 2) (Udns_enum.tlsa_matching_type_to_int tlsa.tlsa_matching_type) ;
-  let l = Cstruct.len tlsa.tlsa_data in
-  Cstruct.blit tlsa.tlsa_data 0 buf (off + 3) l ;
-  off + 3 + l
-
-let decode_sshfp buf off len =
-  let algo, typ = Cstruct.get_uint8 buf off, Cstruct.get_uint8 buf (succ off) in
-  let sshfp_fingerprint = Cstruct.sub buf (off + 2) (len - 2) in
-  match Udns_enum.int_to_sshfp_algorithm algo, Udns_enum.int_to_sshfp_type typ with
-  | Some sshfp_algorithm, Some sshfp_type ->
-    Ok { sshfp_algorithm ; sshfp_type ; sshfp_fingerprint }
-  | None, _ -> Error (`BadSshfpAlgorithm algo)
-  | _, None -> Error (`BadSshfpType typ)
-
-let encode_sshfp sshfp buf off =
-  Cstruct.set_uint8 buf off (Udns_enum.sshfp_algorithm_to_int sshfp.sshfp_algorithm) ;
-  Cstruct.set_uint8 buf (succ off) (Udns_enum.sshfp_type_to_int sshfp.sshfp_type) ;
-  let l = Cstruct.len sshfp.sshfp_fingerprint in
-  Cstruct.blit sshfp.sshfp_fingerprint 0 buf (off + 2) l ;
-  off + l + 2
 
 type rdata =
   | CNAME of Domain_name.t
@@ -865,7 +719,7 @@ let encode_rdata offs buf off = function
     Udns_name.encode offs buf (off + 2) nam
   | NS nam -> Udns_name.encode offs buf off nam
   | PTR nam -> Udns_name.encode offs buf off nam
-  | SOA soa -> encode_soa offs buf off soa
+  | SOA soa -> encode_soa soa offs buf off
   | TXT ds ->
     let off = List.fold_left (enc_character_str buf) off ds in
     offs, off
@@ -881,10 +735,10 @@ let encode_rdata offs buf off = function
   | SRV srv -> encode_srv srv offs buf off
   | TSIG t -> encode_tsig t offs buf off
   | DNSKEY t -> encode_dnskey t offs buf off
-  | CAA caa -> offs, encode_caa caa buf off
+  | CAA caa -> encode_caa caa offs buf off
   | OPTS opts -> offs, encode_extensions opts.extensions buf off
-  | TLSA tlsa -> offs, encode_tlsa tlsa buf off
-  | SSHFP sshfp -> offs, encode_sshfp sshfp buf off
+  | TLSA tlsa -> encode_tlsa tlsa offs buf off
+  | SSHFP sshfp -> encode_sshfp sshfp offs buf off
   | Raw (_, rr) ->
     let len = Cstruct.len rr in
     Cstruct.blit rr 0 buf off len ;

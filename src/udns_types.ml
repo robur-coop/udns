@@ -12,7 +12,6 @@ let pp_question ppf q =
   Fmt.pf ppf "%a %a?" Domain_name.pp q.q_name Udns_enum.pp_rr_typ q.q_type
 (*BISECT-IGNORE-END*)
 
-
 type soa = {
   nameserver : Domain_name.t ;
   hostmaster : Domain_name.t ;
@@ -32,14 +31,31 @@ let pp_soa ppf soa =
 
 let andThen v f = match v with 0 -> f | x -> x
 
+let int_compare (a : int) (b : int) = compare a b
+let int32_compare (a : int32) (b : int32) = Int32.compare a b
+
 let compare_soa soa soa' =
-  andThen (compare soa.serial soa.serial)
+  andThen (int32_compare soa.serial soa.serial)
     (andThen (Domain_name.compare soa.nameserver soa'.nameserver)
        (andThen (Domain_name.compare soa.hostmaster soa'.hostmaster)
-          (andThen (compare soa.refresh soa'.refresh)
-             (andThen (compare soa.retry soa'.retry)
-                (andThen (compare soa.expiry soa'.expiry)
-                   (compare soa.minimum soa'.minimum))))))
+          (andThen (int32_compare soa.refresh soa'.refresh)
+             (andThen (int32_compare soa.retry soa'.retry)
+                (andThen (int32_compare soa.expiry soa'.expiry)
+                   (int32_compare soa.minimum soa'.minimum))))))
+
+type mx = {
+  preference : int ;
+  mail_exchange : Domain_name.t ;
+}
+
+(*BISECT-IGNORE-BEGIN*)
+let pp_mx ppf { preference ; mail_exchange } =
+  Fmt.pf ppf "MX %u %a" preference Domain_name.pp mail_exchange
+(*BISECT-IGNORE-END*)
+
+let compare_mx mx mx' =
+  andThen (int_compare mx.preference mx'.preference)
+    (Domain_name.compare mx.mail_exchange mx'.mail_exchange)
 
 type dnskey = {
   flags : int ; (* uint16 *)
