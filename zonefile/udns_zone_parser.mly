@@ -160,7 +160,7 @@ rr:
        | None -> parse_error ("DNSKEY algorithm not supported " ^ string_of_int $7)
        | Some x ->
           let dnskey = { Udns_types.flags = $3 ; key_algorithm = x ; key = Cstruct.of_string $9 } in
-          B (Dnskey, DnskeySet.singleton dnskey)
+          B (Dnskey, (0l, DnskeySet.singleton dnskey))
      }
  | TYPE_CAA s int16 s charstring s charstrings
      { let critical = if $3 = 0x80 then true else false in

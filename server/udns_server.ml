@@ -138,7 +138,7 @@ module Authentication = struct
     in
     let keys = match Udns_trie.lookup name Udns_map.Dnskey trie with
       | Error _ -> Udns_map.DnskeySet.singleton key
-      | Ok keys ->
+      | Ok (_, keys) ->
         Log.warn (fun m -> m "replacing unexpected Dnskey (name %a, have %a, got %a)"
                      Domain_name.pp name
                      Fmt.(list ~sep:(unit ",") Udns_types.pp_dnskey)
@@ -147,7 +147,7 @@ module Authentication = struct
         Udns_map.DnskeySet.singleton key
     in
     let trie' = Udns_trie.insert zone Udns_map.Soa soa trie in
-    Udns_trie.insert name Udns_map.Dnskey keys trie'
+    Udns_trie.insert name Udns_map.Dnskey (0l, keys) trie'
 
   let of_keys keys =
     List.fold_left (fun trie (name, key) -> add_key trie name key)
@@ -166,7 +166,7 @@ module Authentication = struct
 
   let find_key t name =
     match Udns_trie.lookup name Udns_map.Dnskey (fst t) with
-    | Ok keys ->
+    | Ok (_, keys) ->
       if Udns_map.DnskeySet.cardinal keys = 1 then
         Some (Udns_map.DnskeySet.choose keys)
       else begin

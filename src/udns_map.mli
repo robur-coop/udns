@@ -41,7 +41,7 @@ type 'a k =
   | A : (int32 * Ipv4Set.t) k
   | Aaaa : (int32 * Ipv6Set.t) k
   | Srv : (int32 * SrvSet.t) k
-  | Dnskey : DnskeySet.t k
+  | Dnskey : (int32 * DnskeySet.t) k
   | Caa : (int32 * CaaSet.t) k
   | Tlsa : (int32 * TlsaSet.t) k
   | Sshfp : (int32 * SshfpSet.t) k

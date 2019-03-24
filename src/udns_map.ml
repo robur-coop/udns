@@ -60,7 +60,7 @@ type 'a k =
   | A : (int32 * Ipv4Set.t) k
   | Aaaa : (int32 * Ipv6Set.t) k
   | Srv : (int32 * SrvSet.t) k
-  | Dnskey : DnskeySet.t k
+  | Dnskey : (int32 * DnskeySet.t) k
   | Caa : (int32 * CaaSet.t) k
   | Tlsa : (int32 * TlsaSet.t) k
   | Sshfp : (int32 * SshfpSet.t) k
@@ -79,7 +79,7 @@ let combine : type a. a k -> a -> a option -> a option = fun k v old ->
         | A, (_, ips), (ttl, ips') -> (ttl, Ipv4Set.union ips ips')
         | Aaaa, (_, ips), (ttl, ips') -> (ttl, Ipv6Set.union ips ips')
         | Srv, (_, srvs), (ttl, srvs') -> (ttl, SrvSet.union srvs srvs')
-        | Dnskey, keys, keys' -> DnskeySet.union keys keys'
+        | Dnskey, (_, keys), (ttl, keys') -> (ttl, DnskeySet.union keys keys')
         | Caa, (_, caas), (ttl, caas') -> (ttl, CaaSet.union caas caas')
         | Tlsa, (_, tlsas), (ttl, tlsas') -> (ttl, TlsaSet.union tlsas tlsas')
         | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, SshfpSet.union sshfps sshfps'))
@@ -130,8 +130,8 @@ module K = struct
     | Srv, (ttl, srvs) ->
       Fmt.pf ppf "srv ttl %lu %a" ttl
         Fmt.(list ~sep:(unit ";@,") Udns_types.pp_srv) (SrvSet.elements srvs)
-    | Dnskey, keys ->
-      Fmt.pf ppf "dnskey %a"
+    | Dnskey, (ttl, keys) ->
+      Fmt.pf ppf "dnskey %lu %a" ttl
         Fmt.(list ~sep:(unit ";@,") Udns_types.pp_dnskey)
         (DnskeySet.elements keys)
     | Caa, (ttl, caas) ->
@@ -216,10 +216,11 @@ module K = struct
               srv.Udns_types.priority srv.Udns_types.weight srv.Udns_types.port
               (name srv.Udns_types.target) :: acc)
           srvs []
-      | Dnskey, keys ->
+      | Dnskey, (ttl, keys) ->
         DnskeySet.fold (fun key acc ->
-            Fmt.strf "%s\t300\tDNSKEY\t%u\t3\t%d\t%s"
-              str_name key.Udns_types.flags
+            Fmt.strf "%s%a\tDNSKEY\t%u\t3\t%d\t%s"
+              str_name ttl_fmt (ttl_opt ttl)
+              key.Udns_types.flags
               (Udns_enum.dnskey_to_int key.Udns_types.key_algorithm)
               (hex key.Udns_types.key) :: acc)
           keys []
@@ -289,7 +290,7 @@ let equal_b b b' = match b, b' with
     Ipv6Set.equal aaaas aaaas'
   | B (Srv, (_, srvs)), B (Srv, (_, srvs')) ->
     SrvSet.equal srvs srvs'
-  | B (Dnskey, keys), B (Dnskey, keys') ->
+  | B (Dnskey, (_, keys)), B (Dnskey, (_, keys')) ->
     DnskeySet.equal keys keys'
   | B (Caa, (_, caas)), B (Caa, (_, caas')) ->
     CaaSet.equal caas caas'
@@ -336,7 +337,7 @@ let to_rdata : b -> int32 * Udns_packet.rdata list = fun (B (k, v)) ->
     ttl, Ipv6Set.fold (fun aaaa acc -> Udns_packet.AAAA aaaa :: acc) aaaas []
   | Srv, (ttl, srvs) ->
     ttl, SrvSet.fold (fun srv acc -> Udns_packet.SRV srv :: acc) srvs []
-  | Dnskey, dnskeys ->
+  | Dnskey, (_, dnskeys) ->
     0l, DnskeySet.fold (fun key acc -> Udns_packet.DNSKEY key :: acc) dnskeys []
   | Caa, (ttl, caas) ->
     ttl, CaaSet.fold (fun caa acc -> Udns_packet.CAA caa :: acc) caas []
@@ -380,7 +381,7 @@ let of_rdata : int32 -> Udns_packet.rdata -> b option = fun ttl rd ->
   | Udns_packet.SRV srv ->
     Some (B (Srv, (ttl, SrvSet.singleton srv)))
   | Udns_packet.DNSKEY key ->
-    Some (B (Dnskey, DnskeySet.singleton key))
+    Some (B (Dnskey, (300l, DnskeySet.singleton key)))
   | Udns_packet.CAA caa ->
     Some (B (Caa, (ttl, CaaSet.singleton caa)))
   | Udns_packet.TLSA tlsa ->
@@ -403,8 +404,8 @@ let add_rdata : b -> Udns_packet.rdata -> b option = fun v rdata ->
     Some (B (Aaaa, (ttl, Ipv6Set.add ip ips)))
   | B (Srv, (ttl, srvs)), Udns_packet.SRV srv ->
     Some (B (Srv, (ttl, SrvSet.add srv srvs)))
-  | B (Dnskey, keys), Udns_packet.DNSKEY key ->
-    Some (B (Dnskey, DnskeySet.add key keys))
+  | B (Dnskey, (ttl, keys)), Udns_packet.DNSKEY key ->
+    Some (B (Dnskey, (ttl, DnskeySet.add key keys)))
   | B (Caa, (ttl, caas)), Udns_packet.CAA caa ->
     Some (B (Caa, (ttl, CaaSet.add caa caas)))
   | B (Tlsa, (ttl, tlsas)), Udns_packet.TLSA tlsa ->
@@ -433,9 +434,9 @@ let remove_rdata : b -> Udns_packet.rdata -> b option = fun v rdata ->
   | B (Srv, (ttl, srvs)), Udns_packet.SRV srv ->
     let srvs' = SrvSet.remove srv srvs in
     if SrvSet.is_empty srvs' then None else Some (B (Srv, (ttl, srvs')))
-  | B (Dnskey, keys), Udns_packet.DNSKEY key ->
+  | B (Dnskey, (ttl, keys)), Udns_packet.DNSKEY key ->
     let keys' = DnskeySet.remove key keys in
-    if DnskeySet.is_empty keys' then None else Some (B (Dnskey, keys'))
+    if DnskeySet.is_empty keys' then None else Some (B (Dnskey, (ttl, keys')))
   | B (Caa, (ttl, caas)), Udns_packet.CAA caa ->
     let caas' = CaaSet.remove caa caas in
     if CaaSet.is_empty caas' then None else Some (B (Caa, (ttl, caas')))
