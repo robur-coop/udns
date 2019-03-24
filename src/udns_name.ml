@@ -23,6 +23,8 @@ let pp_err ppf = function
   | `TooLong -> Fmt.string ppf "name too long"
 (*BISECT-IGNORE-END*)
 
+type offset_name_map = (Domain_name.t * int) IntMap.t
+
 open Rresult.R.Infix
 
 let ptr_tag = 0xC0 (* = 1100 0000 *)
@@ -67,6 +69,8 @@ let decode ?(hostname = true) names buf off =
     Error (`BadContent (to_string t))
   else
     Ok (t, names, foff)
+
+type name_offset_map = int Domain_name.Map.t
 
 let encode ?(compress = true) names buf off name =
   let encode_lbl lbl off =

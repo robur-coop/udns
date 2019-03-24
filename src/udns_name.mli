@@ -14,8 +14,12 @@ type err =
 val pp_err : err Fmt.t
 (** [pp ppf error] pretty prints the [error] on [ppf]. *)
 
-val decode : ?hostname:bool -> (Domain_name.t * int) IntMap.t -> Cstruct.t ->
-  int -> (Domain_name.t * (Domain_name.t * int) IntMap.t * int, [> err ]) result
+type offset_name_map = (Domain_name.t * int) IntMap.t
+(** The type of a map which keys are integers, and values being domain names
+    and their size. *)
+
+val decode : ?hostname:bool -> offset_name_map -> Cstruct.t ->
+  int -> (Domain_name.t * offset_name_map * int, [> err ]) result
 (** [decode ~hostname map buf off] decodes a domain name from [buf] at
     position [off].  If [hostname] is provided and [true] (the default), the
     domain name is additionally checked for being a hostname using
@@ -29,8 +33,12 @@ val decode : ?hostname:bool -> (Domain_name.t * int) IntMap.t -> Cstruct.t ->
     extended map, and the consumed bytes (as offset into the buffer), or an
     error.  *)
 
-val encode : ?compress:bool -> int Domain_name.Map.t -> Cstruct.t -> int ->
-  Domain_name.t -> int Domain_name.Map.t * int
+type name_offset_map = int Domain_name.Map.t
+(** The type of a map which keys are domain names, and values being integer
+   offsets. *)
+
+val encode : ?compress:bool -> name_offset_map -> Cstruct.t -> int ->
+  Domain_name.t -> name_offset_map * int
 (** [encode ~compress map buf off t] encodes [t] into [buf], extending the
     [map].  If [compress] is [true] (the default), and a (sub)domain name of [t]
     is in [map], a pointer is inserted instead of the full domain name.
