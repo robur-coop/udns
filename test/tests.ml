@@ -239,9 +239,6 @@ end
 
 
 module Packet = struct
-  open Udns_types
-  open Udns_packet
-
   let p_err =
     let module M = struct
       type t = [ Udns_name.err | `BadTTL of int32
@@ -263,7 +260,7 @@ module Packet = struct
                | `Multiple_tsig | `Multiple_edns
                | `Tsig_not_last
              ]
-      let pp = pp_err
+      let pp = Udns.pp_err
       let equal a b = match a, b with
         | `Partial, `Partial -> true
         | `TooLong, `TooLong -> true
@@ -303,11 +300,9 @@ module Packet = struct
     end in
     (module M: Alcotest.TESTABLE with type t = M.t)
 
-  let question_equal a b =
-    Domain_name.compare a.q_name b.q_name = 0 &&
-    compare a.q_type b.q_type = 0
+  let question_equal a b = Udns.Question.compare a b = 0
 
-  let prereq_equal a b = match a, b with
+(*  let prereq_equal a b = match a, b with
     | Exists (name, typ), Exists (name', typ') ->
       Domain_name.equal name name' && typ = typ'
     | Exists_data (name, rd), Exists_data (name', rd') ->
@@ -330,7 +325,7 @@ module Packet = struct
     | Add rr, Add rr' ->
       rr_equal rr rr'
     | _ -> false
-
+*)
   let header_equal a b =
     a.id = b.id &&
     a.query = b.query &&

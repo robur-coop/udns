@@ -1,11 +1,5 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
-
-open Udns_types
-
-open Rresult.R.Infix
-
-let andThen v f = match v with 0 -> f | x -> x
-
+(*
 (*BISECT-IGNORE-BEGIN*)
 let pp_err ppf = function
   | #Udns_name.err as e -> Udns_name.pp_err ppf e
@@ -183,481 +177,6 @@ let decode_question names buf off =
 let encode_question offs buf off q =
   encode_ntc offs buf off (q.q_name, q.q_type, Udns_enum.clas_to_int Udns_enum.IN)
 
-(* TODO: not clear whether this is a good idea, or just reuse nocrypto's polyvars *)
-type tsig_algo =
-  | SHA1
-  | SHA224
-  | SHA256
-  | SHA384
-  | SHA512
-
-type tsig = {
-  algorithm : tsig_algo ;
-  signed : Ptime.t ;
-  fudge : Ptime.Span.t ;
-  mac : Cstruct.t ;
-  original_id : int ; (* again 16 bit *)
-  error : Udns_enum.rcode ;
-  other : Ptime.t option
-}
-
-let algo_to_name, algo_of_name =
-  let of_s = Domain_name.of_string_exn in
-  let map =
-    [ (* of_s "HMAC-MD5.SIG-ALG.REG.INT", MD5 ; *)
-      of_s "hmac-sha1", SHA1 ;
-      of_s "hmac-sha224", SHA224 ;
-      of_s "hmac-sha256", SHA256 ;
-      of_s "hmac-sha384", SHA384 ;
-      of_s "hmac-sha512", SHA512 ]
-  in
-  (fun a -> fst (List.find (fun (_, t) -> t = a) map)),
-  (fun b ->
-     try Some (snd (List.find (fun (n, _) -> Domain_name.equal b n) map))
-     with Not_found -> None)
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_tsig_algo ppf a = Domain_name.pp ppf (algo_to_name a)
-(*BISECT-IGNORE-END*)
-
-(* this is here because I don't like float, and rather convert Ptime.t to int64 *)
-let s_in_d = 86_400L
-let ps_in_s = 1_000_000_000_000L
-
-let ptime_span_to_int64 ts =
-  let d_min, d_max = Int64.(div min_int s_in_d, div max_int s_in_d) in
-  let d, ps = Ptime.Span.to_d_ps ts in
-  let d = Int64.of_int d in
-  if d < d_min || d > d_max then
-    None
-  else
-    let s = Int64.mul d s_in_d in
-    let s' = Int64.(add s (div ps ps_in_s)) in
-    if s' < s then
-      None
-    else
-      Some s'
-
-let ptime_of_int64 s =
-  let d, ps = Int64.(div s s_in_d, mul (rem s s_in_d) ps_in_s) in
-  if d < Int64.of_int min_int || d > Int64.of_int max_int then
-    None
-  else
-    Some (Ptime.v (Int64.to_int d, ps))
-
-let valid_time now tsig =
-  let ts = tsig.signed
-  and fudge = tsig.fudge
-  in
-  match Ptime.add_span now fudge, Ptime.sub_span now fudge with
-  | None, _ -> false
-  | _, None -> false
-  | Some late, Some early ->
-    Ptime.is_earlier ts ~than:late && Ptime.is_later ts ~than:early
-
-let tsig ~algorithm ~signed ?(fudge = Ptime.Span.of_int_s 300)
-    ?(mac = Cstruct.create 0) ?(original_id = 0) ?(error = Udns_enum.NoError)
-    ?other () =
-  match ptime_span_to_int64 (Ptime.to_span signed), ptime_span_to_int64 fudge with
-  | None, _ | _, None -> None
-  | Some ts, Some fu ->
-    if
-      Int64.logand 0xffff_0000_0000_0000L ts = 0L &&
-      Int64.logand 0xffff_ffff_ffff_0000L fu = 0L
-    then
-      Some { algorithm ; signed ; fudge ; mac ; original_id ; error ; other }
-    else
-      None
-
-let with_mac tsig mac = { tsig with mac }
-
-let with_error tsig error = { tsig with error }
-
-let with_signed tsig signed =
-  match ptime_span_to_int64 (Ptime.to_span signed) with
-  | Some x when Int64.logand 0xffff_0000_0000_0000L x = 0L ->
-    Some { tsig with signed }
-  | _ -> None
-
-let with_other tsig other =
-  match other with
-  | None -> Some { tsig with other }
-  | Some ts ->
-    match ptime_span_to_int64 (Ptime.to_span ts) with
-    | Some x when Int64.logand 0xffff_0000_0000_0000L x = 0L ->
-      Some { tsig with other }
-    | _ -> None
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_tsig ppf t =
-  Fmt.pf ppf
-    "TSIG %a signed %a fudge %a mac %a original id %04X err %a other %a"
-    pp_tsig_algo t.algorithm
-    (Ptime.pp_rfc3339 ()) t.signed Ptime.Span.pp t.fudge
-    Cstruct.hexdump_pp t.mac t.original_id Udns_enum.pp_rcode t.error
-    Fmt.(option ~none:(unit "none") (Ptime.pp_rfc3339 ())) t.other
-(*BISECT-IGNORE-END*)
-
-let decode_48bit_time buf off =
-  let a = Cstruct.BE.get_uint16 buf off
-  and b = Cstruct.BE.get_uint16 buf (off + 2)
-  and c = Cstruct.BE.get_uint16 buf (off + 4)
-  in
-  Int64.(add
-           (add (shift_left (of_int a) 32) (shift_left (of_int b) 16))
-           (of_int c))
-
-let decode_tsig names buf off =
-  let l = Cstruct.len buf in
-  Udns_name.decode ~hostname:false names buf off >>= fun (algorithm, names, off) ->
-  guard (l > off + 10) `Partial >>= fun () ->
-  let signed = decode_48bit_time buf off
-  and fudge = Cstruct.BE.get_uint16 buf (off + 6)
-  and mac_len = Cstruct.BE.get_uint16 buf (off + 8)
-  in
-  guard (l >= off + 10 + mac_len + 6) `Partial >>= fun () ->
-  let mac = Cstruct.sub buf (off + 10) mac_len
-  and original_id = Cstruct.BE.get_uint16 buf (off + 10 + mac_len)
-  and error = Cstruct.BE.get_uint16 buf (off + 12 + mac_len)
-  and other_len = Cstruct.BE.get_uint16 buf (off + 14 + mac_len)
-  in
-  guard (l = off + 10 + mac_len + 6 + other_len && (other_len = 0 || other_len = 6))
-    `Partial >>= fun () ->
-  match algo_of_name algorithm, ptime_of_int64 signed, Udns_enum.int_to_rcode error with
-  | None, _, _ -> Error (`InvalidAlgorithm algorithm)
-  | _, None, _ -> Error (`InvalidTimestamp signed)
-  | _, _, None -> Error (`BadRcode error)
-  | Some algorithm, Some signed, Some error ->
-    (if other_len = 0 then
-       Ok None
-     else
-       let other = decode_48bit_time buf (off + 16 + mac_len) in
-       match ptime_of_int64 other with
-       | None -> Error (`InvalidTimestamp other)
-       | Some x -> Ok (Some x)) >>= fun other ->
-    let fudge = Ptime.Span.of_int_s fudge in
-    Ok ({ algorithm ; signed ; fudge ; mac ; original_id ; error ; other },
-        names,
-        off + 16 + mac_len + other_len)
-
-let encode_48bit_time buf ?(off = 0) ts =
-  match ptime_span_to_int64 (Ptime.to_span ts) with
-  | None ->
-    Logs.warn (fun m -> m "couldn't convert (to_span %a) to int64" Ptime.pp ts)
-  | Some secs ->
-    if Int64.logand secs 0xffff_0000_0000_0000L > 0L then
-      Logs.warn (fun m -> m "secs %Lu > 48 bit" secs)
-    else
-      let a, b, c =
-        let f s = Int64.(to_int (logand 0xffffL (shift_right secs s))) in
-        f 32, f 16, f 0
-      in
-      Cstruct.BE.set_uint16 buf off a ;
-      Cstruct.BE.set_uint16 buf (off + 2) b ;
-      Cstruct.BE.set_uint16 buf (off + 4) c
-
-let encode_16bit_time buf ?(off = 0) ts =
-  match ptime_span_to_int64 ts with
-  | None ->
-    Logs.warn (fun m -> m "couldn't convert span %a to int64" Ptime.Span.pp ts)
-  | Some secs ->
-    if Int64.logand secs 0xffff_ffff_ffff_0000L > 0L then
-      Logs.warn (fun m -> m "secs %Lu > 16 bit" secs)
-    else
-      let a = Int64.(to_int (logand 0xffffL secs)) in
-      Cstruct.BE.set_uint16 buf off a
-
-let encode_tsig t offs buf off =
-  let algo = algo_to_name t.algorithm in
-  let offs, off = Udns_name.encode ~compress:false offs buf off algo in
-  encode_48bit_time buf ~off t.signed ;
-  encode_16bit_time buf ~off:(off + 6) t.fudge ;
-  let mac_len = Cstruct.len t.mac in
-  Cstruct.BE.set_uint16 buf (off + 8) mac_len ;
-  Cstruct.blit t.mac 0 buf (off + 10) mac_len ;
-  Cstruct.BE.set_uint16 buf (off + 10 + mac_len) t.original_id ;
-  Cstruct.BE.set_uint16 buf (off + 12 + mac_len) (Udns_enum.rcode_to_int t.error) ;
-  let other_len = match t.other with None -> 0 | Some _ -> 6 in
-  Cstruct.BE.set_uint16 buf (off + 14 + mac_len) other_len ;
-  (match t.other with
-   | None -> ()
-   | Some t -> encode_48bit_time buf ~off:(off + 16 + mac_len) t) ;
-  offs, off + 16 + mac_len + other_len
-
-let canonical_name name =
-  let buf = Cstruct.create 255
-  and emp = Domain_name.Map.empty
-  and nam = Domain_name.canonical name
-  in
-  let _, off = Udns_name.encode ~compress:false emp buf 0 nam in
-  Cstruct.sub buf 0 off
-
-let encode_raw_tsig_base name t =
-  let name = canonical_name name
-  and aname = canonical_name (algo_to_name t.algorithm)
-  in
-  let clttl = Cstruct.create 6 in
-  Cstruct.BE.set_uint16 clttl 0 Udns_enum.(clas_to_int ANY_CLASS) ;
-  Cstruct.BE.set_uint32 clttl 2 0l ;
-  let time = Cstruct.create 8 in
-  encode_48bit_time time t.signed ;
-  encode_16bit_time time ~off:6 t.fudge ;
-  let other =
-    let buf = match t.other with
-      | None ->
-        let buf = Cstruct.create 4 in
-        Cstruct.BE.set_uint16 buf 2 0 ;
-        buf
-      | Some t ->
-        let buf = Cstruct.create 10 in
-        Cstruct.BE.set_uint16 buf 2 6 ;
-        encode_48bit_time buf ~off:4 t ;
-        buf
-    in
-    Cstruct.BE.set_uint16 buf 0 (Udns_enum.rcode_to_int t.error) ;
-    buf
-  in
-  name, clttl, [ aname ; time ], other
-
-let encode_raw_tsig name t =
-  let name, clttl, mid, fin = encode_raw_tsig_base name t in
-  Cstruct.concat (name :: clttl :: mid @ [ fin ])
-
-let encode_full_tsig name t =
-  let name, clttl, mid, fin = encode_raw_tsig_base name t in
-  let typ =
-    let typ = Cstruct.create 2 in
-    Cstruct.BE.set_uint16 typ 0 Udns_enum.(rr_typ_to_int TSIG) ;
-    typ
-  and mac =
-    let len = Cstruct.len t.mac in
-    let l = Cstruct.create 2 in
-    Cstruct.BE.set_uint16 l 0 len ;
-    let orig = Cstruct.create 2 in
-    Cstruct.BE.set_uint16 orig 0 t.original_id ;
-    [ l ; t.mac ; orig ]
-  in
-  let rdata = Cstruct.concat (mid @ mac @ [ fin ]) in
-  let len =
-    let buf = Cstruct.create 2 in
-    Cstruct.BE.set_uint16 buf 0 (Cstruct.len rdata) ;
-    buf
-  in
-  Cstruct.concat [ name ; typ ; clttl ; len ; rdata ]
-
-let dnskey_to_tsig_algo key =
-  match key.key_algorithm with
-  | Udns_enum.MD5 -> None
-  | Udns_enum.SHA1 -> Some SHA1
-  | Udns_enum.SHA224 -> Some SHA224
-  | Udns_enum.SHA256 -> Some SHA256
-  | Udns_enum.SHA384 -> Some SHA384
-  | Udns_enum.SHA512 -> Some SHA512
-
-type extension =
-  | Nsid of Cstruct.t
-  | Cookie of Cstruct.t
-  | Tcp_keepalive of int option
-  | Padding of int
-  | Extension of int * Cstruct.t
-
-type opt = {
-  extended_rcode : int ;
-  version : int ;
-  dnssec_ok : bool ;
-  payload_size : int ;
-  extensions : extension list ;
-}
-
-let opt ?(extended_rcode = 0) ?(version = 0) ?(dnssec_ok = false) ?(payload_size = 512) ?(extensions = []) () =
-  { extended_rcode ; version ; dnssec_ok ; payload_size ; extensions }
-
-(* once we handle cookies, dnssec, or other extensions, need to adjust *)
-let reply_opt = function
-  | None -> None, None
-  | Some edns ->
-    let payload_size = edns.payload_size in
-    Some payload_size, Some (opt ~payload_size ())
-
-let compare_extension a b = match a, b with
-  | Nsid a, Nsid b -> Cstruct.compare a b
-  | Nsid _, _ -> 1 | _, Nsid _ -> -1
-  | Cookie a, Cookie b -> Cstruct.compare a b
-  | Cookie _, _ -> 1 | _, Cookie _ -> -1
-  | Tcp_keepalive a, Tcp_keepalive b -> compare a b
-  | Tcp_keepalive _, _ -> 1 | _, Tcp_keepalive _ -> -1
-  | Padding a, Padding b -> compare a b
-  | Padding _, _ -> 1 | _, Padding _ -> -1
-  | Extension (t, v), Extension (t', v') -> andThen (compare t t') (Cstruct.compare v v')
-
-let compare_opt a b =
-  andThen (compare a.extended_rcode b.extended_rcode)
-    (andThen (compare a.version b.version)
-       (andThen (compare a.dnssec_ok b.dnssec_ok)
-          (andThen (compare a.payload_size b.payload_size)
-             (List.fold_left2
-                (fun r a b -> if r = 0 then compare_extension a b else r)
-                (compare (List.length a.extensions) (List.length b.extensions))
-                a.extensions b.extensions))))
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_extension ppf = function
-  | Nsid cs -> Fmt.pf ppf "nsid %a" Cstruct.hexdump_pp cs
-  | Cookie cs -> Fmt.pf ppf "cookie %a" Cstruct.hexdump_pp cs
-  | Tcp_keepalive i -> Fmt.pf ppf "keepalive %a" Fmt.(option ~none:(unit "none") int) i
-  | Padding i -> Fmt.pf ppf "padding %d" i
-  | Extension (t, v) -> Fmt.pf ppf "unknown option %d: %a" t Cstruct.hexdump_pp v
-
-let pp_opt ppf opt =
-  Fmt.(pf ppf "opt (ext %u version %u dnssec_ok %b payload_size %u extensions %a"
-         opt.extended_rcode opt.version opt.dnssec_ok opt.payload_size
-         (list ~sep:(unit ", ") pp_extension) opt.extensions)
-(*BISECT-IGNORE-END*)
-
-let decode_extension buf off len =
-  let code = Cstruct.BE.get_uint16 buf off
-  and tl = Cstruct.BE.get_uint16 buf (off + 2)
-  in
-  guard (tl <= len - 4) `BadOpt >>= fun () ->
-  let v = Cstruct.sub buf (off + 4) tl in
-  let len = tl + 4 in
-  match Udns_enum.int_to_edns_opt code with
-  | Some Udns_enum.NSID -> Ok (Nsid v, len)
-  | Some Udns_enum.Cookie -> Ok (Cookie v, len)
-  | Some Udns_enum.TCP_keepalive ->
-    (begin match tl with
-       | 0 -> Ok None
-       | 2 -> Ok (Some (Cstruct.BE.get_uint16 v 0))
-       | _ -> Error `BadKeepalive
-     end >>= fun i ->
-     Ok (Tcp_keepalive i, len))
-  | Some Udns_enum.Padding -> Ok (Padding tl, len)
-  | _ -> Ok (Extension (code, v), len)
-
-let decode_extensions buf off len =
-  let rec one acc pos =
-    if len = pos - off then
-      Ok (List.rev acc)
-    else
-      decode_extension buf pos (len - (pos - off)) >>= fun (opt, len) ->
-      one (opt :: acc) (pos + len)
-  in
-  one [] off
-
-let encode_extension t buf off =
-  let o_i = Udns_enum.edns_opt_to_int in
-  let code, v = match t with
-    | Nsid cs -> o_i Udns_enum.NSID, cs
-    | Cookie cs -> o_i Udns_enum.Cookie, cs
-    | Tcp_keepalive i -> o_i Udns_enum.TCP_keepalive, (match i with None -> Cstruct.create 0 | Some i -> let buf = Cstruct.create 2 in Cstruct.BE.set_uint16 buf 0 i ; buf)
-    | Padding i -> o_i Udns_enum.Padding, Cstruct.create i
-    | Extension (t, v) -> t, v
-  in
-  let l = Cstruct.len v in
-  Cstruct.BE.set_uint16 buf off code ;
-  Cstruct.BE.set_uint16 buf (off + 2) l ;
-  Cstruct.blit v 0 buf (off + 4) l ;
-  off + 4 + l
-
-let encode_extensions t buf off =
-  List.fold_left (fun off opt -> encode_extension opt buf off) off t
-
-
-type rdata =
-  | CNAME of Domain_name.t
-  | MX of int * Domain_name.t
-  | NS of Domain_name.t
-  | PTR of Domain_name.t
-  | SOA of soa
-  | TXT of string list
-  | A of Ipaddr.V4.t
-  | AAAA of Ipaddr.V6.t
-  | SRV of srv
-  | TSIG of tsig
-  | DNSKEY of dnskey
-  | CAA of caa
-  | OPTS of opt
-  | TLSA of tlsa
-  | SSHFP of sshfp
-  | Raw of Udns_enum.rr_typ * Cstruct.t
-
-let compare_rdata a b = match a, b with
-  | CNAME a, CNAME a' -> Domain_name.compare a a'
-  | CNAME _, _ -> 1 | _, CNAME _ -> -1
-  | MX (p, a), MX (p', a') -> andThen (compare p p') (Domain_name.compare a a')
-  | MX _, _ -> 1 | _, MX _ -> -1
-  | NS a, NS a' -> Domain_name.compare a a'
-  | NS _, _ -> 1 | _, NS _ -> -1
-  | PTR a, PTR a' -> Domain_name.compare a a'
-  | PTR _, _ -> 1 | _, PTR _ -> -1
-  | SOA s, SOA s' -> compare_soa s s'
-  | SOA _, _ -> 1 | _, SOA _ -> -1
-  | TXT a, TXT a' ->
-    andThen (compare (List.length a) (List.length a'))
-      (List.fold_left2 (fun r a b -> match r with
-           | 0 -> String.compare a b
-           | x -> x)
-          0 a a')
-  | TXT _, _ -> 1 | _, TXT _ -> -1
-  | A a, A a' -> Ipaddr.V4.compare a a'
-  | A _, _ -> 1 | _, A _ -> -1
-  | AAAA a, AAAA a' -> Ipaddr.V6.compare a a'
-  | AAAA _, _ -> 1 | _, AAAA _ -> -1
-  | SRV srv, SRV srv' -> compare_srv srv srv'
-  | SRV _, _ -> 1 | _, SRV _ -> -1
-  | DNSKEY a, DNSKEY b -> compare_dnskey a b
-  | DNSKEY _, _ -> 1 | _, DNSKEY _ -> -1
-  | CAA a, CAA b -> compare_caa a b
-  | CAA _, _ -> 1 | _, CAA _ -> -1
-  | OPTS a, OPTS b -> compare_opt a b
-  | OPTS _, _ -> 1 | _, OPTS _ -> -1
-  | TLSA a, TLSA b -> compare_tlsa a b
-  | TLSA _, _ -> 1 | _, TLSA _ -> -1
-  | SSHFP a, SSHFP b -> compare_sshfp a b
-  | SSHFP _, _ -> 1 | _, SSHFP _ -> -1
-  | Raw (t, v), Raw (t', v') ->
-    andThen (compare t t') (Cstruct.compare v v')
-  | _ -> 1 (* TSIG is missing here expicitly, it's never supposed to be in any set! *)
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_rdata ppf = function
-  | CNAME n -> Fmt.pf ppf "CNAME %a" Domain_name.pp n
-  | MX (prio, n) -> Fmt.pf ppf "MX %d %a" prio Domain_name.pp n
-  | NS n -> Fmt.pf ppf "NS %a" Domain_name.pp n
-  | PTR n -> Fmt.pf ppf "PTR %a" Domain_name.pp n
-  | SOA s -> pp_soa ppf s
-  | TXT ds -> Fmt.pf ppf "TXT %a" (Fmt.list ~sep:(Fmt.unit ";@ ") Fmt.string) ds
-  | A ip -> Fmt.pf ppf "A %a" Ipaddr.V4.pp ip
-  | AAAA ip -> Fmt.pf ppf "AAAA %a" Ipaddr.V6.pp ip
-  | SRV srv -> pp_srv ppf srv
-  | TSIG ts -> pp_tsig ppf ts
-  | DNSKEY tk -> pp_dnskey ppf tk
-  | CAA caa -> pp_caa ppf caa
-  | OPTS opts -> pp_opt ppf opts
-  | TLSA tlsa -> pp_tlsa ppf tlsa
-  | SSHFP sshfp -> pp_sshfp ppf sshfp
-  | Raw (t, d) ->
-    Fmt.pf ppf "%a: %a" Udns_enum.pp_rr_typ t Cstruct.hexdump_pp d
-(*BISECT-IGNORE-END*)
-
-let rdata_to_rr_typ = function
-  | CNAME _ -> Udns_enum.CNAME
-  | MX _ -> Udns_enum.MX
-  | NS _ -> Udns_enum.NS
-  | PTR _ -> Udns_enum.PTR
-  | SOA _ -> Udns_enum.SOA
-  | TXT _ -> Udns_enum.TXT
-  | A _ -> Udns_enum.A
-  | AAAA _ -> Udns_enum.AAAA
-  | SRV _ -> Udns_enum.SRV
-  | TSIG _ -> Udns_enum.TSIG
-  | DNSKEY _ -> Udns_enum.DNSKEY
-  | CAA _ -> Udns_enum.CAA
-  | OPTS _ -> Udns_enum.OPT
-  | TLSA _ -> Udns_enum.TLSA
-  | SSHFP _ -> Udns_enum.SSHFP
-  | Raw (t, _) -> t
-
 let rdata_name = function
   | MX (_, n) -> Domain_name.Set.singleton n
   | NS n -> Domain_name.Set.singleton n
@@ -665,80 +184,14 @@ let rdata_name = function
   | _ -> Domain_name.Set.empty
 
 let decode_rdata names buf off len = function
-  | Udns_enum.CNAME ->
-    Udns_name.decode names buf off >>= fun (name, names, off) ->
-    Ok (CNAME name, names, off)
-  | Udns_enum.MX ->
-    let prio = Cstruct.BE.get_uint16 buf off in
-    Udns_name.decode ~hostname:false names buf (off + 2) >>= fun (name, names, off) ->
-    Ok (MX (prio, name), names, off)
-  | Udns_enum.NS ->
-    Udns_name.decode names buf off >>= fun (name, names, off) ->
-    Ok (NS name, names, off)
-  | Udns_enum.PTR ->
-    Udns_name.decode names buf off >>= fun (name, names, off) ->
-    Ok (PTR name, names, off)
-  | Udns_enum.SOA ->
-    decode_soa names buf off >>= fun (soa, names, off) ->
-    Ok (SOA soa, names, off)
-  | Udns_enum.TXT ->
-    let txts = decode_txt buf ~off ~len in
-    Ok (TXT txts, names, off + len)
-  | Udns_enum.A ->
-    let ip = Cstruct.BE.get_uint32 buf off in
-    Ok (A (Ipaddr.V4.of_int32 ip), names, off + 4)
-  | Udns_enum.AAAA ->
-    let iph = Cstruct.BE.get_uint64 buf off
-    and ipl = Cstruct.BE.get_uint64 buf (off + 8)
-    in
-    Ok (AAAA (Ipaddr.V6.of_int64 (iph, ipl)), names, off + 16)
-  | Udns_enum.SRV ->
-    decode_srv names buf off >>= fun (srv, names, off) ->
-    Ok (SRV srv, names, off)
   | Udns_enum.TSIG ->
     decode_tsig names buf off >>= fun (tsig, names, off) ->
     Ok (TSIG tsig, names, off)
-  | Udns_enum.DNSKEY ->
-    decode_dnskey names buf off >>= fun (tkey, names, off) ->
-    Ok (DNSKEY tkey, names, off)
-  | Udns_enum.CAA ->
-    decode_caa buf off len >>= fun caa ->
-    Ok (CAA caa, names, off + len)
-  | Udns_enum.TLSA ->
-    decode_tlsa buf off len >>= fun tlsa ->
-    Ok (TLSA tlsa, names, off + len)
-  | Udns_enum.SSHFP ->
-    decode_sshfp buf off len >>= fun sshfp ->
-    Ok (SSHFP sshfp, names, off + len)
   | x -> Ok (Raw (x, Cstruct.sub buf off len), names, off + len)
 
 let encode_rdata offs buf off = function
-  | CNAME nam -> Udns_name.encode offs buf off nam
-  | MX (prio, nam) ->
-    Cstruct.BE.set_uint16 buf off prio ;
-    Udns_name.encode offs buf (off + 2) nam
-  | NS nam -> Udns_name.encode offs buf off nam
-  | PTR nam -> Udns_name.encode offs buf off nam
-  | SOA soa -> encode_soa soa offs buf off
-  | TXT ds ->
-    let off = List.fold_left (enc_character_str buf) off ds in
-    offs, off
-  | A ip ->
-    let ip = Ipaddr.V4.to_int32 ip in
-    Cstruct.BE.set_uint32 buf off ip ;
-    offs, off + 4
-  | AAAA ip ->
-    let iph, ipl = Ipaddr.V6.to_int64 ip in
-    Cstruct.BE.set_uint64 buf off iph ;
-    Cstruct.BE.set_uint64 buf (off + 8) ipl ;
-    offs, off + 16
-  | SRV srv -> encode_srv srv offs buf off
   | TSIG t -> encode_tsig t offs buf off
-  | DNSKEY t -> encode_dnskey t offs buf off
-  | CAA caa -> encode_caa caa offs buf off
   | OPTS opts -> offs, encode_extensions opts.extensions buf off
-  | TLSA tlsa -> encode_tlsa tlsa offs buf off
-  | SSHFP sshfp -> encode_sshfp sshfp offs buf off
   | Raw (_, rr) ->
     let len = Cstruct.len rr in
     Cstruct.blit rr 0 buf off len ;
@@ -931,7 +384,7 @@ let pp_query ppf t =
     (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr) t.additional
 (*BISECT-IGNORE-END*)
 
-
+(*
 (* UPDATE *)
 type rr_prereq =
   | Exists of Domain_name.t * Udns_enum.rr_typ
@@ -1097,7 +550,7 @@ let pp_update ppf t =
     (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr_update) t.update
     (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr) t.addition
 (*BISECT-IGNORE-END*)
-
+*)
 let rec decode_n f names buf off acc = function
   | 0 -> Ok (names, off, List.rev acc)
   | n ->
@@ -1114,7 +567,7 @@ let rec decode_n_additional names buf off r (acc, opt, tsig) = function
       rdata_edns_tsig_ok ele opt tsig >>= fun (opt', tsig') ->
       decode_n_additional names buf off' (Some off) (ele :: acc, opt', tsig') (pred n)
     | Error e -> Error e
-
+(*
 let decode_update buf =
   guard (Cstruct.len buf >= hdr_len) `Partial >>= fun () ->
   let zcount = Cstruct.BE.get_uint16 buf 4
@@ -1144,7 +597,7 @@ let encode_update buf data =
   in
   List.fold_left (fun (offs, off) rr -> encode_rr_update offs buf off rr)
     (offs, off) data.update
-
+*)
 type v = [ `Query of query | `Update of update | `Notify of query ]
 type t = header * v * opt option * (Domain_name.t * tsig) option
 
@@ -1325,3 +778,4 @@ let error header v rcode =
     Some (Cstruct.sub errbuf 0 off, max_reply_udp)
   else
     None
+*)
