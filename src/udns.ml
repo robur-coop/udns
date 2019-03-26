@@ -78,7 +78,7 @@ module Name = struct
     let rec aux offsets off =
       match Cstruct.get_uint8 buf off with
       | 0 -> Ok ((`Z, off), offsets, succ off)
-      | i when i >= ptr_tag -> (* 192 is 1100_0000 which is the pointer tag *)
+      | i when i >= ptr_tag ->
         let ptr = (i - ptr_tag) lsl 8 + Cstruct.get_uint8 buf (succ off) in
         Ok ((`P ptr, off), offsets, off + 2)
       | i when i >= 64 -> Error (`BadTag i) (* bit patterns starting with 10 or 01 *)
@@ -99,9 +99,9 @@ module Name = struct
     (* fold over offs, insert into names Map, and reassemble the actual name *)
     let t = Array.(append (to_array name) (make (List.length offs) "")) in
     let names, _, size =
-      List.fold_left (fun (names, idx, size) (l, off) ->
-          let s = succ size + String.length l in
-          Array.set t idx l ;
+      List.fold_left (fun (names, idx, size) (label, off) ->
+          let s = succ size + String.length label in
+          Array.set t idx label ;
           let sub = of_array (Array.sub t 0 (succ idx)) in
           IntMap.add off (sub, s) names, succ idx, s)
         (names, Array.length (to_array name), size) offs
@@ -749,23 +749,31 @@ module Tsig = struct
              (add (shift_left (of_int a) 32) (shift_left (of_int b) 16))
              (of_int c))
 
-  let decode names buf ~off ~len:_ =
+  (* TODO maybe revise, esp. all the guards *)
+  let decode names buf ~off =
     let open Rresult.R.Infix in
-    let l = Cstruct.len buf in
-    Name.decode ~hostname:false names buf ~off >>= fun (algorithm, names, off) ->
-    guard (l > off + 10) `Partial >>= fun () ->
+    guard (Cstruct.len buf - off >= 6) `Partial >>= fun () ->
+    let ttl = Cstruct.BE.get_uint32 buf off in
+    guard (ttl = 0l) (`BadTTL ttl) >>= fun () ->
+    let len = Cstruct.BE.get_uint16 buf (off + 4) in
+    let rdata_start = off + 6 in
+    guard (Cstruct.len buf - rdata_start >= len) `Partial >>= fun () ->
+    Name.decode ~hostname:false names buf ~off:rdata_start >>= fun (algorithm, names, off) ->
+    guard (Cstruct.len buf - off >= 10) `Partial >>= fun () ->
     let signed = decode_48bit_time buf off
     and fudge = Cstruct.BE.get_uint16 buf (off + 6)
     and mac_len = Cstruct.BE.get_uint16 buf (off + 8)
     in
-    guard (l >= off + 10 + mac_len + 6) `Partial >>= fun () ->
+    guard (Cstruct.len buf - off >= 10 + mac_len + 6) `Partial >>= fun () ->
     let mac = Cstruct.sub buf (off + 10) mac_len
     and original_id = Cstruct.BE.get_uint16 buf (off + 10 + mac_len)
     and error = Cstruct.BE.get_uint16 buf (off + 12 + mac_len)
     and other_len = Cstruct.BE.get_uint16 buf (off + 14 + mac_len)
     in
-    guard (l = off + 10 + mac_len + 6 + other_len && (other_len = 0 || other_len = 6))
-      `Partial >>= fun () ->
+    let rdata_end = off + 10 + mac_len + 6 + other_len in
+    guard (rdata_end - rdata_start = len) `Partial >>= fun () ->
+    guard (Cstruct.len buf >= rdata_end) `Partial >>= fun () ->
+    guard (other_len = 0 || other_len = 6) `Partial >>= fun () -> (* TODO: better error! *)
     match algorithm_of_name algorithm, ptime_of_int64 signed, Udns_enum.int_to_rcode error with
     | None, _, _ -> Error (`InvalidAlgorithm algorithm)
     | _, None, _ -> Error (`InvalidTimestamp signed)
@@ -988,17 +996,38 @@ module Edns = struct
     | Some Udns_enum.Padding -> Ok (Padding tl, len)
     | _ -> Ok (Extension (code, v), len)
 
-  let decode names buf ~off ~len =
+  let decode_extensions buf ~len =
     let open Rresult.R.Infix in
     let rec one acc pos =
-      if len = pos - off then
+      if len = pos then
         Ok (List.rev acc)
       else
-        decode_extension buf ~off:pos ~len:(len - (pos - off)) >>= fun (opt, len) ->
+        decode_extension buf ~off:pos ~len:(len - pos) >>= fun (opt, len) ->
         one (opt :: acc) (pos + len)
     in
-    one [] off >>| fun exts ->
-    (exts, names, off + len)
+    one [] 0
+
+  let decode buf ~off =
+    let open Rresult.R.Infix in
+    (* EDNS is special -- the incoming off points to before name type clas *)
+    (* name must be the root, typ is OPT, class is used for length *)
+    guard (Cstruct.len buf - off >= 11) `Partial >>= fun () ->
+    guard (Cstruct.get_uint8 buf off = 0) `BadOpt >>= fun () ->
+    (* crazyness: payload_size is encoded in class *)
+    let payload_size = Cstruct.BE.get_uint16 buf (off + 3)
+    (* it continues: the ttl is split into: 8bit extended rcode, 8bit version, 1bit dnssec_ok, 7bit 0 *)
+    and extended_rcode = Cstruct.get_uint8 buf (off + 5)
+    and version = Cstruct.get_uint8 buf (off + 6)
+    and flags = Cstruct.BE.get_uint16 buf (off + 7)
+    and len = Cstruct.BE.get_uint16 buf (off + 9)
+    in
+    let off = off + 11 in
+    let dnssec_ok = flags land 0x8000 = 0x8000 in
+    guard (version = 0) (`Bad_edns_version version) >>= fun () ->
+    let exts_buf = Cstruct.sub buf off len in
+    (try decode_extensions exts_buf ~len with _ -> Error `Partial) >>= fun extensions ->
+    let opt = { extended_rcode ; version ; dnssec_ok ; payload_size ; extensions } in
+    Ok (opt, off + len)
 
   let encode_extension t buf off =
     let o_i = Udns_enum.edns_opt_to_int in
@@ -1148,7 +1177,8 @@ module Map = struct
           | Tlsa, (_, tlsas), (ttl, tlsas') -> (ttl, Tlsa_set.union tlsas tlsas')
           | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, Sshfp_set.union sshfps sshfps'))
 
-  let text : type a. ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> a k -> a -> string = fun ?origin ?default_ttl n t v ->
+  let text : type a. ?origin:Domain_name.t -> ?default_ttl:int32 ->
+    Domain_name.t -> a k -> a -> string = fun ?origin ?default_ttl n t v ->
     let hex cs =
       let buf = Bytes.create (Cstruct.len cs * 2) in
       for i = 0 to pred (Cstruct.len cs) do
@@ -1404,10 +1434,13 @@ module Map = struct
 
   let decode names buf off typ =
     let open Rresult.R.Infix in
+    guard (Cstruct.len buf - off >= 6) `Partial >>= fun () ->
     let ttl = Cstruct.BE.get_uint32 buf off
     and len = Cstruct.BE.get_uint16 buf (off + 4)
     and rdata_start = off + 6
     in
+    guard (Int32.logand ttl 0x8000_0000l = 0l) (`BadTTL ttl) >>= fun () ->
+    guard (Cstruct.len buf - rdata_start >= len) `Partial >>= fun () ->
     (match typ with
      | Udns_enum.SOA ->
        Soa.decode names buf ~off:rdata_start ~len >>| fun (soa, names, off) ->
@@ -1444,11 +1477,11 @@ module Map = struct
        (B (Tlsa, (ttl, Tlsa_set.singleton tlsa)), names, off)
      | Udns_enum.SSHFP ->
        Sshfp.decode names buf ~off:rdata_start ~len >>| fun (sshfp, names, off) ->
-      (B (Sshfp, (ttl, Sshfp_set.singleton sshfp)), names, off)
+       (B (Sshfp, (ttl, Sshfp_set.singleton sshfp)), names, off)
      | Udns_enum.TXT ->
        Txt.decode names buf ~off:rdata_start ~len >>| fun (txt, names, off) ->
        (B (Txt, (ttl, Txt_set.singleton txt)), names, off)
-     | _other -> assert false) >>= fun (b, names, rdata_end) ->
+     | other -> Error (`UnsupportedRRTyp other)) >>= fun (b, names, rdata_end) ->
     guard (len = rdata_end - rdata_start) `Leftover >>| fun () ->
     (b, names, rdata_end)
 
@@ -1596,7 +1629,7 @@ end
 let decode_ntc names buf off =
   let open Rresult.R.Infix in
   Name.decode ~hostname:false names buf ~off >>= fun (name, names, off) ->
-  guard (Cstruct.len buf >= 4 + off) `Partial >>= fun () ->
+  guard (Cstruct.len buf - off >= 4) `Partial >>= fun () ->
   let typ = Cstruct.BE.get_uint16 buf off
   and cls = Cstruct.BE.get_uint16 buf (off + 2)
   (* CLS is interpreted differently by OPT, thus no int_to_clas called here *)
@@ -1642,21 +1675,12 @@ module Question = struct
     encode_ntc offs buf off (q.q_name, q.q_type, Udns_enum.clas_to_int Udns_enum.IN)
 end
 
-type rdata =
-  | Record of Map.b
-  | OPTS of Edns.t
-  | TSIG of Tsig.t
-  | Raw of int32 * Udns_enum.rr_typ * Cstruct.t
-
-type rr = Domain_name.t * rdata
-
 type query = {
   question : Question.t ;
   answer : Map.t Domain_name.Map.t ;
   authority : Map.t Domain_name.Map.t ;
   additional : Map.t Domain_name.Map.t ;
 }
-
 
 let decode_rr names buf off =
   let open Rresult.R.Infix in
@@ -1665,15 +1689,46 @@ let decode_rr names buf off =
   Map.decode names buf off typ >>| fun (b, names, off) ->
   (name, b, names, off)
 
-let rec decode_n_partial f names buf off acc = function
+let rec decode_n names buf off acc = function
   | 0 -> Ok (`Full (names, off, acc))
   | n ->
-    match f names buf off with
+    match decode_rr names buf off with
     | Ok (name, b, names, off') ->
       let acc' = Map.add_entry acc name b in
-      decode_n_partial f names buf off' acc' (pred n)
+      decode_n names buf off' acc' (pred n)
     | Error `Partial -> Ok (`Partial acc)
     | Error e -> Error e
+
+let decode_additional ~tsig edns names buf off =
+  let open Rresult.R.Infix in
+  decode_ntc names buf off >>= fun ((name, typ, clas), names, off') ->
+  match typ with
+  | Udns_enum.OPT when edns = None ->
+    (* OPT is special and needs class! (also, name is guarded to be .) *)
+    Edns.decode buf ~off >>| fun (edns, off') ->
+    `Edns (edns, names, off')
+  | Udns_enum.TSIG when tsig ->
+    guard (clas = Udns_enum.(clas_to_int ANY_CLASS)) (`BadClass clas) >>= fun () ->
+    Tsig.decode names buf ~off:off' >>| fun (tsig, names, off') ->
+    `Tsig ((name, tsig, off), names, off')
+  | _ ->
+    guard (clas = Udns_enum.(clas_to_int IN)) (`BadClass clas) >>= fun () ->
+    Map.decode names buf off' typ >>| fun (b, names, off') ->
+    `Binding (name, b, names, off')
+
+let rec decode_n_additional names buf off map edns tsig = function
+  | 0 -> Ok (`Full (off, map, edns, tsig))
+  | n ->
+    match decode_additional ~tsig:(n = 1) edns names buf off with
+    | Error `Partial -> Ok (`Partial (map, edns, tsig))
+    | Error e -> Error e
+    | Ok (`Edns (edns, names, off')) ->
+      decode_n_additional names buf off' map (Some edns) tsig (pred n)
+    | Ok (`Tsig (tsig, names, off')) ->
+      decode_n_additional names buf off' map edns (Some tsig) (pred n)
+    | Ok (`Binding (name, b, names, off')) ->
+      let map' = Map.add_entry map name b in
+      decode_n_additional names buf off' map' edns tsig (pred n)
 
 let decode_query buf truncated =
   let open Rresult.R.Infix in
@@ -1681,39 +1736,41 @@ let decode_query buf truncated =
   let qcount = Cstruct.BE.get_uint16 buf 4
   and ancount = Cstruct.BE.get_uint16 buf 6
   and aucount = Cstruct.BE.get_uint16 buf 8
-  and _adcount = Cstruct.BE.get_uint16 buf 10
+  and adcount = Cstruct.BE.get_uint16 buf 10
   in
   guard (qcount = 1) `None_or_multiple_questions >>= fun () ->
-  let query question ?(answer = Domain_name.Map.empty) ?(authority = Domain_name.Map.empty) ?(additional = Domain_name.Map.empty) () =
-    `Query { question ; answer ; authority ; additional }
+  Question.decode Name.IntMap.empty buf Header.len >>= fun (q, names, off) ->
+  let empty = Domain_name.Map.empty in
+  let query =
+    { question = q ; answer = empty ; authority = empty ; additional = empty }
   in
-  Question.decode Name.IntMap.empty buf Header.len >>= fun (question, names, off) ->
-  decode_n_partial decode_rr names buf off Domain_name.Map.empty ancount >>= function
+  decode_n names buf off empty ancount >>= function
   | `Partial answer ->
-    guard truncated `Partial >>| fun () ->
-    query question ~answer (), None, None, None
+    guard truncated `Partial >>| fun () -> { query with answer }, None, None
   | `Full (names, off, answer) ->
-    decode_n_partial decode_rr names buf off Domain_name.Map.empty aucount >>= function
+    let query = { query with answer } in
+    decode_n names buf off empty aucount >>= function
     | `Partial authority ->
-      guard truncated `Partial >>| fun () ->
-      query question ~answer ~authority (), None, None, None
-    | `Full (_names, _off, authority) ->
-      Ok (query question ~answer ~authority (), None, None, None)
-
-        (*decode_n_additional_partial names buf off None ([], None, None) adcount >>= function
-        | `Partial (ad, opt, tsig) ->
-          guard t `Partial >>= fun () ->
-          Ok (query qs an au ad, opt, tsig, None)
-        | `Full (off, ad, opt, tsig, lastoff) ->
-          (if Cstruct.len buf > off then
-             let n = Cstruct.len buf - off in
-             Logs.warn (fun m -> m "received %d extra bytes %a"
-                           n Cstruct.hexdump_pp (Cstruct.sub buf off n))) ;
-          Ok (query qs an au ad, opt, tsig, lastoff)
-        *)
+      guard truncated `Partial >>| fun () -> { query with authority }, None, None
+    | `Full (names, off, authority) ->
+      let query = { query with authority } in
+      decode_n_additional names buf off empty None None adcount >>= function
+      | `Partial (additional, edns, tsig) ->
+        guard truncated `Partial >>| fun () ->
+        { query with additional }, edns, tsig
+      | `Full (off, additional, edns, tsig) ->
+        (if Cstruct.len buf > off then
+           let n = Cstruct.len buf - off in
+           Logs.warn (fun m -> m "received %d extra bytes %a"
+                         n Cstruct.hexdump_pp (Cstruct.sub buf off n))) ;
+        Ok ({ query with additional }, edns, tsig)
 
 let decode buf =
   let open Rresult.R.Infix in
   Header.decode buf >>= fun header ->
   let truncated = Header.FS.mem `Truncation header.flags in
-  decode_query buf truncated
+  match header.Header.operation with
+  | Udns_enum.Query -> decode_query buf truncated >>| fun q -> `Query (header, q)
+  | Udns_enum.Notify -> decode_query buf truncated >>| fun n -> `Notify (header, n)
+  | Udns_enum.Update -> assert false
+  | x -> Error (`UnsupportedOpcode x)
