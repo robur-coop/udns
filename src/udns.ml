@@ -1682,6 +1682,18 @@ type query = {
   additional : Map.t Domain_name.Map.t ;
 }
 
+(*BISECT-IGNORE-BEGIN*)
+let pp_map ppf map =
+  Fmt.(list ~sep:(unit ";@ ") (pair ~sep:(unit " ") Domain_name.pp Map.pp))
+    ppf (Domain_name.Map.bindings map)
+
+let pp_query ppf t =
+  Fmt.pf ppf "question %a@ answer %a@ authority %a@ additional %a"
+    Question.pp t.question
+    pp_map t.answer pp_map t.authority pp_map t.additional
+(*BISECT-IGNORE-END*)
+
+
 let decode_rr names buf off =
   let open Rresult.R.Infix in
   decode_ntc names buf off >>= fun ((name, typ, clas), names, off) ->
@@ -1759,6 +1771,8 @@ let decode_query buf truncated =
         guard truncated `Partial >>| fun () ->
         { query with additional }, edns, tsig
       | `Full (off, additional, edns, tsig) ->
+        (* if there's edns, interpret extended rcode *)
+        (* if there's tsig, maybe interpret extended rcode *)
         (if Cstruct.len buf > off then
            let n = Cstruct.len buf - off in
            Logs.warn (fun m -> m "received %d extra bytes %a"
@@ -1766,11 +1780,94 @@ let decode_query buf truncated =
         Ok ({ query with additional }, edns, tsig)
 
 let decode buf =
+  let ext_rcode hdr = function
+    | Some e when e.Edns.extended_rcode > 0 ->
+      begin
+        let rcode =
+          Udns_enum.rcode_to_int hdr.Header.rcode + e.extended_rcode lsl 4
+        in
+        match Udns_enum.int_to_rcode rcode with
+        | None -> Error (`BadRcode rcode)
+        | Some rcode -> Ok ({ hdr with rcode })
+      end
+    | _ -> Ok hdr
+  in
   let open Rresult.R.Infix in
-  Header.decode buf >>= fun header ->
-  let truncated = Header.FS.mem `Truncation header.flags in
-  match header.Header.operation with
-  | Udns_enum.Query -> decode_query buf truncated >>| fun q -> `Query (header, q)
-  | Udns_enum.Notify -> decode_query buf truncated >>| fun n -> `Notify (header, n)
+  Header.decode buf >>= fun hdr ->
+  let truncated = Header.FS.mem `Truncation hdr.flags in
+  match hdr.Header.operation with
+  | Udns_enum.Query ->
+    decode_query buf truncated >>= fun (q, edns, tsig) ->
+    ext_rcode hdr edns >>| fun hdr ->
+    hdr, `Query q, edns, tsig
+  | Udns_enum.Notify ->
+    decode_query buf truncated >>= fun (n, edns, tsig) ->
+    ext_rcode hdr edns >>| fun hdr ->
+    hdr, `Notify n, edns, tsig
   | Udns_enum.Update -> assert false
   | x -> Error (`UnsupportedOpcode x)
+
+let max_udp = 1484 (* in MirageOS. using IPv4 this is max UDP payload via ethernet *)
+let max_reply_udp = 450 (* we don't want anyone to amplify! *)
+let max_tcp = 1 lsl 16 - 1 (* DNS-over-TCP is 2 bytes len ++ payload *)
+
+let size_edns max_size edns protocol query =
+  let max = match max_size, query with
+    | Some x, true -> x
+    | Some x, false -> min x max_reply_udp
+    | None, true -> max_udp
+    | None, false -> max_reply_udp
+  in
+  (* it's udp payload size only, ignore any value for tcp *)
+  let maximum = match protocol with
+    | `Udp -> max
+    | `Tcp -> max_tcp
+  in
+  let edns = match edns with
+    | None -> None
+    | Some opts -> Some ({ opts with Edns.payload_size = max })
+  in
+  maximum, edns
+
+let encode_query buf data =
+  let offs, off = Question.encode Domain_name.Map.empty buf Header.len data.question in
+  Cstruct.BE.set_uint16 buf 4 1 ;
+  
+  Cstruct.BE.set_uint16 buf 6 (List.length data.answer) ;
+  Cstruct.BE.set_uint16 buf 8 (List.length data.authority) ;
+  List.fold_left (fun (offs, off) rr -> encode_rr offs buf off rr)
+    (offs, off) (data.answer @ data.authority)
+
+
+let encode ?max_size ?edns ?tsig protocol hdr v =
+  let max, edns = size_edns max_size edns protocol hdr.Header.query in
+  (* TODO: enforce invariants: additionals no TSIG and no EDNS! *)
+  let try_encoding buf =
+    let off, trunc =
+      try
+        Header.encode buf hdr ;
+        let offs, off = encode_v buf v in
+        let ad = match v with
+          | `Query q | `Notify q -> q.additional
+          | `Update u -> u.addition
+        in
+        encode_ad hdr ?edns offs buf off ad, false
+      with Invalid_argument _ -> (* set truncated *)
+        (* if we failed to store data into buf, set truncation bit! *)
+        Cstruct.set_uint8 buf 2 (0x02 lor (Cstruct.get_uint8 buf 2)) ;
+        Cstruct.len buf, true
+    in
+    Cstruct.sub buf 0 off, trunc
+  in
+  let rec doit s =
+    let cs = Cstruct.create s in
+    match try_encoding cs with
+    | (cs, false) -> (cs, max)
+    | (cs, true) ->
+      let next = min max (s * 2) in
+      if next = s then
+        (cs, max)
+      else
+        doit next
+  in
+  doit (min max 4000) (* (mainly for TCP) we use a page as initial allocation *)

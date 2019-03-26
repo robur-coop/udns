@@ -46,59 +46,6 @@ let rr_names =
     (fun acc rr -> Domain_name.Set.union (rr_name rr) acc)
     Domain_name.Set.empty
 
-let safe_decode_rdata names buf off len typ =
-  (* decode_rdata is mostly safe, apart from some Cstruct._.get_ *)
-  (try decode_rdata names buf off len typ with _ -> Error `Partial)
-  >>= fun (rdata, names, off') ->
-  guard (off' = off + len) `LeftOver >>= fun () ->
-  Ok (rdata, names, off')
-
-let decode_rr names buf off =
-  decode_ntc names buf off >>= fun ((name, typ, c), names, off) ->
-  guard (Cstruct.len buf >= 6 + off) `Partial >>= fun () ->
-  (* since QTYPE (and QCLASS) are supersets of RR_TYPE and RR_CLASS, we
-     complaing about these not belonging to RR_TYPE/RR_CLASS here *)
-  (* we are only concerned about class = IN, according to RFC6895 Sec 3.3.2:
-     The IN, or Internet, CLASS is thus the only DNS CLASS in global use on
-     the Internet at this time! *)
-  let ttl = Cstruct.BE.get_uint32 buf off in
-  (match typ with
-   | Udns_enum.AXFR | Udns_enum.MAILB | Udns_enum.MAILA | Udns_enum.ANY ->
-     Error (`DisallowedRRTyp typ)
-   | Udns_enum.OPT -> Ok ()
-   | Udns_enum.TSIG -> (* TTL = 0! and class = ANY *)
-     begin match Udns_enum.int_to_clas c with
-       | Some Udns_enum.ANY_CLASS when ttl = 0l -> Ok ()
-       | _ -> Error (`BadClass c)
-     end
-   | _ -> match Udns_enum.int_to_clas c with
-     | Some Udns_enum.IN -> Ok ()
-     | None -> Error (`BadClass c)
-     | Some Udns_enum.ANY_CLASS -> Error (`DisallowedClass Udns_enum.ANY_CLASS)
-     | Some x -> Error (`UnsupportedClass x)) >>= fun () ->
-  let len = Cstruct.BE.get_uint16 buf (off + 4) in
-  guard (Cstruct.len buf >= len + 6) `Partial >>= fun () ->
-  match typ with
-  | Udns_enum.OPT ->
-    (* crazyness: payload_size is encoded in class *)
-    let payload_size = c
-    (* it continues: the ttl is split into: 4bit extended rcode, 4bit version, 1bit dnssec_ok, 7bit 0 *)
-    and extended_rcode = Cstruct.get_uint8 buf off
-    and version = Cstruct.get_uint8 buf (off + 1)
-    and flags = Cstruct.BE.get_uint16 buf (off + 2)
-    in
-    let off = off + 6 in
-    let dnssec_ok = flags land 0x8000 = 0x8000 in
-    guard (version = 0) (`Bad_edns_version version) >>= fun () ->
-    (try decode_extensions buf off len with _ -> Error `Partial) >>= fun extensions ->
-    let opt = { extended_rcode ; version ; dnssec_ok ; payload_size ; extensions } in
-    Ok ({ name ; ttl ; rdata = OPTS opt }, names, (off + len))
-  | _ ->
-    let off = off + 6 in
-    guard (check_ttl ttl) (`BadTTL ttl) >>= fun () ->
-    safe_decode_rdata names buf off len typ >>= fun (rdata, names, off') ->
-    Ok ({ name ; ttl ; rdata }, names, off')
-
 let encode_rr offs buf off rr =
   let clas, ttl = match rr.rdata with
     | OPTS opt ->
@@ -118,83 +65,6 @@ let encode_rr offs buf off rr =
   Cstruct.BE.set_uint16 buf (off + 4) (off' - (off + 6)) ;
   offs, off'
 
-(* QUERY *)
-let rec decode_n_partial f names buf off acc = function
-  | 0 -> Ok (`Full (names, off, List.rev acc))
-  | n ->
-    match f names buf off with
-    | Ok (ele, names, off') ->
-      decode_n_partial f names buf off' (ele :: acc) (pred n)
-    | Error `Partial -> Ok (`Partial (List.rev acc))
-    | Error e -> Error e
-
-let rdata_edns_tsig_ok rr edns tsig =
-  match rr.rdata, edns, tsig with
-  | TSIG ts, opt, None -> Ok (opt, Some (rr.name, ts))
-  | TSIG _, _, Some _ -> Error `Multiple_tsig
-  | OPTS opt, None, None -> Ok (Some opt, None)
-  | OPTS _, Some _, _ -> Error `Multiple_edns
-  | _, _, Some _ -> Error `Tsig_not_last
-  | _, opt, ts -> Ok (opt, ts)
-
-let rec decode_n_additional_partial names buf off r (acc, opt, tsig) = function
-  | 0 -> Ok (`Full (off, List.rev acc, opt, tsig, r))
-  | n ->
-    match decode_rr names buf off with
-    | Ok (ele, names, off') ->
-      rdata_edns_tsig_ok ele opt tsig >>= fun (opt', tsig') ->
-      decode_n_additional_partial names buf off' (Some off) (ele :: acc, opt', tsig') (pred n)
-    | Error `Partial -> Ok (`Partial (List.rev acc, opt, tsig))
-    | Error e -> Error e
-
-type query = {
-  question : question list ;
-  answer : rr list ;
-  authority : rr list ;
-  additional : rr list
-}
-
-let decode_query buf t =
-  guard (Cstruct.len buf >= 12) `Partial >>= fun () ->
-  let qcount = Cstruct.BE.get_uint16 buf 4
-  and ancount = Cstruct.BE.get_uint16 buf 6
-  and aucount = Cstruct.BE.get_uint16 buf 8
-  and adcount = Cstruct.BE.get_uint16 buf 10
-  in
-  let query question answer authority additional =
-    `Query { question ; answer ; authority ; additional }
-  in
-  let empty = Udns_name.IntMap.empty in
-  decode_n_partial decode_question empty buf hdr_len [] qcount >>= function
-  | `Partial qs -> guard t `Partial >>= fun () -> Ok (query qs [] [] [], None, None, None)
-  | `Full (names, off, qs) ->
-    decode_n_partial decode_rr names buf off [] ancount >>= function
-    | `Partial an -> guard t `Partial >>= fun () -> Ok (query qs an [] [], None, None, None)
-    | `Full (names, off, an) ->
-      decode_n_partial decode_rr names buf off [] aucount >>= function
-      | `Partial au -> guard t `Partial >>= fun () -> Ok (query qs an au [], None, None, None)
-      | `Full (names, off, au) ->
-        decode_n_additional_partial names buf off None ([], None, None) adcount >>= function
-        | `Partial (ad, opt, tsig) ->
-          guard t `Partial >>= fun () ->
-          Ok (query qs an au ad, opt, tsig, None)
-        | `Full (off, ad, opt, tsig, lastoff) ->
-          (if Cstruct.len buf > off then
-             let n = Cstruct.len buf - off in
-             Logs.warn (fun m -> m "received %d extra bytes %a"
-                           n Cstruct.hexdump_pp (Cstruct.sub buf off n))) ;
-          Ok (query qs an au ad, opt, tsig, lastoff)
-
-let encode_query buf data =
-  Cstruct.BE.set_uint16 buf 4 (List.length data.question) ;
-  Cstruct.BE.set_uint16 buf 6 (List.length data.answer) ;
-  Cstruct.BE.set_uint16 buf 8 (List.length data.authority) ;
-  let offs, off =
-    List.fold_left (fun (offs, off) q -> encode_question offs buf off q)
-      (Domain_name.Map.empty, hdr_len) data.question
-  in
-  List.fold_left (fun (offs, off) rr -> encode_rr offs buf off rr)
-    (offs, off) (data.answer @ data.authority)
 
 (*BISECT-IGNORE-BEGIN*)
 let pp_query ppf t =
@@ -440,60 +310,6 @@ type tsig_verify = ?mac:Cstruct.t -> Ptime.t -> v -> header ->
 
 type tsig_sign = ?mac:Cstruct.t -> ?max_size:int -> Domain_name.t -> tsig ->
   key:dnskey -> Cstruct.t -> (Cstruct.t * Cstruct.t) option
-
-let decode_notify buf t =
-  decode_query buf t >>| fun (`Query q, opt, tsig, off) ->
-  (`Notify q, opt, tsig, off)
-
-(* TODO: verify the following invariants:
-   - notify allows only a single SOA in answer, rest better be empty
-   - TSIG and EDNS are only allowed in additional section!
- *)
-let decode buf =
-  decode_header buf >>= fun hdr ->
-  let t = hdr.truncation in
-  let header = function
-    | Some e when e.extended_rcode > 0 ->
-      begin
-        let rcode =
-          Udns_enum.rcode_to_int hdr.rcode + e.extended_rcode lsl 4
-        in
-        match Udns_enum.int_to_rcode rcode with
-        | None -> Error (`BadRcode rcode)
-        | Some rcode -> Ok ({ hdr with rcode })
-      end
-    | _ -> Ok hdr
-  in
-  begin match hdr.operation with
-  | Udns_enum.Query -> decode_query buf t
-  | Udns_enum.Update -> decode_update buf
-  | Udns_enum.Notify -> decode_notify buf t
-  | x -> Error (`UnsupportedOpcode x)
-  end >>= fun (data, opt, tsig, off) ->
-  header opt >>| fun hdr ->
-  ((hdr, data, opt, tsig), off)
-
-let max_udp = 1484 (* in MirageOS. using IPv4 this is max UDP payload via ethernet *)
-let max_reply_udp = 450 (* we don't want anyone to amplify! *)
-let max_tcp = 1 lsl 16 - 1 (* DNS-over-TCP is 2 bytes len ++ payload *)
-
-let size_edns max_size edns protocol query =
-  let max = match max_size, query with
-    | Some x, true -> x
-    | Some x, false -> min x max_reply_udp
-    | None, true -> max_udp
-    | None, false -> max_reply_udp
-  in
-  (* it's udp payload size only, ignore any value for tcp *)
-  let maximum = match protocol with
-    | `Udp -> max
-    | `Tcp -> max_tcp
-  in
-  let edns = match edns with
-    | None -> None
-    | Some opts -> Some ({ opts with payload_size = max })
-  in
-  maximum, edns
 
 let encode_v buf v =
   match v with
