@@ -35,7 +35,7 @@ let guard p err = if p then Ok () else Error err
 
 let ent name map =
   let ttl, soa = Udns.Map.get Udns.Map.Soa map in
-  `EmptyNonTerminal (name, ttl, soa)
+  `EmptyNonTerminal (name, (ttl, soa))
 let to_ns name map =
   let ttl, ns =
     match Udns.Map.find Udns.Map.Ns map with
@@ -61,7 +61,7 @@ let lookup_res zone ty m =
       (* TODO should we check that the label-node map is empty?
          well, if we have a proper authoritative zone, there'll be a NS *)
       let ttl, soa = Udns.Map.get Udns.Map.Soa zmap in
-      Error (`NotFound (z, ttl, soa))
+      Error (`NotFound (z, (ttl, soa)))
     | None -> Error (ent z zmap)
     | Some cname -> Ok (cname, to_ns z zmap)
 
@@ -87,7 +87,7 @@ let lookup_aux name t =
             | None -> Error `NotAuthoritative
             | Some (`Soa (name, map)) ->
               let ttl, soa = Udns.Map.get Udns.Map.Soa map in
-              Error (`NotFound (name, ttl, soa))
+              Error (`NotFound (name, (ttl, soa)))
           end
         | x -> go (succ idx) zone x
   in
@@ -105,7 +105,7 @@ let lookup name key t =
     | Some v -> Ok v
     | None -> match Udns.Map.find Udns.Map.Soa map with
       | None -> Error `NotAuthoritative
-      | Some (ttl, soa) -> Error (`NotFound (name, ttl, soa))
+      | Some (ttl, soa) -> Error (`NotFound (name, (ttl, soa)))
 
 let lookup_any name t =
   match lookup_aux name t with
@@ -181,9 +181,9 @@ let collect_entries name sub map =
   in
   match ttlsoa with
   | None -> Error `NotAuthoritative
-  | Some (ttl, soa) ->
+  | Some soa ->
     let entries = collect_rrs name sub map in
-    Ok (name, ttl, soa, entries)
+    Ok (name, soa, entries)
 
 let entries name t =
   lookup_aux name t >>= fun (zone, sub, map) ->
@@ -401,8 +401,8 @@ let pp_e ppf = function
   | `Delegation (name, (ttl, ns)) ->
     Fmt.pf ppf "delegation %a to TTL %lu %a" Domain_name.pp name ttl
       Fmt.(list ~sep:(unit ",@,") Domain_name.pp) (Domain_name.Set.elements ns)
-  | `EmptyNonTerminal (name, ttl, soa) ->
+  | `EmptyNonTerminal (name, (ttl, soa)) ->
     Fmt.pf ppf "empty non terminal %a TTL %lu SOA %a" Domain_name.pp name ttl Udns.Soa.pp soa
   | `NotAuthoritative -> Fmt.string ppf "not authoritative"
-  | `NotFound (name, ttl, soa) -> Fmt.pf ppf "not found %a TTL %lu soa %a" Domain_name.pp name ttl Udns.Soa.pp soa
+  | `NotFound (name, (ttl, soa)) -> Fmt.pf ppf "not found %a TTL %lu soa %a" Domain_name.pp name ttl Udns.Soa.pp soa
 (*BISECT-IGNORE-END*)

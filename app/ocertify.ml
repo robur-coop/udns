@@ -31,55 +31,59 @@ let dns_header () =
 
 let query_certificate sock public_key fqdn =
   let good_tlsa tlsa =
-    if
-      tlsa.Udns_types.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
-      && tlsa.Udns_types.tlsa_selector = Udns_enum.Tlsa_full_certificate
-      && tlsa.Udns_types.tlsa_matching_type = Udns_enum.Tlsa_no_hash
-    then
-      match X509.Encoding.parse tlsa.Udns_types.tlsa_data with
-      | Some cert ->
-        let keys_equal a b = Cstruct.equal (X509.key_id a) (X509.key_id b) in
-        if keys_equal (X509.public_key cert) public_key then
-          Some cert
-        else
-          None
-      | _ -> None
-    else
-      None
+    tlsa.Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
+    && tlsa.Udns.Tlsa.tlsa_selector = Udns_enum.Tlsa_full_certificate
+    && tlsa.Udns.Tlsa.tlsa_matching_type = Udns_enum.Tlsa_no_hash
+  in
+  let parse tlsa =
+    match X509.Encoding.parse tlsa.Udns.Tlsa.tlsa_data with
+    | Some cert ->
+      let keys_equal a b = Cstruct.equal (X509.key_id a) (X509.key_id b) in
+      if keys_equal (X509.public_key cert) public_key then
+        Some cert
+      else
+        None
+    | _ -> None
   in
   let header = dns_header ()
-  and question = { Udns_types.q_name = fqdn ; q_type = Udns_enum.TLSA }
+  and question = { Udns.Question.q_name = fqdn ; q_type = Udns_enum.TLSA }
   in
-  let query = { Udns_packet.question = [ question ] ; answer = [] ; authority = [] ; additional = [] } in
-  let buf, _ = Udns_packet.encode `Tcp header (`Query query) in
+  let query = Udns.query question in
+  let buf, _ = Udns.encode `Tcp header (`Query query) in
   Udns_cli.send_tcp sock buf ;
   let data = Udns_cli.recv_tcp sock in
-  match Udns_packet.decode data with
-  | Ok ((_, `Query q, _, _), _) ->
+  match Udns.decode data with
+  | Ok (_, `Query q, _, _) ->
+    (* TODO verify id! *)
     (* collect TLSA pems *)
-    let tlsa =
-      List.fold_left (fun acc rr -> match rr.Udns_packet.rdata with
-          | Udns_packet.TLSA tlsa ->
-            begin match good_tlsa tlsa with
-              | None -> acc
-              | Some cert -> Some cert
-            end
-          | _ -> acc)
-        None q.Udns_packet.answer
-    in
-    tlsa
-  | Ok ((_, v, _, _), _) ->
+    Logs.debug (fun m -> m "answer is %a" Udns.pp_map q.Udns.answer) ;
+    begin match Domain_name.Map.find fqdn q.Udns.answer with
+      | None ->
+        Logs.err (fun m -> m "no resource records found for %a" Domain_name.pp fqdn) ;
+        None
+      | Some rrs ->
+        match Udns.Map.find Udns.Map.Tlsa rrs with
+        | None -> Logs.err (fun m -> m "no TLSA records found") ; None
+        | Some (_, tlsas) ->
+          Udns.Map.Tlsa_set.(fold (fun tlsa r ->
+              match parse tlsa, r with
+              | Some c, _ -> Some c
+              | None, x -> x)
+              (filter good_tlsa tlsas)
+              None)
+    end
+  | Ok (_, v, _, _) ->
     Logs.err (fun m -> m "expected a response, but got %a"
-                 Udns_packet.pp_v v) ;
+                 Udns.pp_v v) ;
     None
   | Error e ->
     Logs.err (fun m -> m "error %a while decoding answer"
-                 Udns_packet.pp_err e) ;
+                 Udns.pp_err e) ;
     None
-
+(*
 let nsupdate_csr sock now hostname keyname zone dnskey csr =
   let tlsa =
-    { Udns_types.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
+    { Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
       tlsa_selector = Udns_enum.Tlsa_selector_private ;
       tlsa_matching_type = Udns_enum.Tlsa_no_hash ;
       tlsa_data = X509.Encoding.cs_of_signing_request csr ;
@@ -105,7 +109,7 @@ let nsupdate_csr sock now hostname keyname zone dnskey csr =
   with
   | Error x -> Error (`Msg x)
   | Ok _ -> Ok ()
-
+            *)
 let jump server_ip port (keyname, zone, dnskey) hostname csr key seed bits cert force =
   Nocrypto_entropy_unix.initialize () ;
   let fn suffix = function
@@ -129,7 +133,7 @@ let jump server_ip port (keyname, zone, dnskey) hostname csr key seed bits cert 
       Ok req) >>= fun req ->
   let public_key = (X509.CA.info req).X509.CA.public_key in
   (* before doing anything, let's check whether cert_filename is present, matches public key, and is valid *)
-  let now, tomorrow =
+  let _now, tomorrow =
     let (d, ps) = Ptime_clock.now_d_ps () in
     Ptime.v (d, ps), Ptime.v (succ d, ps)
   in
@@ -157,7 +161,7 @@ let jump server_ip port (keyname, zone, dnskey) hostname csr key seed bits cert 
   with
   | Some x -> write_certificate x
   | None ->
-    nsupdate_csr sock now hostname keyname zone dnskey req >>= fun () ->
+    (*nsupdate_csr sock now hostname keyname zone dnskey req >>= fun () -> *)
     let rec request retries =
       if retries = 0 then
         Error (`Msg "failed to request certificate")

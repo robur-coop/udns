@@ -2,23 +2,24 @@
 
 let notify zone serial key now =
   let notify =
-    let question = [ { Udns_types.q_name = zone ; q_type = Udns_enum.SOA } ]
+    let question = { Udns.Question.q_name = zone ; q_type = Udns_enum.SOA }
     and answer =
-      let soa = { Udns_types.nameserver = zone ; hostmaster = zone ; serial ;
+      let soa = { Udns.Soa.nameserver = zone ; hostmaster = zone ; serial ;
                   refresh = 0l; retry = 0l ; expiry = 0l ; minimum = 0l }
       in
-      [ { Udns_packet.name = zone ; ttl = 0l ; rdata = Udns_packet.SOA soa } ]
+      Domain_name.Map.singleton zone (Udns.Map.singleton Udns.Map.Soa (0l, soa))
     in
-    { Udns_packet.question ; answer ; authority = [] ; additional = [] }
+    let query = Udns.query question in
+    { query with Udns.answer }
   and header =
     let hdr = Udns_cli.dns_header (Random.int 0xFFFF) in
-    { hdr with Udns_packet.operation = Udns_enum.Notify ; authoritative = true }
+    { hdr with Udns.Header.operation = Udns_enum.Notify ; flags = Udns.Header.FS.singleton `Authoritative }
   in
   let v = `Notify notify in
   match key with
-  | None -> Ok (fst (Udns_packet.encode `Tcp header v), Cstruct.empty)
+  | None -> Ok (fst (Udns.encode `Tcp header v), Cstruct.empty)
   | Some (keyname, _, dnskey) ->
-    Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns_types.pp_dnskey dnskey) ;
+    Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns.Dnskey.pp dnskey) ;
     Udns_tsig.encode_and_sign ~proto:`Tcp header (`Notify notify) now dnskey keyname
 
 let jump _ serverip port zone key serial =
@@ -39,9 +40,9 @@ let jump _ serverip port zone key serial =
     Unix.close socket ;
     match key with
     | None ->
-      begin match Udns_packet.decode read_data with
+      begin match Udns.decode read_data with
         | Ok _ -> Logs.app (fun m -> m "successfull notify!") ; `Ok ()
-        | Error e -> `Error (false, "notify reply " ^ Fmt.to_to_string Udns_packet.pp_err e)
+        | Error e -> `Error (false, "notify reply " ^ Fmt.to_to_string Udns.pp_err e)
       end
     | Some (keyname, _, dnskey) ->
       begin match Udns_tsig.decode_and_verify now dnskey keyname ~mac read_data with

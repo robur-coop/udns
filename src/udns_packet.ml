@@ -1,79 +1,14 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 (*
 
-let rdata_name = function
-  | MX (_, n) -> Domain_name.Set.singleton n
-  | NS n -> Domain_name.Set.singleton n
-  | SRV srv -> Domain_name.Set.singleton srv.target
-  | _ -> Domain_name.Set.empty
-
-let decode_rdata names buf off len = function
-  | Udns_enum.TSIG ->
-    decode_tsig names buf off >>= fun (tsig, names, off) ->
-    Ok (TSIG tsig, names, off)
   | x -> Ok (Raw (x, Cstruct.sub buf off len), names, off + len)
 
 let encode_rdata offs buf off = function
   | TSIG t -> encode_tsig t offs buf off
-  | OPTS opts -> offs, encode_extensions opts.extensions buf off
   | Raw (_, rr) ->
     let len = Cstruct.len rr in
     Cstruct.blit rr 0 buf off len ;
     offs, off + len
-
-type rr = {
-  name : Domain_name.t ;
-  ttl : int32 ;
-  rdata : rdata
-}
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_rr ppf rr =
-  Fmt.pf ppf "%a TTL %lu %a" Domain_name.pp rr.name rr.ttl pp_rdata rr.rdata
-
-let pp_rrs = Fmt.(list ~sep:(unit ";@.") pp_rr)
-(*BISECT-IGNORE-END*)
-
-let rr_equal a b =
-  Domain_name.compare a.name b.name = 0 &&
-  a.ttl = b.ttl &&
-  compare_rdata a.rdata b.rdata = 0
-
-let rr_name rr = rdata_name rr.rdata
-
-let rr_names =
-  List.fold_left
-    (fun acc rr -> Domain_name.Set.union (rr_name rr) acc)
-    Domain_name.Set.empty
-
-let encode_rr offs buf off rr =
-  let clas, ttl = match rr.rdata with
-    | OPTS opt ->
-      let ttl =
-        Int32.(add (shift_left (of_int opt.extended_rcode) 24)
-                 (add (shift_left (of_int opt.version) 16)
-                    (if opt.dnssec_ok then 0x8000l else 0x0000l)))
-      in
-      opt.payload_size, ttl
-    | TSIG _ -> Udns_enum.(clas_to_int ANY_CLASS), 0l
-    | _ -> Udns_enum.(clas_to_int IN), rr.ttl
-  in
-  let typ = rdata_to_rr_typ rr.rdata in
-  let offs, off = encode_ntc offs buf off (rr.name, typ, clas) in
-  Cstruct.BE.set_uint32 buf off ttl ;
-  let offs, off' = encode_rdata offs buf (off + 6) rr.rdata in
-  Cstruct.BE.set_uint16 buf (off + 4) (off' - (off + 6)) ;
-  offs, off'
-
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_query ppf t =
-  Fmt.pf ppf "%a@ %a@ %a@ %a"
-    (Fmt.list ~sep:(Fmt.unit ";@ ") pp_question) t.question
-    (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr) t.answer
-    (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr) t.authority
-    (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr) t.additional
-(*BISECT-IGNORE-END*)
 
 (*
 (* UPDATE *)
@@ -303,88 +238,6 @@ let pp ppf (hdr, v, _, _) =
   Fmt.sp ppf () ;
   pp_v ppf v
 (*BISECT-IGNORE-END*)
-
-type tsig_verify = ?mac:Cstruct.t -> Ptime.t -> v -> header ->
-  Domain_name.t -> key:dnskey option -> tsig -> Cstruct.t ->
-  (tsig * Cstruct.t * dnskey, Cstruct.t option) result
-
-type tsig_sign = ?mac:Cstruct.t -> ?max_size:int -> Domain_name.t -> tsig ->
-  key:dnskey -> Cstruct.t -> (Cstruct.t * Cstruct.t) option
-
-let encode_v buf v =
-  match v with
-  | `Query q | `Notify q -> encode_query buf q
-  | `Update u -> encode_update buf u
-
-let opt_rr opt = { name = Domain_name.root ; ttl = 0l ; rdata = OPTS opt }
-
-let encode_opt opt =
-  (* this is unwise! *)
-  let rr = opt_rr opt in
-  let buf = Cstruct.create 128 in
-  let _, off = encode_rr Domain_name.Map.empty buf 0 rr in
-  Cstruct.sub buf 0 off
-
-let encode_ad hdr ?edns offs buf off ads =
-  let ads, edns = match edns with
-    | None -> ads, None
-    | Some opt ->
-      let ext_rcode = (Udns_enum.rcode_to_int hdr.rcode) lsr 4 in
-      (* don't overwrite if rcode was already set -- really needed? *)
-      if opt.extended_rcode = 0 && ext_rcode > 0 then
-        let edns = opt_rr { opt with extended_rcode = ext_rcode } in
-        [ edns ], Some edns
-      else
-        let edns = opt_rr opt in
-        ads @ [ edns ], Some edns
-  in
-  try
-    Cstruct.BE.set_uint16 buf 10 (List.length ads) ;
-    snd (List.fold_left (fun (offs, off) rr -> encode_rr offs buf off rr)
-           (offs, off) ads)
-  with _ ->
-  (* This is RFC 2181 Sec 9, not set truncated, just drop additional *)
-  match edns with
-  | None -> off
-  | Some e ->
-    try
-      (* we attempt encoding edns only *)
-      Cstruct.BE.set_uint16 buf 10 1 ;
-      snd (encode_rr offs buf off e)
-    with _ -> off
-
-let encode ?max_size ?edns protocol hdr v =
-  let max, edns = size_edns max_size edns protocol hdr.query in
-  (* TODO: enforce invariants: additionals no TSIG and no EDNS! *)
-  let try_encoding buf =
-    let off, trunc =
-      try
-        encode_header buf hdr ;
-        let offs, off = encode_v buf v in
-        let ad = match v with
-          | `Query q | `Notify q -> q.additional
-          | `Update u -> u.addition
-        in
-        encode_ad hdr ?edns offs buf off ad, false
-      with Invalid_argument _ -> (* set truncated *)
-        (* if we failed to store data into buf, set truncation bit! *)
-        Cstruct.set_uint8 buf 2 (0x02 lor (Cstruct.get_uint8 buf 2)) ;
-        Cstruct.len buf, true
-    in
-    Cstruct.sub buf 0 off, trunc
-  in
-  let rec doit s =
-    let cs = Cstruct.create s in
-    match try_encoding cs with
-    | (cs, false) -> (cs, max)
-    | (cs, true) ->
-      let next = min max (s * 2) in
-      if next = s then
-        (cs, max)
-      else
-        doit next
-  in
-  doit (min max 4000) (* (mainly for TCP) we use a page as initial allocation *)
 
 let error header v rcode =
   if not header.query then

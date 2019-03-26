@@ -1,8 +1,8 @@
 (* (c) 2018 Hannes Mehnert, all rights reserved *)
 
-let update zone hostname ip_address keyname dnskey now =
+(*let update zone hostname ip_address keyname dnskey now =
   let nsupdate =
-    let zone = { Udns_types.q_name = zone ; q_type = Udns_enum.SOA }
+    let zone = { Udns.Question.q_name = zone ; q_type = Udns_enum.SOA }
     and update = [
       Udns_packet.Remove (hostname, Udns_enum.A) ;
       Udns_packet.Add ({ Udns_packet.name = hostname ; ttl = 60l ; rdata = Udns_packet.A ip_address })
@@ -14,7 +14,7 @@ let update zone hostname ip_address keyname dnskey now =
     { hdr with Udns_packet.operation = Udns_enum.Update }
   in
   Udns_tsig.encode_and_sign ~proto:`Tcp header (`Update nsupdate) now dnskey keyname
-
+*)
 let jump _ serverip port (keyname, zone, dnskey) hostname ip_address =
   Random.self_init () ;
   let now = Ptime_clock.now () in
@@ -23,8 +23,8 @@ let jump _ serverip port (keyname, zone, dnskey) hostname ip_address =
                Domain_name.pp zone
                Domain_name.pp hostname
                Ipaddr.V4.pp ip_address) ;
-  Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns_types.pp_dnskey dnskey) ;
-  match update zone hostname ip_address keyname dnskey now with
+  Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns.Dnskey.pp dnskey) ;
+  match Error "foo" (* update zone hostname ip_address keyname dnskey now *) with
   | Error msg -> `Error (false, msg)
   | Ok (data, mac) ->
     let data_len = Cstruct.len data in
