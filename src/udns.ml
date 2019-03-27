@@ -1692,31 +1692,28 @@ let decode_ntc names buf off =
     Error (`BadContent (Domain_name.to_string name))
 
 module Question = struct
-  type t = {
-    q_name : Domain_name.t ;
-    q_type : Udns_enum.rr_typ ;
-  }
+  type t = Domain_name.t * Udns_enum.rr_typ
 
   (*BISECT-IGNORE-BEGIN*)
-  let pp ppf q =
-    Fmt.pf ppf "%a %a?" Domain_name.pp q.q_name Udns_enum.pp_rr_typ q.q_type
+  let pp ppf (name, typ) =
+    Fmt.pf ppf "%a %a?" Domain_name.pp name Udns_enum.pp_rr_typ typ
   (*BISECT-IGNORE-END*)
 
-  let compare q q' =
-    andThen (Domain_name.compare q.q_name q'.q_name)
-      (int_compare (Udns_enum.rr_typ_to_int q.q_type)
-         (Udns_enum.rr_typ_to_int q'.q_type))
+  let compare (name, typ) (name', typ') =
+    andThen (Domain_name.compare name name')
+      (int_compare (Udns_enum.rr_typ_to_int typ)
+         (Udns_enum.rr_typ_to_int typ'))
 
   let decode names buf off =
     let open Rresult.R.Infix in
-    decode_ntc names buf off >>= fun ((q_name, q_type, c), names, off) ->
+    decode_ntc names buf off >>= fun ((name, typ, c), names, off) ->
     match Udns_enum.int_to_clas c with
     | None -> Error (`BadClass c)
-    | Some Udns_enum.IN -> Ok ({ q_name ; q_type }, names, off)
+    | Some Udns_enum.IN -> Ok ((name, typ), names, off)
     | Some x -> Error (`UnsupportedClass x)
 
-  let encode offs buf off q =
-    encode_ntc offs buf off (q.q_name, q.q_type, Udns_enum.clas_to_int Udns_enum.IN)
+  let encode offs buf off (name, typ) =
+    encode_ntc offs buf off (name, typ, Udns_enum.clas_to_int Udns_enum.IN)
 end
 
 type query = {

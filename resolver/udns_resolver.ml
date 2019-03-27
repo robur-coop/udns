@@ -2,15 +2,7 @@
 
 (* The cache (a Map!?) for answers: once a specific type/name comes in, we know
    which questions can progress now *)
-module K = struct
-  type t = Udns_enum.rr_typ * Domain_name.t
-
-  let compare (t, n) (t', n') = match Domain_name.compare n n' with
-    | 0 -> compare (Udns_enum.rr_typ_to_int t) (Udns_enum.rr_typ_to_int t')
-    | x -> x
-end
-
-module QM = Map.Make(K)
+module QM = Map.Make(Udns.Question)
 
 type awaiting =
   int64 * int * Udns.proto * Domain_name.t * Udns.Edns.t option
@@ -95,16 +87,15 @@ let build_query ?id ?(recursion_desired = false) t ts proto q retry zone edns ip
   in
   let query = `Query (Udns.query q) in
   let el = (ts, retry, proto, zone, edns, ip, 53, q, id) in
-  let k = (q.Udns.Question.q_type, q.Udns.Question.q_name) in
   let transit =
-    if QM.mem k t.transit then
-      Logs.warn (fun m -> m "overwriting transit of %a (%a)" Domain_name.pp (snd k) Udns_enum.pp_rr_typ (fst k)) ;
-    QM.add k el t.transit
+    if QM.mem q t.transit then
+      Logs.warn (fun m -> m "overwriting transit of %a" Udns.Question.pp q) ;
+    QM.add q el t.transit
   in
   transit, header, query
 
 let maybe_query ?recursion_desired t ts retry out ip typ name (proto, zone, edns, orig_s, orig_p, orig_q, orig_id) =
-  let k = (typ, name) in
+  let k = (name, typ) in
   let await = (ts, succ out, proto, zone, edns, orig_s, orig_p, orig_q, orig_id) in
   if QM.mem k t.queried then
     let t = { t with queried = QM.add k (await :: QM.find k t.queried) t.queried } in
@@ -113,9 +104,8 @@ let maybe_query ?recursion_desired t ts retry out ip typ name (proto, zone, edns
     let edns = Some (Udns.Edns.edns ())
     and proto = `Udp
     in
-    let quest = { Udns.Question.q_type = typ ; q_name = name } in
     (* TODO: is `Udp good here? *)
-    let transit, hdr, packet = build_query ?recursion_desired t ts proto quest retry zone edns ip in
+    let transit, hdr, packet = build_query ?recursion_desired t ts proto k retry zone edns ip in
     let t = { t with transit ; queried = QM.add k [await] t.queried } in
     Logs.debug (fun m -> m "maybe_query: query %a %a %a" Ipaddr.V4.pp ip
                    Udns.Header.pp hdr Udns.pp_v packet) ;
@@ -123,27 +113,25 @@ let maybe_query ?recursion_desired t ts retry out ip typ name (proto, zone, edns
     `Query (packet, ip), t
 
 let was_in_transit t typ name id sender =
-  let key = (typ, name) in
+  let key = (name, typ) in
   match QM.find key t with
   | exception Not_found ->
     s := { !s with drops = succ !s.drops } ;
-    Logs.warn (fun m -> m "key %a (%a) not present in set (likely retransmitted)"
-                  Domain_name.pp name Udns_enum.pp_rr_typ typ) ;
+    Logs.warn (fun m -> m "key %a not present in set (likely retransmitted)"
+                  Udns.Question.pp key) ;
     None, t
   | (_ts, _retry, _proto, zone, edns, o_sender, _o_port, _o_q, o_id) ->
     if Ipaddr.V4.compare sender o_sender = 0 && id = o_id then
       Some (zone, edns), QM.remove key t
     else
-      (Logs.warn (fun m -> m "unsolicited reply for %a (%a) (id %d vs o_id %d, sender %a vs o_sender %a)"
-                    Domain_name.pp name Udns_enum.pp_rr_typ typ
-                    id o_id Ipaddr.V4.pp sender Ipaddr.V4.pp o_sender) ;
+      (Logs.warn (fun m -> m "unsolicited reply for %a (id %d vs o_id %d, sender %a vs o_sender %a)"
+                    Udns.Question.pp key id o_id Ipaddr.V4.pp sender Ipaddr.V4.pp o_sender) ;
        None, t)
 
 let find_queries t k =
   match QM.find k t with
   | exception Not_found ->
-    Logs.warn (fun m -> m "couldn't find entry %a (%a) in map"
-                  Domain_name.pp (snd k) Udns_enum.pp_rr_typ (fst k)) ;
+    Logs.warn (fun m -> m "couldn't find entry %a in map" Udns.Question.pp k) ;
     s := { !s with drops = succ !s.drops } ;
     t, []
   | vals ->
@@ -154,17 +142,13 @@ let stats t =
                 pp_stats !s
                 Udns_resolver_cache.pp_stats (Udns_resolver_cache.stats ())
                 (Udns_resolver_cache.items t.cache) (Udns_resolver_cache.capacity t.cache)) ;
-  let names = List.map (fun (t, n) -> (n, t)) (fst (List.split (QM.bindings t.transit))) in
+  let names = fst (List.split (QM.bindings t.transit)) in
   Logs.info (fun m -> m "%d queries in transit %a" (QM.cardinal t.transit)
-                Fmt.(list ~sep:(unit "; ")
-                       (pair ~sep:(unit ", ") Domain_name.pp Udns_enum.pp_rr_typ))
-                       names) ;
-  let qs = List.map (fun ((t, n), v) -> (List.length v, (n, t))) (QM.bindings t.queried) in
+                Fmt.(list ~sep:(unit "; ") Udns.Question.pp) names) ;
+  let qs = List.map (fun (q, v) -> (List.length v, q)) (QM.bindings t.queried) in
   Logs.info (fun m -> m "%d queries %a" (QM.cardinal t.queried)
                 Fmt.(list ~sep:(unit "; ")
-                       (pair ~sep:(unit ": ") int
-                          (pair ~sep:(unit ", ") Domain_name.pp Udns_enum.pp_rr_typ)))
-                qs)
+                       (pair ~sep:(unit ": ") int Udns.Question.pp)) qs)
 
 let handle_query t its out ?(retry = 0) proto edns from port ts q qid =
   if Int64.sub ts its > Int64.shift_left retry_interval 2 then begin
@@ -196,9 +180,8 @@ let handle_query t its out ?(retry = 0) proto edns from port ts q qid =
              max_out ; total_out = !s.total_out + out ;
              max_time ; total_time = Int64.add !s.total_time time ;
            } ;
-      Logs.debug (fun m -> m "answering %a (%a) after %a %d out packets: %a %a"
-                     Domain_name.pp q.Udns.Question.q_name
-                     Udns_enum.pp_rr_typ q.Udns.Question.q_type
+      Logs.debug (fun m -> m "answering %a after %a %d out packets: %a %a"
+                     Udns.Question.pp q
                      Duration.pp time out
                      Udns.Header.pp hdr
                      Udns.pp_v a) ;
@@ -278,7 +261,7 @@ let supported = [ Udns_enum.A ; Udns_enum.NS ; Udns_enum.CNAME ;
                   Udns_enum.ANY ]
 
 let handle_awaiting_queries ?retry t ts q =
-  let queried, values = find_queries t.queried (q.Udns.Question.q_type, q.Udns.Question.q_name) in
+  let queried, values = find_queries t.queried q in
   let t = { t with queried } in
   List.fold_left (fun (t, out_a, out_q) (old_ts, out, proto, _, edns, from, port, q, qid) ->
       Logs.debug (fun m -> m "now querying %a" Udns.Question.pp q) ;
@@ -304,10 +287,10 @@ let resolve t ts proto sender sport header v opt =
                   Udns.Question.pp q) ;
     if not (Udns.Header.FS.mem `Recursion_desired header.Udns.Header.flags) then
           Logs.warn (fun m -> m "recursion not desired") ;
-        guard (List.mem q.Udns.Question.q_type supported)
+        guard (List.mem (snd q) supported)
           (fun () ->
              Logs.err (fun m -> m "unsupported query type %a"
-                          Udns_enum.pp_rr_typ q.Udns.Question.q_type) ;
+                          Udns_enum.pp_rr_typ (snd q)) ;
              error Udns_enum.NotImp) >>= fun () ->
         s := { !s with questions = succ !s.questions } ;
         (* ask the cache *)
@@ -335,7 +318,7 @@ let handle_reply t ts proto sender header v =
     Logs.info (fun m -> m "handling reply %a %a" Udns.Header.pp header
                   Udns.Question.pp q) ;
     (* (a) first check whether frame was in transit! *)
-    let r, transit = was_in_transit t.transit q.Udns.Question.q_type q.Udns.Question.q_name id sender in
+    let r, transit = was_in_transit t.transit (snd q) (fst q) id sender in
     let t = { t with transit } in
     let r = match r with
       | None -> (t, [], [])
@@ -415,9 +398,9 @@ let handle_delegation t ts proto sender sport header v opt v' =
               (Randomconv.int ~bound:(Udns.Map.Ipv4_set.cardinal ips) t.rng)
         in
         Logs.debug (fun m -> m "found ip %a, maybe querying for %a (%a)"
-                       Ipaddr.V4.pp ip Udns_enum.pp_rr_typ q.Udns.Question.q_type Domain_name.pp name) ;
+                       Ipaddr.V4.pp ip Udns_enum.pp_rr_typ (snd q) Domain_name.pp name) ;
         (* TODO is Domain_name.root correct here? *)
-        begin match maybe_query ~recursion_desired:true t ts 0 0 ip q.Udns.Question.q_type name (proto, Domain_name.root, opt, sender, sport, q, header.Udns.Header.id) with
+        begin match maybe_query ~recursion_desired:true t ts 0 0 ip (snd q) name (proto, Domain_name.root, opt, sender, sport, q, header.Udns.Header.id) with
           | `Nothing, t ->
             Logs.warn (fun m -> m "maybe_query for %a at %a returned nothing"
                           Domain_name.pp name Ipaddr.V4.pp ip) ;
@@ -509,13 +492,13 @@ let query_root t now proto =
       (List.nth roots (Randomconv.int ~bound:(List.length roots) t.rng),
        t.cache)
   in
-  let q = { Udns.Question.q_name ; q_type }
+  let q = (q_name, q_type)
   and id = Randomconv.int16 t.rng
   in
   let packet = `Query (Udns.query q) in
   let edns = Some (Udns.Edns.edns ()) in
   let el = (now, 0, proto, Domain_name.root, edns, ip, 53, q, id) in
-  let t = { t with transit = QM.add (q_type, q_name) el t.transit ; cache } in
+  let t = { t with transit = QM.add q el t.transit ; cache } in
   let cs, _ = Udns.encode ?edns proto (header id) packet in
   t, (proto, ip, cs)
 
@@ -545,18 +528,18 @@ let try_other_timer t ts =
   if QM.cardinal transit > 0 || QM.cardinal rem > 0 then
     Logs.debug (fun m -> m "try_other timer wheel -- keeping %d, running over %d"
                    (QM.cardinal transit) (QM.cardinal rem)) ;
-  QM.fold (fun (q_type, q_name) (_, retry, _, _, _, qs, _, _, _) (t, out_a, out_q) ->
+  QM.fold (fun (q_name, q_type) (_, retry, _, _, _, qs, _, _, _) (t, out_a, out_q) ->
       let retry = succ retry in
       if retry < max_retries then begin
         s := { !s with retransmits = succ !s.retransmits } ;
-        let q = { Udns.Question.q_name ; q_type } in
+        let q = (q_name, q_type) in
         let t, outa, outq = handle_awaiting_queries ~retry t ts q in
         (t, outa @ out_a, outq @ out_q)
       end else begin
         Logs.info (fun m -> m "retry limit exceeded for %a (%a) at %a!"
                       Domain_name.pp q_name Udns_enum.pp_rr_typ q_type
                       Ipaddr.V4.pp qs) ;
-        let queried, out_as = err_retries t.queried q_type q_name in
+        let queried, out_as = err_retries t.queried q_name q_type in
         ({ t with queried }, out_as @ out_a, out_q)
       end)
     rem (t, [], [])

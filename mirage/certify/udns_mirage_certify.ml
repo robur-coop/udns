@@ -106,7 +106,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
 *)
 
   
-  let query_certificate flow public_key q_name =
+  let query_certificate flow public_key name =
     let good_tlsa tlsa =
       tlsa.Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
       && tlsa.Udns.Tlsa.tlsa_selector = Udns_enum.Tlsa_full_certificate
@@ -124,7 +124,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
       | _ -> None
     in
     let header = dns_header ()
-    and question = { Udns.Question.q_name ; q_type = Udns_enum.TLSA }
+    and question = (name, Udns_enum.TLSA)
     in
     let query = Udns.query question in
     let buf, _ = Udns.encode `Tcp header (`Query query) in
@@ -140,7 +140,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
             && header'.Udns.Header.id = header.Udns.Header.id ->
           (* collect TLSA pems *)
           let tlsa =
-            match Domain_name.Map.find q_name q.Udns.answer with
+            match Domain_name.Map.find name q.Udns.answer with
             | None -> None
             | Some rrmap ->
               match Udns.Map.(find Tlsa rrmap) with

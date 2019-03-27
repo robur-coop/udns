@@ -426,7 +426,7 @@ let additionals t ts rrs =
     ([], t)
 *)
 
-let answer t ts { Udns.Question.q_type ; q_name } id =
+let answer t ts (name, typ) id =
   let packet t add rcode answer authority =
     (* TODO why is this RA + RD in here? should not be for recursive algorithm
          also, there should be authoritative... *)
@@ -435,21 +435,21 @@ let answer t ts { Udns.Question.q_type ; q_name } id =
                    rcode ; flags }
     (* XXX: we should look for a fixpoint here ;) *)
     (*    and additional, t = if add then additionals t ts answer else [], t *)
-    and question = Udns.query { Udns.Question.q_type ; q_name } in
+    and question = Udns.query (name, typ) in
     (header, `Query { question with Udns.answer ; authority (* ; additional *) }, t)
   in
-  match cached t ts q_type q_name with
-  | Error _ -> `Query (q_name, t)
+  match cached t ts typ name with
+  | Error _ -> `Query (name, t)
   | Ok (NoDom (ttl, authority) as res, t) ->
     `Packet (packet t false Udns_enum.NXDomain Domain_name.Map.empty (to_map res))
   | Ok (NoData (ttl, authority) as res, t) ->
     `Packet (packet t false Udns_enum.NoError Domain_name.Map.empty (to_map res))
   | Ok (ServFail (ttl, authority) as res, t) ->
     `Packet (packet t false Udns_enum.ServFail Domain_name.Map.empty (to_map res))
-  | Ok (NoErr answer as res, t) -> match q_type with
+  | Ok (NoErr answer as res, t) -> match typ with
     | Udns_enum.CNAME -> `Packet (packet t false Udns_enum.NoError (to_map res) Domain_name.Map.empty)
     | _ ->
-      match follow_cname t ts q_type q_name answer with
+      match follow_cname t ts typ name answer with
       | `NoError (answer, t) -> `Packet (packet t true Udns_enum.NoError answer Domain_name.Map.empty)
       | `Cycle (answer, t) -> `Packet (packet t true Udns_enum.NoError answer Domain_name.Map.empty)
       | `Query (n, t) -> `Query (n, t)
@@ -462,7 +462,7 @@ let handle_query t ~rng ts q qid =
   | `Packet (hdr, pkt, t) -> `Answer (hdr, pkt), t
   | `Query (name, t) ->
     let r =
-      match q.Udns.Question.q_type with
+      match snd q with
       (* similar for TLSA, which uses _443._tcp.<name> (not a service name!) *)
       | Udns_enum.SRV when Domain_name.is_service name ->
         Ok (Domain_name.drop_labels_exn ~amount:2 name, Udns_enum.NS)
@@ -481,7 +481,7 @@ let handle_query t ~rng ts q qid =
         `Nothing, t
       | Ok (zone, name', typ, ip, t) ->
         let name, typ =
-          match Domain_name.equal name' qname, q.Udns.Question.q_type with
+          match Domain_name.equal name' qname, snd q with
           | true, Udns_enum.SRV -> name, Udns_enum.SRV
           | _ -> name', typ
         in

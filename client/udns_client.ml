@@ -10,15 +10,8 @@ let make_query protocol hostname
       Cstruct.t * 'xy query_state =
   (* SRV records: Service + Protocol are case-insensitive, see RFC2728 pg2. *)
   fun record_type ->
-  let question : Udns.Question.t =
-    (* Udns_map.k_to_rr_typ *)
-    { q_name = hostname ; q_type = Udns.Map.k_to_rr_typ record_type } in
-  let query : Udns.query =
-    { question = question ;
-      answer = Domain_name.Map.empty ;
-      authority = Domain_name.Map.empty ;
-      additional = Domain_name.Map.empty
-    } in
+  let question = (hostname, Udns.Map.k_to_rr_typ record_type) in
+  let query : Udns.query = Udns.query question in
   let header = {
     Udns.Header.id = Random.int 0xffff ; (* TODO *)
     query = true ; operation = Udns_enum.Query; rcode = Udns_enum.NoError ;
@@ -83,7 +76,7 @@ let parse_response (type requested)
             end
         end
     in
-    follow_cname 20 state.question.q_name
+    follow_cname 20 (fst state.question)
   | Ok (h, `Query q, edns, tsig) ->
     R.error_msgf
       "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a  opt:%a tsig:%B@,@]"

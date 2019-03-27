@@ -287,22 +287,22 @@ let find_glue trie typ name names =
         insert_rr map Udns_enum.AAAA name)
     names Domain_name.Map.empty
 
-let lookup trie hdr q =
+let lookup trie hdr (name, typ) =
   (* TODO: should randomize answers + ad? *)
   let hdr =
     let hdr = s_header hdr in
     { hdr with rcode = Udns_enum.NoError }
   in
-  let query = Udns.query q in
-  let r = match q.q_type with
-    | Udns_enum.ANY -> Udns_trie.lookup_any q.q_name trie
-    | _ -> match Udns_trie.lookupb q.q_name q.q_type trie with
+  let query = Udns.query (name, typ) in
+  let r = match typ with
+    | Udns_enum.ANY -> Udns_trie.lookup_any name trie
+    | _ -> match Udns_trie.lookupb name typ trie with
       | Ok (B (k, v), au) -> Ok (Udns.Map.singleton k v, au)
       | Error e -> Error e
   in
   match r with
   | Ok (an, (name, ttl, ns)) ->
-    let answer = Domain_name.Map.singleton q.q_name an in
+    let answer = Domain_name.Map.singleton name an in
     let authority =
       Udns.Map.remove_sub
         (Domain_name.Map.singleton name Udns.Map.(singleton Ns (ttl, ns)))
@@ -314,7 +314,7 @@ let lookup trie hdr q =
       in
       Udns.Map.remove_sub
         (Udns.Map.remove_sub
-           (find_glue trie q.q_type q.q_name names)
+           (find_glue trie typ name names)
            answer)
         authority
     in
@@ -380,7 +380,7 @@ let axfr t proto key q zone =
 *)
 let lookup t proto key hdr q =
   let trie =
-    if Authentication.authorise t.auth proto key q.Udns.Question.q_name `Key_management then begin
+    if Authentication.authorise t.auth proto key (fst q) `Key_management then begin
       Log.info (fun m -> m "key-management key %a authorised for lookup %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
                    Udns.Question.pp q) ;
@@ -420,7 +420,7 @@ let safe_decode buf =
 let handle_query t proto key header query =
   let q = query.Udns.question in
   let open Udns_enum in
-  begin match q.Udns.Question.q_type with
+  begin match snd q with
 (*      | AXFR ->
         axfr t proto key query q.Udns_types.q_name >>= fun answer ->
         let hdr = s_header header in
@@ -611,7 +611,7 @@ let notify t l now zone soa =
                 Fmt.(list ~sep:(unit ", ") (pair ~sep:(unit ":") Ipaddr.V4.pp int))
                 (IPM.bindings ips)) ;
   let notify =
-    let question = Udns.query { Udns.Question.q_name = zone ; q_type = Udns_enum.SOA } in
+    let question = Udns.query (zone, Udns_enum.SOA) in
     let answer =
       Domain_name.Map.singleton zone Udns.Map.(singleton Soa (0l, soa))
     in
@@ -753,8 +753,7 @@ module Primary = struct
 
   let tcp_soa_query proto q =
     match proto, q.Udns.question with
-    | `Tcp, query when query.Udns.Question.q_type = Udns_enum.SOA ->
-      Ok query.Udns.Question.q_name
+    | `Tcp, query when snd query = Udns_enum.SOA -> Ok (fst query)
     | _ -> Error ()
 
   let handle_frame (t, l, ns) _ts ip port proto key header v =
@@ -958,7 +957,7 @@ module Secondary = struct
 
   let axfr t proto now ts q_name name =
     let id, header = header t.rng ()
-    and question = { Udns.Question.q_name ; q_type = Udns_enum.AXFR }
+    and question = (q_name, Udns_enum.AXFR)
     in
     let query = Udns.query question in
     let buf, max_size = Udns.encode proto header (`Query query) in
@@ -968,7 +967,7 @@ module Secondary = struct
 
   let query_soa ?(retry = 0) t proto now ts q_name name =
     let id, header = header t.rng ()
-    and question = { Udns.Question.q_name ; q_type = Udns_enum.SOA }
+    and question = (q_name, Udns_enum.SOA)
     in
     let query = Udns.query question in
     let buf, max_size = Udns.encode proto header (`Query query) in
@@ -1043,18 +1042,17 @@ module Secondary = struct
     t, out
 
   let handle_notify t zones now ts ip query =
-    let q = query.Udns.question in
-    match q.Udns.Question.q_type with
+    let (zone, typ) = query.Udns.question in
+    match typ with
     | Udns_enum.SOA ->
-      let zone = q.Udns.Question.q_name in
       begin match Domain_name.Map.find zone zones with
         | None -> (* we don't know anything about the notified zone *)
           Log.warn (fun m -> m "ignoring notify for %a, no such zone"
-                           Domain_name.pp q.Udns.Question.q_name) ;
+                       Domain_name.pp zone) ;
               Error Udns_enum.Refused
             | Some (_, ip', port', name) when Ipaddr.V4.compare ip ip' = 0 ->
               Log.debug (fun m -> m "received notify for %a, replying and requesting SOA"
-                            Domain_name.pp q.Udns.Question.q_name) ;
+                            Domain_name.pp zone) ;
               (* TODO should we look in zones and if there's a fresh Requested_soa, leave it as is? *)
               let zones, out =
                 match query_soa t `Tcp now ts zone name with
@@ -1066,13 +1064,12 @@ module Secondary = struct
               Ok (zones, out)
             | Some (_, ip', _, _) ->
               Log.warn (fun m -> m "ignoring notify for %a from %a (%a is primary)"
-                           Domain_name.pp q.Udns.Question.q_name
-                           Ipaddr.V4.pp ip Ipaddr.V4.pp ip') ;
+                           Domain_name.pp zone Ipaddr.V4.pp ip Ipaddr.V4.pp ip') ;
               Error Udns_enum.Refused
           end
         | t ->
           Log.warn (fun m -> m "ignoring notify %a with type %a"
-                       Domain_name.pp q.Udns.Question.q_name Udns_enum.pp_rr_typ t) ;
+                       Domain_name.pp zone Udns_enum.pp_rr_typ t) ;
           Error Udns_enum.FormErr
 
   (*
@@ -1102,17 +1099,15 @@ module Secondary = struct
 *)
 
   let handle_answer t zones now ts keyname header query =
-    let q =  query.Udns.question in
-    let zone = q.Udns.Question.q_name in
+    let (zone, typ) = query.Udns.question in
     match Domain_name.Map.find zone zones with
     | None ->
       Log.warn (fun m -> m "ignoring %a (%a), unknown zone"
-                   Domain_name.pp q.Udns.Question.q_name
-                   Udns_enum.pp_rr_typ q.Udns.Question.q_type) ;
+                   Domain_name.pp zone Udns_enum.pp_rr_typ typ) ;
       Error Udns_enum.Refused
     | Some (st, ip, port, name) ->
       Log.debug (fun m -> m "in %a (name %a) got answer %a"
-                    Domain_name.pp q.Udns.Question.q_name Domain_name.pp name
+                    Domain_name.pp zone Domain_name.pp name
                     Udns.pp_map query.Udns.answer) ;
       (* TODO use NotAuth instead of Refused here? *)
       Rresult.R.of_option
@@ -1121,7 +1116,7 @@ module Secondary = struct
             Error Udns_enum.Refused)
         keyname >>= fun key_name ->
       guard (Domain_name.equal name key_name) Udns_enum.Refused >>= fun () ->
-      begin match st, q.Udns.Question.q_type with
+      begin match st, typ with
         | Requested_axfr (_, id', _), Udns_enum.AXFR when header.Udns.Header.id = id' ->
           Logs.info (fun m -> m "received AXFR (key %a) for %a: %a"
                         Domain_name.pp key_name Domain_name.pp zone
@@ -1148,13 +1143,13 @@ module Secondary = struct
               begin match Domain_name.Map.find zone query.Udns.answer with
                 | None ->
                   Log.err (fun m -> m "didn't get an answer for %a from %a"
-                              Domain_name.pp q.Udns.Question.q_name Ipaddr.V4.pp ip) ;
+                              Domain_name.pp zone Ipaddr.V4.pp ip) ;
                   Error Udns_enum.FormErr
                 | Some rrmap ->
                   match Udns.Map.(find Soa rrmap) with
                   | None ->
                     Log.err (fun m -> m "didn't get a SOA answer for %a from %a"
-                                Domain_name.pp q.Udns.Question.q_name Ipaddr.V4.pp ip) ;
+                                Domain_name.pp zone Ipaddr.V4.pp ip) ;
                     Error Udns_enum.FormErr
                   | Some (_, fresh) ->
                     (* TODO: > with wraparound in mind *)
@@ -1188,8 +1183,7 @@ module Secondary = struct
               end
             | _ ->
               Log.warn (fun m -> m "ignoring %a (%a) unmatched state"
-                           Domain_name.pp q.Udns.Question.q_name
-                           Udns_enum.pp_rr_typ q.Udns.Question.q_type) ;
+                           Domain_name.pp zone Udns_enum.pp_rr_typ typ) ;
               Error Udns_enum.Refused
           end
 
@@ -1264,8 +1258,8 @@ module Secondary = struct
 
   let find_mac zones header = function
     | `Query q when not header.Udns.Header.query ->
-      let q = q.Udns.question in
-      begin match Domain_name.Map.find q.Udns.Question.q_name zones with
+      let (name, _) = q.Udns.question in
+      begin match Domain_name.Map.find name zones with
         | None -> None
         | Some (Requested_axfr (_, _id_, mac), _, _, _) -> Some mac
         | Some (Requested_soa (_, _, _id, mac), _, _, _) -> Some mac

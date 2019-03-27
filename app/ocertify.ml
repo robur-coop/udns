@@ -46,7 +46,7 @@ let query_certificate sock public_key fqdn =
     | _ -> None
   in
   let header = dns_header ()
-  and question = { Udns.Question.q_name = fqdn ; q_type = Udns_enum.TLSA }
+  and question = (fqdn, Udns_enum.TLSA)
   in
   let query = Udns.query question in
   let buf, _ = Udns.encode `Tcp header (`Query query) in

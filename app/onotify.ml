@@ -2,7 +2,7 @@
 
 let notify zone serial key now =
   let notify =
-    let question = { Udns.Question.q_name = zone ; q_type = Udns_enum.SOA }
+    let question = (zone, Udns_enum.SOA)
     and answer =
       let soa = { Udns.Soa.nameserver = zone ; hostmaster = zone ; serial ;
                   refresh = 0l; retry = 0l ; expiry = 0l ; minimum = 0l }
