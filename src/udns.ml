@@ -137,7 +137,6 @@ let pp_err ppf = function
   | `BadRRTyp x -> Fmt.pf ppf "bad rr typ %u" x
   | `UnsupportedRRTyp x -> Fmt.pf ppf "unsupported rr typ %a" Udns_enum.pp_rr_typ x
   | `BadClass x -> Fmt.pf ppf "bad rr class %u" x
-  | `DisallowedClass x -> Fmt.pf ppf "disallowed rr class %a" Udns_enum.pp_clas x
   | `UnsupportedClass x -> Fmt.pf ppf "unsupported rr class %a" Udns_enum.pp_clas x
   | `BadOpcode x -> Fmt.pf ppf "bad opcode %u" x
   | `UnsupportedOpcode x -> Fmt.pf ppf "unsupported opcode %a" Udns_enum.pp_opcode x
@@ -152,7 +151,7 @@ let pp_err ppf = function
   | `InvalidAlgorithm n -> Fmt.pf ppf "invalid algorithm %a" Domain_name.pp n
   | `BadProto num -> Fmt.pf ppf "bad protocol %u" num
   | `BadAlgorithm num -> Fmt.pf ppf "bad algorithm %u" num
-  | `BadOpt -> Fmt.pf ppf "bad option"
+  | `BadEdns -> Fmt.pf ppf "bad edns"
   | `BadKeepalive -> Fmt.pf ppf "bad keepalive"
   | `BadTlsaCertUsage usage -> Fmt.pf ppf "bad TLSA cert usage %u" usage
   | `BadTlsaSelector selector -> Fmt.pf ppf "bad TLSA selector %u" selector
@@ -160,9 +159,6 @@ let pp_err ppf = function
   | `BadSshfpAlgorithm i -> Fmt.pf ppf "bad SSHFP algorithm %u" i
   | `BadSshfpType i -> Fmt.pf ppf "bad SSHFP type %u" i
   | `Bad_edns_version i -> Fmt.pf ppf "bad edns version %u" i
-  | `Multiple_tsig -> Fmt.string ppf "multiple TSIG"
-  | `Multiple_edns -> Fmt.string ppf "multiple EDNS"
-  | `Tsig_not_last -> Fmt.string ppf "TSIG not last"
   | `None_or_multiple_questions -> Fmt.string ppf "none or multiple questions"
 (*BISECT-IGNORE-END*)
 
@@ -981,7 +977,7 @@ module Edns = struct
     let code = Cstruct.BE.get_uint16 buf off
     and tl = Cstruct.BE.get_uint16 buf (off + 2)
     in
-    guard (tl <= len - 4) `BadOpt >>= fun () ->
+    guard (tl <= len - 4) `BadEdns >>= fun () ->
     let v = Cstruct.sub buf (off + 4) tl in
     let len = tl + 4 in
     match Udns_enum.int_to_edns_opt code with
@@ -1013,7 +1009,7 @@ module Edns = struct
     (* EDNS is special -- the incoming off points to before name type clas *)
     (* name must be the root, typ is OPT, class is used for length *)
     guard (Cstruct.len buf - off >= 11) `Partial >>= fun () ->
-    guard (Cstruct.get_uint8 buf off = 0) `BadOpt >>= fun () ->
+    guard (Cstruct.get_uint8 buf off = 0) `BadEdns >>= fun () ->
     (* crazyness: payload_size is encoded in class *)
     let payload_size = Cstruct.BE.get_uint16 buf (off + 3)
     (* it continues: the ttl is split into: 8bit extended rcode, 8bit version, 1bit dnssec_ok, 7bit 0 *)
@@ -1608,6 +1604,13 @@ module Header = struct
     flags : FS.t
   }
 
+  let compare a b =
+    andThen (int_compare a.id b.id)
+      (andThen (compare a.query b.query)
+         (andThen (int_compare (Udns_enum.opcode_to_int a.operation) (Udns_enum.opcode_to_int b.operation))
+            (andThen (int_compare (Udns_enum.rcode_to_int a.rcode) (Udns_enum.rcode_to_int b.rcode))
+               (FS.compare a.flags b.flags))))
+
   let len = 12
 
   (* header is:
@@ -1635,7 +1638,7 @@ module Header = struct
     (* we only access the first 4 bytes, but anything <12 is a bad DNS frame *)
     guard (Cstruct.len buf >= len) `Partial >>= fun () ->
     let hdr = Cstruct.BE.get_uint16 buf 2 in
-    let op = (hdr land 0x7800) lsr 3
+    let op = (hdr land 0x7800) lsr 11
     and rc = hdr land 0x000F
     in
     match Udns_enum.int_to_opcode op, Udns_enum.int_to_rcode rc with
@@ -1727,6 +1730,9 @@ let query question =
   let empty = Domain_name.Map.empty in
   { question ; answer = empty ; authority = empty ; additional = empty }
 
+let equal_map a b =
+  Domain_name.Map.equal (Map.equal Map.equal_b) a b
+
 (*BISECT-IGNORE-BEGIN*)
 let pp_map ppf map =
   Fmt.(list ~sep:(unit ";@ ") (pair ~sep:(unit " ") Domain_name.pp Map.pp))
@@ -1737,7 +1743,6 @@ let pp_query ppf t =
     Question.pp t.question
     pp_map t.answer pp_map t.authority pp_map t.additional
 (*BISECT-IGNORE-END*)
-
 
 let decode_rr names buf off =
   let open Rresult.R.Infix in

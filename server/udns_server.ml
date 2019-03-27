@@ -395,7 +395,7 @@ let safe_decode buf =
   | Error `Partial ->
     Log.err (fun m -> m "partial frame (length %d)@.%a" (Cstruct.len buf) Cstruct.hexdump_pp buf) ;
     Error Udns_enum.FormErr
-  | Error (`UnsupportedRRTyp _ | `DisallowedClass _ | `UnsupportedClass _ as e) ->
+  | Error (`UnsupportedRRTyp _ | `UnsupportedClass _ as e) ->
     Log.err (fun m -> m "refusing %a while decoding@.%a"
                  Udns.pp_err e Cstruct.hexdump_pp buf) ;
     Error Udns_enum.Refused

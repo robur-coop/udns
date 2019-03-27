@@ -1,6 +1,5 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 (*
-
   | x -> Ok (Raw (x, Cstruct.sub buf off len), names, off + len)
 
 let encode_rdata offs buf off = function
