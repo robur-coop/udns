@@ -306,13 +306,19 @@ let lookup trie hdr q =
   | Ok (an, (name, ttl, ns)) ->
     let answer = Domain_name.Map.singleton q.q_name an in
     let authority =
-      Domain_name.Map.singleton name Udns.Map.(singleton Ns (ttl, ns))
+      Udns.Map.remove_sub
+        (Domain_name.Map.singleton name Udns.Map.(singleton Ns (ttl, ns)))
+        answer
     in
     let additional =
       let names =
         Udns.Map.(fold (fun b s -> Domain_name.Set.union (namesb b) s) an ns)
       in
-      find_glue trie q.q_type q.q_name names
+      Udns.Map.remove_sub
+        (Udns.Map.remove_sub
+           (find_glue trie q.q_type q.q_name names)
+           answer)
+        authority
     in
     Ok (hdr, `Query { query with Udns.answer ; authority ; additional })
   | Error (`Delegation (name, (ttl, ns))) ->
@@ -320,8 +326,7 @@ let lookup trie hdr q =
       Domain_name.Set.fold (fun name map ->
           (* TODO aaaa records! *)
           match Udns_trie.lookup_ignore name Udns_enum.A trie with
-          | Ok (Udns.Map.B (Udns.Map.A, _) as v) ->
-            Udns.Map.add_entry map name v
+          | Ok (Udns.Map.B (Udns.Map.A, _) as v) -> Udns.Map.add_entry map name v
           | _ -> map)
         ns Domain_name.Map.empty
     in

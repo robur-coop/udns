@@ -1104,6 +1104,23 @@ module Map = struct
     | Sshfp : (int32 * Sshfp_set.t) k
     | Txt : (int32 * Txt_set.t) k
 
+  let equal_k : type a b . a k -> a -> b k -> b -> bool = fun k v k' v' ->
+    match k, v, k', v' with
+    | Cname, (_, alias), Cname, (_, alias') -> Domain_name.equal alias alias'
+    | Mx, (_, mxs), Mx, (_, mxs') -> Mx_set.equal mxs mxs'
+    | Ns, (_, ns), Ns, (_, ns') -> Domain_name.Set.equal ns ns'
+    | Ptr, (_, name), Ptr, (_, name') -> Domain_name.equal name name'
+    | Soa, (_, soa), Soa, (_, soa') -> Soa.compare soa soa' = 0
+    | Txt, (_, txts), Txt, (_, txts') -> Txt_set.equal txts txts'
+    | A, (_, aas), A, (_, aas') -> Ipv4_set.equal aas aas'
+    | Aaaa, (_, aaaas), Aaaa, (_, aaaas') -> Ipv6_set.equal aaaas aaaas'
+    | Srv, (_, srvs), Srv, (_, srvs') -> Srv_set.equal srvs srvs'
+    | Dnskey, (_, keys), Dnskey, (_, keys') -> Dnskey_set.equal keys keys'
+    | Caa, (_, caas), Caa, (_, caas') -> Caa_set.equal caas caas'
+    | Tlsa, (_, tlsas), Tlsa, (_, tlsas') -> Tlsa_set.equal tlsas tlsas'
+    | Sshfp, (_, sshfps), Sshfp, (_, sshfps') -> Sshfp_set.equal sshfps sshfps'
+    | _, _, _, _ -> false
+
   let k_to_rr_typ : type a. a k -> Udns_enum.rr_typ = function
     | Cname -> Udns_enum.CNAME
     | Mx -> Udns_enum.MX
@@ -1399,34 +1416,7 @@ module Map = struct
 
   let pp_b ppf (B (k, v)) = K.pp ppf k v
 
-  let equal_b b b' = match b, b' with
-    | B (Cname, (_, alias)), B (Cname, (_, alias')) ->
-      Domain_name.equal alias alias'
-    | B (Mx, (_, mxs)), B (Mx, (_, mxs')) ->
-      Mx_set.equal mxs mxs'
-    | B (Ns, (_, ns)), B (Ns, (_, ns')) ->
-      Domain_name.Set.equal ns ns'
-    | B (Ptr, (_, name)), B (Ptr, (_, name')) ->
-      Domain_name.equal name name'
-    | B (Soa, (_, soa)), B (Soa, (_, soa')) ->
-      Soa.compare soa soa' = 0
-    | B (Txt, (_, txts)), B (Txt, (_, txts')) ->
-      Txt_set.equal txts txts'
-    | B (A, (_, aas)), B (A, (_, aas')) ->
-      Ipv4_set.equal aas aas'
-    | B (Aaaa, (_, aaaas)), B (Aaaa, (_, aaaas')) ->
-      Ipv6_set.equal aaaas aaaas'
-    | B (Srv, (_, srvs)), B (Srv, (_, srvs')) ->
-      Srv_set.equal srvs srvs'
-    | B (Dnskey, (_, keys)), B (Dnskey, (_, keys')) ->
-      Dnskey_set.equal keys keys'
-    | B (Caa, (_, caas)), B (Caa, (_, caas')) ->
-      Caa_set.equal caas caas'
-    | B (Tlsa, (_, tlsas)), B (Tlsa, (_, tlsas')) ->
-      Tlsa_set.equal tlsas tlsas'
-    | B (Sshfp, (_, sshfps)), B (Sshfp, (_, sshfps')) ->
-      Sshfp_set.equal sshfps sshfps'
-    | _, _ -> false
+  let equal_b (B (k, v)) (B (k', v')) = equal_k k v k' v'
 
   let names : type a. a k -> a -> Domain_name.Set.t = fun k v ->
     match k, v with
@@ -1535,6 +1525,17 @@ module Map = struct
     in
     let m' = update k (combine k v) m in
     Domain_name.Map.add name m' dmap
+
+  let remove_sub map sub =
+    (* remove all entries which are in sub from map *)
+    (* we don't compare values, just do it based on rrtype! *)
+    Domain_name.Map.fold (fun name rrmap map ->
+        match Domain_name.Map.find name map with
+        | None -> map
+        | Some rrs ->
+          let rrs' = fold (fun (B (k, v)) map -> remove k map) rrmap rrs in
+          Domain_name.Map.add name rrs' map)
+      sub map
 
   let textb ?origin ?default_ttl name (B (key, v)) =
     text ?origin ?default_ttl name key v
