@@ -14,19 +14,26 @@ let invalid_soa name =
     | Error _ -> name
   in
   let soa = {
-    Udns_types.nameserver = p "ns" ; hostmaster = p "hostmaster" ;
+    Udns.Soa.nameserver = p "ns" ; hostmaster = p "hostmaster" ;
     serial = 1l ; refresh = 16384l ; retry = 2048l ;
     expiry = 1048576l ; minimum = 300l
   } in
-  { Udns_packet.name ; ttl = 300l ; rdata = SOA soa }
+  name, (300l, soa)
 
-let noerror bailiwick q hdr dns =
+let soa_map name soa =
+  Domain_name.Map.singleton name Udns.Map.(singleton Soa soa)
+
+let invalid_soa_map name = soa_map name (snd (invalid_soa name))
+
+
+(*
+let noerror bailiwick { Udns.Question.q_type ; q_name } hdr dns =
   (* maybe should be passed explicitly (when we don't do qname minimisation) *)
   let in_bailiwick name = Domain_name.sub ~domain:bailiwick ~subdomain:name in
   (* ANSWER *)
   let typ_matches rr =
     let rtyp = Udns_packet.rdata_to_rr_typ rr.Udns_packet.rdata in
-    match q.Udns_types.q_type, rtyp with
+    match q_type, rtyp with
     | Udns_enum.ANY, _ -> true
     | _, Udns_enum.CNAME -> true
     | t, t' -> t = t'
@@ -150,80 +157,90 @@ let noerror bailiwick q hdr dns =
                   Domain_name.pp q.q_name Udns_enum.pp_rr_typ q.q_type) ;
     [ q.q_type, q.q_name, Additional, NoData (invalid_soa q.q_name) ]
   | _, _ -> answers @ ns @ glues
+*)
 
-let nxdomain q hdr dns =
+let find_soa name dns =
+  let rec go name =
+    match Domain_name.Map.find name dns.Udns.authority with
+    | None -> go (Domain_name.drop_labels_exn name)
+    | Some rrmap -> match Udns.Map.(find Soa rrmap) with
+      | None -> go (Domain_name.drop_labels_exn name)
+      | Some (ttl, soa) -> name, (ttl, soa)
+  in
+  try Some (go name) with Invalid_argument _ -> None
+
+let nxdomain { Udns.Question.q_type ; q_name } hdr dns =
   (* we can't do much if authoritiative is not set (some auth dns do so) *)
   (* There are cases where answer is non-empty, but contains a CNAME *)
   (* RFC 2308 Sec 1 + 2.1 show that NXDomain is for the last QNAME! *)
   (* -> need to potentially extract CNAME(s) *)
   let cname_opt =
-    List.fold_left (fun r rr ->
-        match r, rr.Udns_packet.rdata with
-        | None, Udns_packet.CNAME _ when Domain_name.equal rr.Udns_packet.name q.Udns_types.q_name -> Some rr
-        | a, _ -> a)
-      None dns.Udns_packet.answer
+    let rec go acc name =
+      match Domain_name.Map.find name dns.Udns.answer with
+      | None -> acc
+      | Some rrmap -> match Udns.Map.(find Cname rrmap) with
+        | None -> acc
+        | Some (ttl, alias) -> go ((name, (ttl, alias)) :: acc) alias
+    in
+    go [] q_name
   in
-  let soa =
-    List.fold_left (fun r rr ->
-        match r, rr.Udns_packet.rdata with
-        | None, Udns_packet.SOA _ when Domain_name.sub ~subdomain:q.Udns_types.q_name ~domain:rr.Udns_packet.name -> Some rr
-        | a, _ -> a)
-      None dns.authority
-  in
+  let soa = find_soa q_name dns in
   (* since NXDomain have CNAME semantics, we store them as CNAME *)
-  let rank = if hdr.Udns_packet.authoritative then AuthoritativeAnswer else NonAuthoritativeAnswer in
+  let rank = if Udns.Header.FS.mem `Authoritative hdr.Udns.Header.flags then AuthoritativeAnswer else NonAuthoritativeAnswer in
   (* we conclude NXDomain, there are 3 cases we care about:
      no soa in authority and no cname answer -> inject an invalid_soa (avoid loops)
      a matching soa, no cname -> NoDom q_name
      _, a matching cname -> NoErr q_name with cname
  *)
   match soa, cname_opt with
-  | None, None -> [ Udns_enum.CNAME, q.q_name, rank, NoDom (invalid_soa q.q_name) ]
-  | Some soa, None -> [ Udns_enum.CNAME, q.q_name, rank, NoDom soa ]
-  | _, Some rr -> [ Udns_enum.CNAME, q.q_name, rank, NoErr [ rr ] ]
+  | None, [] ->
+    let name, soa = invalid_soa q_name in
+    [ Udns_enum.CNAME, q_name, rank, NoDom (name, soa) ]
+  | Some (name, soa), [] -> [ Udns_enum.CNAME, q_name, rank, NoDom (name, soa) ]
+  | _, rrs ->
+    List.map (fun (name, cname) ->
+        Udns_enum.CNAME, name, rank, NoErr Udns.Map.(B (Cname, cname)))
+      rrs
 
-let noerror_stub q dns =
+let noerror_stub { Udns.Question.q_name ; q_type } dns =
   (* no glue, just answers - but get all the cnames *)
-  let typ = q.Udns_types.q_type in
-  let find_entry_or_cname name = List.fold_left (fun acc rr ->
-      if Domain_name.equal rr.Udns_packet.name name then
-        let add =
-          typ = Udns_enum.ANY || typ = Udns_packet.rdata_to_rr_typ rr.Udns_packet.rdata
-        in
-        match acc, rr.rdata with
-        | None, Udns_packet.CNAME alias -> Some (`Cname (alias, rr))
-        | Some (`Entry rrs), _ when add -> Some (`Entry (rr :: rrs))
-        | None, _ when add -> Some (`Entry [rr])
-        | x, _ -> x
-      else
-        acc)
-      None dns.Udns_packet.answer
-  in
-  let find_soa name = List.fold_left (fun acc rr ->
-      if Domain_name.sub ~subdomain:name ~domain:rr.Udns_packet.name then
-        match acc, rr.Udns_packet.rdata with
-        | None, Udns_packet.SOA _ -> Some rr
-        | x, _ -> x
-      else
-        acc) None dns.Udns_packet.authority
+  let find_entry_or_cname name =
+    match Domain_name.Map.find name dns.Udns.answer with
+    | None -> None
+    | Some rrmap -> match q_type with
+      | Udns_enum.ANY -> Some (`Entries rrmap)
+      | _ -> match Udns.Map.lookup_rr q_type rrmap with
+        | Some b -> Some (`Entry b)
+        | None -> match Udns.Map.(find Cname rrmap) with
+          | None -> None
+          | Some (ttl, alias) -> Some (`Cname (ttl, alias))
   in
   let rec go acc name = match find_entry_or_cname name with
     | None ->
-      let soa = match find_soa name with Some x -> x | None -> invalid_soa name in
-      (typ, name, NonAuthoritativeAnswer, NoData soa) :: acc
-    | Some (`Cname (alias, rr)) -> go ((Udns_enum.CNAME, name, NonAuthoritativeAnswer, NoErr [ rr ]) :: acc) alias
-    | Some (`Entry rrs) -> (typ, name, NonAuthoritativeAnswer, NoErr rrs) :: acc
+      let name, soa = match find_soa name dns with Some x -> x | None -> invalid_soa name in
+      (q_type, name, NonAuthoritativeAnswer, NoData (name, soa)) :: acc
+    | Some (`Cname (ttl, alias)) ->
+      let b = Udns.Map.(B (Cname, (ttl, alias))) in
+      go ((Udns_enum.CNAME, name, NonAuthoritativeAnswer, NoErr b) :: acc) alias
+    | Some (`Entry b) ->
+      (q_type, name, NonAuthoritativeAnswer, NoErr b) :: acc
+    | Some (`Entries map) ->
+      Udns.Map.fold (fun Udns.Map.(B (k, v) as b) acc ->
+          (Udns.Map.k_to_rr_typ k, name, NonAuthoritativeAnswer, NoErr b) :: acc)
+        map acc
   in
-  go [] q.Udns_types.q_name
+  go [] q_name
 
 (* stub vs recursive: maybe sufficient to look into *)
 let scrub ?(mode = `Recursive) zone q hdr dns =
   Logs.debug (fun m -> m "scrubbing (bailiwick %a) q %a rcode %a"
-                 Domain_name.pp zone Udns_types.pp_question q
-                 Udns_enum.pp_rcode hdr.Udns_packet.rcode) ;
+                 Domain_name.pp zone Udns.Question.pp q
+                 Udns_enum.pp_rcode hdr.Udns.Header.rcode) ;
   match mode, hdr.rcode with
-  | `Recursive, Udns_enum.NoError -> Ok (noerror zone q hdr dns)
+  (*  | `Recursive, Udns_enum.NoError -> Ok (noerror zone q hdr dns) *)
   | `Stub, Udns_enum.NoError -> Ok (noerror_stub q dns)
   | _, Udns_enum.NXDomain -> Ok (nxdomain q hdr dns)
-  | `Stub, Udns_enum.ServFail -> Ok [ Udns_enum.CNAME, q.q_name, NonAuthoritativeAnswer, ServFail (invalid_soa q.q_name)  ]
+  | `Stub, Udns_enum.ServFail ->
+    let ttl, soa = invalid_soa q.q_name in
+    Ok [ Udns_enum.CNAME, q.q_name, NonAuthoritativeAnswer, ServFail (ttl, soa)  ]
   | _, e -> Error e

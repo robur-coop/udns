@@ -14,9 +14,15 @@ val compare_rank : rank -> rank -> [ `Equal | `Smaller | `Bigger ]
 val pp_rank : rank Fmt.t
 
 type res =
-  | NoErr of Udns_packet.rr list
-  | NoData of Udns_packet.rr
-  | NoDom of Udns_packet.rr
-  | ServFail of Udns_packet.rr
+  | NoErr of Udns.Map.b
+  | NoData of Domain_name.t * (int32 * Udns.Soa.t)
+  | NoDom of Domain_name.t * (int32 * Udns.Soa.t)
+  | ServFail of Domain_name.t * (int32 * Udns.Soa.t)
 
 val pp_res : res Fmt.t
+
+val decrease_ttl : int32 -> res -> res option
+
+val smooth_ttl : int32 -> res -> res
+
+val to_map : res -> Udns.Map.t Domain_name.Map.t

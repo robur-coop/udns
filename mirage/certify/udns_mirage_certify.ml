@@ -67,14 +67,13 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
 
   let dns_header () =
     let id = Randomconv.int16 R.generate in
-    { Udns_packet.id ; query = true ; operation = Udns_enum.Query ;
-      authoritative = false ; truncation = false ; recursion_desired = false ;
-      recursion_available = false ; authentic_data = false ; checking_disabled = false ;
-      rcode = Udns_enum.NoError }
+    { Udns.Header.id ; query = true ; operation = Udns_enum.Query ;
+      rcode = Udns_enum.NoError ; flags = Udns.Header.FS.empty }
 
+  (*
   let nsupdate_csr flow hostname keyname zone dnskey csr =
     let tlsa =
-      { Udns_types.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
+      { Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
         tlsa_selector = Udns_enum.Tlsa_selector_private ;
         tlsa_matching_type = Udns_enum.Tlsa_no_hash ;
         tlsa_data = X509.Encoding.cs_of_signing_request csr ;
@@ -104,61 +103,64 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
           match Udns_tsig.decode_and_verify now dnskey keyname ~mac data with
           | Error e -> Lwt.return_error ("nsupdate reply " ^ e)
           | Ok _ -> Lwt.return_ok ()
+*)
 
+  
   let query_certificate flow public_key q_name =
     let good_tlsa tlsa =
-      if
-        tlsa.Udns_types.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
-        && tlsa.Udns_types.tlsa_selector = Udns_enum.Tlsa_full_certificate
-        && tlsa.Udns_types.tlsa_matching_type = Udns_enum.Tlsa_no_hash
-      then
-        match X509.Encoding.parse tlsa.Udns_types.tlsa_data with
-        | Some cert ->
-          let keys_equal a b =
-            Cstruct.equal (X509.key_id a) (X509.key_id b)
-          in
-          if keys_equal (X509.public_key cert) public_key then
-            Some cert
-          else
-            None
-        | _ -> None
-      else
-        None
+      tlsa.Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
+      && tlsa.Udns.Tlsa.tlsa_selector = Udns_enum.Tlsa_full_certificate
+      && tlsa.Udns.Tlsa.tlsa_matching_type = Udns_enum.Tlsa_no_hash
+    and parse tlsa =
+      match X509.Encoding.parse tlsa.Udns.Tlsa.tlsa_data with
+      | Some cert ->
+        let keys_equal a b =
+          Cstruct.equal (X509.key_id a) (X509.key_id b)
+        in
+        if keys_equal (X509.public_key cert) public_key then
+          Some cert
+        else
+          None
+      | _ -> None
     in
     let header = dns_header ()
-    and question = { Udns_types.q_name ; q_type = Udns_enum.TLSA }
+    and question = { Udns.Question.q_name ; q_type = Udns_enum.TLSA }
     in
-    let query = { Udns_packet.question = [ question ] ; answer = [] ; authority = [] ; additional = [] } in
-    let buf, _ = Udns_packet.encode `Tcp header (`Query query) in
+    let query = Udns.query question in
+    let buf, _ = Udns.encode `Tcp header (`Query query) in
     Dns.send_tcp (Dns.flow flow) buf >>= function
     | Error () -> Lwt.fail_with "couldn't send tcp"
     | Ok () ->
       Dns.read_tcp flow >>= function
       | Error () -> Lwt.fail_with "couldn't read tcp"
       | Ok data ->
-        match Udns_packet.decode data with
-        | Ok ((header', `Query q, _, _), _)
-          when not header'.Udns_packet.query
-            && header'.Udns_packet.id = header.Udns_packet.id ->
+        match Udns.decode data with
+        | Ok (header', `Query q, _, _)
+          when not header'.Udns.Header.query
+            && header'.Udns.Header.id = header.Udns.Header.id ->
           (* collect TLSA pems *)
           let tlsa =
-            List.fold_left (fun acc rr -> match rr.Udns_packet.rdata with
-                | Udns_packet.TLSA tlsa ->
-                  begin match good_tlsa tlsa with
-                    | None -> acc
-                    | Some cert -> Some cert
-                  end
-                | _ -> acc)
-              None q.Udns_packet.answer
+            match Domain_name.Map.find q_name q.Udns.answer with
+            | None -> None
+            | Some rrmap ->
+              match Udns.Map.(find Tlsa rrmap) with
+              | None -> None
+              | Some (_, tlsas) ->
+                Udns.Map.Tlsa_set.fold (fun tlsa acc ->
+                    match parse tlsa, acc with
+                    | None, acc -> acc
+                    | Some tlsa, _ -> Some tlsa)
+                  Udns.Map.Tlsa_set.(filter good_tlsa tlsas)
+                  None
           in
           Lwt.return tlsa
-        | Ok ((_, v, _, _), _) ->
+        | Ok (_, v, _, _) ->
           Log.err (fun m -> m "expected a response, but got %a"
-                       Udns_packet.pp_v v) ;
+                       Udns.pp_v v) ;
           Lwt.return None
         | Error e ->
           Log.err (fun m -> m "error %a while decoding answer"
-                       Udns_packet.pp_err e) ;
+                       Udns.pp_err e) ;
           Lwt.return None
 
   let initialise_csr hostname additionals seed =
@@ -195,7 +197,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
       Lwt.return certificate
     | None ->
       Log.info (fun m -> m "no certificate in DNS, need to transmit the CSR") ;
-      nsupdate_csr flow hostname keyname zone dnskey csr >>= function
+      (*nsupdate_csr flow hostname keyname zone dnskey csr >>= function
       | Error msg ->
         Log.err (fun m -> m "failed to nsupdate TLSA %s" msg) ;
         Lwt.fail_with "nsupdate issue"
@@ -210,14 +212,15 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
             TIME.sleep_ns (Duration.of_sec 1) >>= fun () ->
             wait_for_cert ()
         in
-        wait_for_cert ()
+        wait_for_cert ()*)
+      assert false
 
   let retrieve_certificate ?(ca = `Staging) stack ~dns_key ~hostname ?(additional_hostnames = []) ?key_seed dns port =
     let keyname, zone, dnskey =
       match Astring.String.cut ~sep:":" dns_key with
       | None -> invalid_arg "couldn't parse dnskey"
       | Some (name, key) ->
-        match Domain_name.of_string ~hostname:false name, Udns_types.dnskey_of_string key with
+        match Domain_name.of_string ~hostname:false name, Udns.Dnskey.of_string key with
         | Error _, _ | _, None -> invalid_arg "failed to parse dnskey"
         | Ok name, Some dnskey ->
           let zone = Domain_name.drop_labels_exn ~amount:2 name in

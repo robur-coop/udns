@@ -9,42 +9,6 @@ let int32_compare (a : int32) (b : int32) = Int32.compare a b
 
 let guard p err = if p then Ok () else Error err
 
-(*BISECT-IGNORE-BEGIN*)
-let pp_err ppf = function
-  | #Udns_name.err as e -> Udns_name.pp_err ppf e
-  | `BadTTL x -> Fmt.pf ppf "bad ttl %lu" x
-  | `BadRRTyp x -> Fmt.pf ppf "bad rr typ %u" x
-  | `UnsupportedRRTyp x -> Fmt.pf ppf "unsupported rr typ %a" Udns_enum.pp_rr_typ x
-  | `BadClass x -> Fmt.pf ppf "bad rr class %u" x
-  | `DisallowedClass x -> Fmt.pf ppf "disallowed rr class %a" Udns_enum.pp_clas x
-  | `UnsupportedClass x -> Fmt.pf ppf "unsupported rr class %a" Udns_enum.pp_clas x
-  | `BadOpcode x -> Fmt.pf ppf "bad opcode %u" x
-  | `UnsupportedOpcode x -> Fmt.pf ppf "unsupported opcode %a" Udns_enum.pp_opcode x
-  | `BadRcode x -> Fmt.pf ppf "bad rcode %u" x
-  | `BadCaaTag -> Fmt.string ppf "bad CAA tag"
-  | `LeftOver -> Fmt.string ppf "leftover"
-  | `NonZeroTTL ttl -> Fmt.pf ppf "TTL is %lu, must be 0" ttl
-  | `NonZeroRdlen rdl -> Fmt.pf ppf "rdlen is %u, must be 0" rdl
-  | `InvalidZoneCount x -> Fmt.pf ppf "invalid zone count %u, must be 0" x
-  | `InvalidZoneRR typ -> Fmt.pf ppf "invalid zone typ %a, must be SOA" Udns_enum.pp_rr_typ typ
-  | `InvalidTimestamp ts -> Fmt.pf ppf "invalid timestamp %Lu in TSIG" ts
-  | `InvalidAlgorithm n -> Fmt.pf ppf "invalid algorithm %a" Domain_name.pp n
-  | `BadProto num -> Fmt.pf ppf "bad protocol %u" num
-  | `BadAlgorithm num -> Fmt.pf ppf "bad algorithm %u" num
-  | `BadOpt -> Fmt.pf ppf "bad option"
-  | `BadKeepalive -> Fmt.pf ppf "bad keepalive"
-  | `BadTlsaCertUsage usage -> Fmt.pf ppf "bad TLSA cert usage %u" usage
-  | `BadTlsaSelector selector -> Fmt.pf ppf "bad TLSA selector %u" selector
-  | `BadTlsaMatchingType matching_type -> Fmt.pf ppf "bad TLSA matching type %u" matching_type
-  | `BadSshfpAlgorithm i -> Fmt.pf ppf "bad SSHFP algorithm %u" i
-  | `BadSshfpType i -> Fmt.pf ppf "bad SSHFP type %u" i
-  | `Bad_edns_version i -> Fmt.pf ppf "bad edns version %u" i
-  | `Multiple_tsig -> Fmt.string ppf "multiple TSIG"
-  | `Multiple_edns -> Fmt.string ppf "multiple EDNS"
-  | `Tsig_not_last -> Fmt.string ppf "TSIG not last"
-  | `None_or_multiple_questions -> Fmt.string ppf "none or multiple questions"
-(*BISECT-IGNORE-END*)
-
 module Name = struct
   module IntMap = Map.Make(struct
       type t = int
@@ -165,6 +129,42 @@ module Name = struct
     in
     names, off
 end
+
+(*BISECT-IGNORE-BEGIN*)
+let pp_err ppf = function
+  | #Name.err as e -> Name.pp_err ppf e
+  | `BadTTL x -> Fmt.pf ppf "bad ttl %lu" x
+  | `BadRRTyp x -> Fmt.pf ppf "bad rr typ %u" x
+  | `UnsupportedRRTyp x -> Fmt.pf ppf "unsupported rr typ %a" Udns_enum.pp_rr_typ x
+  | `BadClass x -> Fmt.pf ppf "bad rr class %u" x
+  | `DisallowedClass x -> Fmt.pf ppf "disallowed rr class %a" Udns_enum.pp_clas x
+  | `UnsupportedClass x -> Fmt.pf ppf "unsupported rr class %a" Udns_enum.pp_clas x
+  | `BadOpcode x -> Fmt.pf ppf "bad opcode %u" x
+  | `UnsupportedOpcode x -> Fmt.pf ppf "unsupported opcode %a" Udns_enum.pp_opcode x
+  | `BadRcode x -> Fmt.pf ppf "bad rcode %u" x
+  | `BadCaaTag -> Fmt.string ppf "bad CAA tag"
+  | `LeftOver -> Fmt.string ppf "leftover"
+  | `NonZeroTTL ttl -> Fmt.pf ppf "TTL is %lu, must be 0" ttl
+  | `NonZeroRdlen rdl -> Fmt.pf ppf "rdlen is %u, must be 0" rdl
+  | `InvalidZoneCount x -> Fmt.pf ppf "invalid zone count %u, must be 0" x
+  | `InvalidZoneRR typ -> Fmt.pf ppf "invalid zone typ %a, must be SOA" Udns_enum.pp_rr_typ typ
+  | `InvalidTimestamp ts -> Fmt.pf ppf "invalid timestamp %Lu in TSIG" ts
+  | `InvalidAlgorithm n -> Fmt.pf ppf "invalid algorithm %a" Domain_name.pp n
+  | `BadProto num -> Fmt.pf ppf "bad protocol %u" num
+  | `BadAlgorithm num -> Fmt.pf ppf "bad algorithm %u" num
+  | `BadOpt -> Fmt.pf ppf "bad option"
+  | `BadKeepalive -> Fmt.pf ppf "bad keepalive"
+  | `BadTlsaCertUsage usage -> Fmt.pf ppf "bad TLSA cert usage %u" usage
+  | `BadTlsaSelector selector -> Fmt.pf ppf "bad TLSA selector %u" selector
+  | `BadTlsaMatchingType matching_type -> Fmt.pf ppf "bad TLSA matching type %u" matching_type
+  | `BadSshfpAlgorithm i -> Fmt.pf ppf "bad SSHFP algorithm %u" i
+  | `BadSshfpType i -> Fmt.pf ppf "bad SSHFP type %u" i
+  | `Bad_edns_version i -> Fmt.pf ppf "bad edns version %u" i
+  | `Multiple_tsig -> Fmt.string ppf "multiple TSIG"
+  | `Multiple_edns -> Fmt.string ppf "multiple EDNS"
+  | `Tsig_not_last -> Fmt.string ppf "TSIG not last"
+  | `None_or_multiple_questions -> Fmt.string ppf "none or multiple questions"
+(*BISECT-IGNORE-END*)
 
 (* each resource record module has the following signature:
      module S : sig
@@ -1364,6 +1364,22 @@ module Map = struct
   end
 
   include Gmap.Make(K)
+
+  let get_ttl : b -> int32 = fun (B (k, v)) ->
+    match k, v with
+    | Cname, (ttl, _) -> ttl
+    | Mx, (ttl, _) -> ttl
+    | Ns, (ttl, _) -> ttl
+    | Ptr, (ttl, _) -> ttl
+    | Soa, (ttl, _) -> ttl
+    | Txt, (ttl, _) -> ttl
+    | A, (ttl, _) -> ttl
+    | Aaaa, (ttl, _) -> ttl
+    | Srv, (ttl, _) -> ttl
+    | Dnskey, (ttl, _) -> ttl
+    | Caa, (ttl, _) -> ttl
+    | Tlsa, (ttl, _) -> ttl
+    | Sshfp, (ttl, _) -> ttl
 
   let with_ttl : b -> int32 -> b = fun (B (k, v)) ttl ->
     match k, v with
