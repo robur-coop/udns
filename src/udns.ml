@@ -1877,6 +1877,28 @@ let size_edns max_size edns protocol query =
   in
   maximum, edns
 
+let encode_answer (qname, qtyp) map offs buf off =
+  (* A foo.com? foo.com CNAME bar.com ; bar.com A 127.0.0.1 *)
+  let rec encode_one offs off count name =
+    match Domain_name.Map.find name map with
+    | None -> (offs, off), count
+    | Some rrmap ->
+      let (offs, off), count, alias =
+        Map.fold (fun (Map.B (k, v)) ((offs, off), count, alias) ->
+            let alias' = match k, v with
+              | Cname, (_, alias) -> Some alias
+              | _ -> alias
+            in
+            let r, amount = Map.encode name k v offs buf off in
+            (r, amount + count, alias'))
+          rrmap ((offs, off), count, None)
+      in
+      match alias with
+      | None -> (offs, off), count
+      | Some n -> encode_one offs off count n
+  in
+  encode_one offs off 0 qname
+
 let encode_map map offs buf off =
   Domain_name.Map.fold (fun name rrmap acc ->
       Map.fold (fun (Map.B (k, v)) ((offs, off), count) ->
@@ -1888,10 +1910,9 @@ let encode_map map offs buf off =
 let encode_query buf data =
   let offs, off = Question.encode Domain_name.Map.empty buf Header.len data.question in
   Cstruct.BE.set_uint16 buf 4 1 ;
-  (* the answer must be sorted, starting from the question name (and type?) *)
   (* if AXFR, SOA needs to be first and last element! *)
   (* TODO the latter needs to be verified in decode as well -- esp. since AXFR may span over multiple frames *)
-  let (offs, off), ancount = encode_map data.answer offs buf off in
+  let (offs, off), ancount = encode_answer data.question data.answer offs buf off in
   Cstruct.BE.set_uint16 buf 6 ancount ;
   let (offs, off), aucount = encode_map data.authority offs buf off in
   Cstruct.BE.set_uint16 buf 8 aucount ;
