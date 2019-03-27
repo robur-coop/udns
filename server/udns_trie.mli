@@ -95,7 +95,7 @@ val lookup : Domain_name.t -> 'a Udns.Map.key -> t ->
 (** [lookup k ty t] finds [k, ty] in [t], which may lead to an error. *)
 
 val lookup_any : Domain_name.t -> t ->
-  (Udns.Map.b list * (Domain_name.t * int32 * Domain_name.Set.t),
+  (Udns.Map.t * (Domain_name.t * int32 * Domain_name.Set.t),
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
    | `NotAuthoritative
    | `NotFound of Domain_name.t * (int32 * Udns.Soa.t) ]) result

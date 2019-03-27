@@ -296,13 +296,22 @@ let lookup trie hdr q =
     { hdr with rcode = Udns_enum.NoError }
   in
   let query = Udns.query q in
-  match Udns_trie.lookupb q.q_name q.q_type trie with
-  | Ok (B (k, v), (name, ttl, ns)) ->
-    let answer = Domain_name.Map.singleton q.q_name (Udns.Map.singleton k v)
-    and authority = Domain_name.Map.singleton name Udns.Map.(singleton Ns (ttl, ns))
+  let r = match q.q_type with
+    | Udns_enum.ANY -> Udns_trie.lookup_any q.q_name trie
+    | _ -> match Udns_trie.lookupb q.q_name q.q_type trie with
+      | Ok (B (k, v), au) -> Ok (Udns.Map.singleton k v, au)
+      | Error e -> Error e
+  in
+  match r with
+  | Ok (an, (name, ttl, ns)) ->
+    let answer = Domain_name.Map.singleton q.q_name an in
+    let authority =
+      Domain_name.Map.singleton name Udns.Map.(singleton Ns (ttl, ns))
     in
     let additional =
-      let names = Domain_name.Set.union (Udns.Map.names k v) ns in
+      let names =
+        Udns.Map.(fold (fun b s -> Domain_name.Set.union (namesb b) s) an ns)
+      in
       find_glue trie q.q_type q.q_name names
     in
     Ok (hdr, `Query { query with Udns.answer ; authority ; additional })

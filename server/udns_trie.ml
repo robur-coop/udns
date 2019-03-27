@@ -112,8 +112,7 @@ let lookup_any name t =
   | Error e -> Error e
   | Ok (zone, _sub, m) ->
     check_zone zone >>= fun (z, zmap) ->
-    let bindings = Udns.Map.bindings m in
-    Ok (bindings, to_ns z zmap)
+    Ok (m, to_ns z zmap)
 
 let lookup_ignore name ty t =
   match lookup_aux name t with
