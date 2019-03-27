@@ -289,8 +289,6 @@ let find_glue trie typ name names =
 
 let lookup trie hdr q =
   (* TODO: should randomize answers + ad? *)
-  (* TODO: should dedup at a higher layer (v instead of rr) *)
-  (* TODO: do we need to dedup between sections? how can this happen in the first place? *)
   let hdr =
     let hdr = s_header hdr in
     { hdr with rcode = Udns_enum.NoError }
