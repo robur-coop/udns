@@ -1529,7 +1529,7 @@ module Map = struct
         match Domain_name.Map.find name map with
         | None -> map
         | Some rrs ->
-          let rrs' = fold (fun (B (k, v)) map -> remove k map) rrmap rrs in
+          let rrs' = fold (fun (B (k, _)) map -> remove k map) rrmap rrs in
           Domain_name.Map.add name rrs' map)
       sub map
 
@@ -1879,7 +1879,7 @@ let size_edns max_size edns protocol query =
 
 let encode_map map offs buf off =
   Domain_name.Map.fold (fun name rrmap acc ->
-      Map.fold (fun (B (k, v)) ((offs, off), count) ->
+      Map.fold (fun (Map.B (k, v)) ((offs, off), count) ->
           let r, amount = Map.encode name k v offs buf off in
           (r, amount + count))
         rrmap acc)
@@ -1982,7 +1982,6 @@ let pp ppf (header, v, edns, tsig) =
     Fmt.(option ~none:(unit "no") Edns.pp) edns
     Fmt.(option ~none:(unit "no") pp_tsig) tsig
 (*BISECT-IGNORE-END*)
-
 
 type tsig_verify = ?mac:Cstruct.t -> Ptime.t -> v -> Header.t ->
   Domain_name.t -> key:Dnskey.t option -> Tsig.t -> Cstruct.t ->
