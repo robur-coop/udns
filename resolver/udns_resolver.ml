@@ -389,14 +389,15 @@ let handle_delegation t ts proto sender sport header v opt v' =
         Logs.debug (fun m -> m "looking for %a" Domain_name.pp name) ;
         let t = { t with cache } in
         let ip =
-          let map = match v' with `Query v -> v.Udns.additional | _ -> Domain_name.Map.empty in
-          Logs.debug (fun m -> m "looking into %a" Udns.pp_map map) ;
-          match Domain_name.Map.find name map with
-          | None -> assert false
-          | Some rrmap ->
-            let (_, ips) = Udns.Map.(get A rrmap) in
-            List.nth (Udns.Map.Ipv4_set.elements ips)
-              (Randomconv.int ~bound:(Udns.Map.Ipv4_set.cardinal ips) t.rng)
+          let ips = Domain_name.Map.fold (fun _ rrmap ips ->
+              match Udns.Map.(find A rrmap) with
+              | None -> ips
+              | Some (_, ips') -> Udns.Map.Ipv4_set.union ips ips')
+              (match v' with `Query q -> q.Udns.additional | _ -> assert false)
+              Udns.Map.Ipv4_set.empty
+          in
+          List.nth (Udns.Map.Ipv4_set.elements ips)
+            (Randomconv.int ~bound:(Udns.Map.Ipv4_set.cardinal ips) t.rng)
         in
         Logs.debug (fun m -> m "found ip %a, maybe querying for %a (%a)"
                        Ipaddr.V4.pp ip Udns_enum.pp_rr_typ (snd q) Domain_name.pp name) ;
