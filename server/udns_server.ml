@@ -161,7 +161,7 @@ module Authentication = struct
     let trie' = Udns_trie.remove name Udns_enum.DNSKEY trie in
     let zone = zone name in
     match Udns_trie.entries zone trie' with
-    | Ok (_name, _soa, []) -> Udns_trie.remove_zone zone trie'
+    | Ok (_soa, x) when Domain_name.Map.is_empty x -> Udns_trie.remove_zone zone trie'
     | Ok _ -> trie'
     | Error e ->
       Log.warn (fun m -> m "expected a zone for dnskeys, got error %a"
@@ -348,8 +348,7 @@ let axfr trie proto ((zone, _) as question) =
     end else
      Ok ()) >>= fun () ->
   match Udns_trie.entries zone trie with
-  | Ok (zname, soa, rrs) ->
-    Ok (`Axfr (question, zname, soa, rrs))
+  | Ok (soa, entries) -> Ok (`Axfr (question, Some { Udns.soa ; entries }))
   | Error `Delegation _
   | Error `NotAuthoritative
   | Error `NotFound _ ->
@@ -778,6 +777,7 @@ module Primary = struct
       in
         Ok ((t', l, ns), Some answer, out, None) *)
       assert false
+    | `Axfr _, true -> assert false
     | `Notify _, false ->
       let notifications =
         List.filter (fun (_, _, ip', _, hdr', _) ->
@@ -1237,6 +1237,7 @@ module Secondary = struct
       in
         Ok (t', Some answer, out) *)
       assert false
+    | `Axfr _, _ -> assert false
     | `Update _, false -> (* TODO: answer from primary, need to forward to client *)
       Error Udns_enum.FormErr
     | `Notify n, true ->

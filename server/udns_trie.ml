@@ -150,6 +150,7 @@ let fold name t f acc =
   | Ok (_zone, sub, map) -> Ok (foldm name (N (sub, map)) acc)
 
 let collect_rrs name sub map =
+  (* TODO: do not cross zone boundaries! or maybe not!? *)
   let collect_map name rrmap =
     (* collecting rr out of rrmap + name, no SOA! *)
     Udns.Map.fold (fun v acc ->
@@ -182,7 +183,10 @@ let collect_entries name sub map =
   | None -> Error `NotAuthoritative
   | Some soa ->
     let entries = collect_rrs name sub map in
-    Ok (name, soa, entries)
+    let map = List.fold_left (fun acc (name, b) ->
+        Udns.Map.add_entry acc name b) Domain_name.Map.empty entries
+    in
+    Ok (soa, map)
 
 let entries name t =
   lookup_aux name t >>= fun (zone, sub, map) ->

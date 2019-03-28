@@ -106,7 +106,7 @@ val lookup_ignore : Domain_name.t -> Udns_enum.rr_typ -> t ->
     It ignores potential DNS invariants, e.g. that there is no surrounding zone. *)
 
 val entries : Domain_name.t -> t ->
-  (Domain_name.t * (int32 * Udns.Soa.t) * (Domain_name.t * Udns.Map.b) list,
+  ((int32 * Udns.Soa.t) * Udns.Map.t Domain_name.Map.t,
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
    | `NotAuthoritative
    | `NotFound of Domain_name.t * (int32 * Udns.Soa.t) ]) result

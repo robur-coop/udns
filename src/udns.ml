@@ -1726,6 +1726,11 @@ type query = {
   additional : Map.t Domain_name.Map.t ;
 }
 
+type axfr = {
+  soa : (int32 * Soa.t) ;
+  entries : Map.t Domain_name.Map.t
+}
+
 let query question =
   let empty = Domain_name.Map.empty in
   { question ; answer = empty ; authority = empty ; additional = empty }
@@ -1742,6 +1747,9 @@ let pp_query ppf t =
   Fmt.pf ppf "question %a@ answer %a@ authority %a@ additional %a"
     Question.pp t.question
     pp_map t.answer pp_map t.authority pp_map t.additional
+
+let pp_axfr ppf axfr =
+  Fmt.pf ppf "soa %a data %a" Soa.pp (snd axfr.soa) pp_map axfr.entries
 (*BISECT-IGNORE-END*)
 
 let decode_rr names buf off =
@@ -1845,6 +1853,7 @@ let decode buf =
   let truncated = Header.FS.mem `Truncation hdr.flags in
   match hdr.Header.operation with
   | Udns_enum.Query ->
+    (* TODO handle AXFR properly here! may span over multiple frames *)
     decode_query buf truncated >>= fun (q, edns, tsig) ->
     ext_rcode hdr edns >>| fun hdr ->
     hdr, `Query q, edns, tsig
@@ -1920,8 +1929,6 @@ let encode_map map offs buf off =
 let encode_query buf data =
   let offs, off = Question.encode Domain_name.Map.empty buf Header.len data.question in
   Cstruct.BE.set_uint16 buf 4 1 ;
-  (* if AXFR, SOA needs to be first and last element! *)
-  (* TODO the latter needs to be verified in decode as well -- esp. since AXFR may span over multiple frames *)
   let (offs, off), ancount = encode_answer data.question data.answer offs buf off in
   Cstruct.BE.set_uint16 buf 6 ancount ;
   let (offs, off), aucount = encode_map data.authority offs buf off in
@@ -1930,9 +1937,23 @@ let encode_query buf data =
   Cstruct.BE.set_uint16 buf 10 adcount ;
   off
 
+let encode_axfr buf (question, axfr) =
+  let offs, off = Question.encode Domain_name.Map.empty buf Header.len question in
+  Cstruct.BE.set_uint16 buf 4 1 ;
+  match axfr with
+  | None -> off
+  | Some axfr ->
+    (* serialise: SOA .. data .. SOA *)
+    let (offs, off), _ = Map.encode (fst question) Soa axfr.soa offs buf off in
+    let (offs, off), count = encode_map axfr.entries offs buf off in
+    let (offs, off), _ = Map.encode (fst question) Soa axfr.soa offs buf off in
+    Cstruct.BE.set_uint16 buf 6 (count + 2) ;
+    off
+
 let encode_v buf = function
   | `Query q -> encode_query buf q
   | `Notify n -> encode_query buf n
+  | `Axfr data -> encode_axfr buf data
 
 let encode_edns hdr edns buf off = match edns with
   | None -> off
@@ -1978,6 +1999,7 @@ let error header v rcode =
   if not header.Header.query then
     let header = { header with rcode }
     and question = match v with
+      | `Axfr (q, _) -> q
       (*      | `Update u -> [ u.zone ] *)
       | `Query q | `Notify q -> q.question
     in
@@ -1993,24 +2015,22 @@ let error header v rcode =
   else
     None
 
-type axfr = {
-  question : Question.t ;
-  zone : Domain_name.t ;
-  soa : (int32 * Soa.t) ;
-  rrs : (Domain_name.t * Map.b) list
-}
-
 type v = [
   | `Query of query
   | `Notify of query
-  | `Axfr of axfr
+  | `Axfr of Question.t * axfr option
 ]
 
 (*BISECT-IGNORE-BEGIN*)
+let pp_axfr_v ppf (question, axfr) =
+  Fmt.pf ppf "AXFR %a data %a" Question.pp question
+    Fmt.(option ~none:(unit "NO") pp_axfr) axfr
+
 let pp_v ppf = function
   | `Query q -> pp_query ppf q
   (*  | `Update u -> pp_update ppf u *)
   | `Notify n -> pp_query ppf n
+  | `Axfr axfr -> pp_axfr_v ppf axfr
 
 let pp_tsig ppf (name, tsig, off) =
   Fmt.pf ppf "tsig %a %a %d" Domain_name.pp name Tsig.pp tsig off
