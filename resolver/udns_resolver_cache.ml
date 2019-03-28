@@ -413,7 +413,8 @@ let follow_cname t ts typ name b =
       end
     | _ -> `NoError (Udns.Map.add_entry acc name b, t)
   in
-  follow t (N.singleton name) Domain_name.Map.empty name b
+  let initial = Udns.Map.add_entry Domain_name.Map.empty name b in
+  follow t (N.singleton name) initial name b
 
 (*
 let additionals t ts rrs =
