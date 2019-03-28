@@ -389,7 +389,8 @@ let handle_delegation t ts proto sender sport header v opt v' =
         Logs.debug (fun m -> m "looking for %a" Domain_name.pp name) ;
         let t = { t with cache } in
         let ip =
-          let ips = Domain_name.Map.fold (fun _ rrmap ips ->
+          let ips = Domain_name.Map.fold (fun n rrmap ips ->
+              Logs.debug (fun m -> m "%a maybe in %a" Domain_name.pp n Udns.Map.pp rrmap) ;
               match Udns.Map.(find A rrmap) with
               | None -> ips
               | Some (_, ips') -> Udns.Map.Ipv4_set.union ips ips')
