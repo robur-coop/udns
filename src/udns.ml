@@ -1878,11 +1878,17 @@ let size_edns max_size edns protocol query =
   maximum, edns
 
 let encode_answer (qname, qtyp) map offs buf off =
+  Logs.debug (fun m -> m "trying to encode the answer, following question %a %a"
+                 Question.pp (qname, qtyp) pp_map map) ;
   (* A foo.com? foo.com CNAME bar.com ; bar.com A 127.0.0.1 *)
   let rec encode_one offs off count name =
+    Logs.debug (fun m -> m "encoding %d %a" count Domain_name.pp name) ;
     match Domain_name.Map.find name map with
-    | None -> (offs, off), count
+    | None ->
+      Logs.warn (fun m -> m "nothing found") ;
+      (offs, off), count
     | Some rrmap ->
+      Logs.warn (fun m -> m "found an rrmap %a" Map.pp rrmap) ;
       let (offs, off), count, alias =
         Map.fold (fun (Map.B (k, v)) ((offs, off), count, alias) ->
             let alias' = match k, v with
@@ -1894,8 +1900,12 @@ let encode_answer (qname, qtyp) map offs buf off =
           rrmap ((offs, off), count, None)
       in
       match alias with
-      | None -> (offs, off), count
-      | Some n -> encode_one offs off count n
+      | None ->
+        Logs.info (fun m -> m "returning %d" count) ;
+        (offs, off), count
+      | Some n ->
+        Logs.info (fun m -> m "continuing with %a" Domain_name.pp n) ;
+        encode_one offs off count n
   in
   encode_one offs off 0 qname
 
