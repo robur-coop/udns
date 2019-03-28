@@ -72,6 +72,11 @@ let create ?(size = 10000) ?(mode = `Recursive) now rng primary =
   in
   { rng ; cache ; primary ; transit = QM.empty ; queried = QM.empty ; mode }
 
+let pick rng = function
+  | [] -> None
+  | [ x ] -> Some x
+  | xs -> Some (List.nth xs (Randomconv.int ~bound:(List.length xs) rng))
+
 let header id =
   let flags = Udns.Header.FS.empty in
   { Udns.Header.id ; query = true ; operation = Udns_enum.Query ; rcode = Udns_enum.NoError ;
@@ -397,8 +402,9 @@ let handle_delegation t ts proto sender sport header v opt v' =
               (match v' with `Query q -> q.Udns.additional | _ -> assert false)
               Udns.Map.Ipv4_set.empty
           in
-          List.nth (Udns.Map.Ipv4_set.elements ips)
-            (Randomconv.int ~bound:(Udns.Map.Ipv4_set.cardinal ips) t.rng)
+          match pick t.rng (Udns.Map.Ipv4_set.elements ips) with
+          | None -> assert false
+          | Some x -> x
         in
         Logs.debug (fun m -> m "found ip %a, maybe querying for %a (%a)"
                        Ipaddr.V4.pp ip Udns_enum.pp_rr_typ (snd q) Domain_name.pp name) ;
