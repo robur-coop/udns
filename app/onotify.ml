@@ -1,25 +1,27 @@
 (* (c) 2019 Hannes Mehnert, all rights reserved *)
 
+open Udns
+
 let notify zone serial key now =
   let notify =
     let question = (zone, Udns_enum.SOA)
     and answer =
-      let soa = { Udns.Soa.nameserver = zone ; hostmaster = zone ; serial ;
+      let soa = { Soa.nameserver = zone ; hostmaster = zone ; serial ;
                   refresh = 0l; retry = 0l ; expiry = 0l ; minimum = 0l }
       in
-      Domain_name.Map.singleton zone (Udns.Map.singleton Udns.Map.Soa (0l, soa))
+      Domain_name.Map.singleton zone (Umap.singleton Umap.Soa (0l, soa))
     in
-    let query = Udns.query question in
-    { query with Udns.answer }
+    let query = Packet.Query.query question in
+    { query with answer }
   and header =
     let hdr = Udns_cli.dns_header (Random.int 0xFFFF) in
-    { hdr with Udns.Header.operation = Udns_enum.Notify ; flags = Udns.Header.FS.singleton `Authoritative }
+    { hdr with Header.operation = Udns_enum.Notify ; flags = Header.FS.singleton `Authoritative }
   in
   let v = `Notify notify in
   match key with
-  | None -> Ok (fst (Udns.encode `Tcp header v), Cstruct.empty)
+  | None -> Ok (fst (Packet.encode `Tcp header v), Cstruct.empty)
   | Some (keyname, _, dnskey) ->
-    Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Udns.Dnskey.pp dnskey) ;
+    Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Dnskey.pp dnskey) ;
     Udns_tsig.encode_and_sign ~proto:`Tcp header (`Notify notify) now dnskey keyname
 
 let jump _ serverip port zone key serial =
@@ -40,9 +42,9 @@ let jump _ serverip port zone key serial =
     Unix.close socket ;
     match key with
     | None ->
-      begin match Udns.decode read_data with
+      begin match Packet.decode read_data with
         | Ok _ -> Logs.app (fun m -> m "successfull notify!") ; `Ok ()
-        | Error e -> `Error (false, "notify reply " ^ Fmt.to_to_string Udns.pp_err e)
+        | Error e -> `Error (false, "notify reply " ^ Fmt.to_to_string Packet.pp_err e)
       end
     | Some (keyname, _, dnskey) ->
       begin match Udns_tsig.decode_and_verify now dnskey keyname ~mac read_data with

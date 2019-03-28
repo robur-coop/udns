@@ -1,10 +1,12 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
+open Udns
+
 (** DNS Server implementation *)
 
 (** Authentication, stored in a Dns_trie with privileges to operations embedded in the name. *)
 module Authentication : sig
-  type a = Udns_trie.t -> Udns.proto -> Domain_name.t option -> string -> Domain_name.t -> bool
+  type a = Udns_trie.t -> proto -> Domain_name.t option -> string -> Domain_name.t -> bool
 
   val tsig_auth : a
 
@@ -24,8 +26,8 @@ type t = private {
   data : Udns_trie.t ;
   auth : Authentication.t ;
   rng : int -> Cstruct.t ;
-  tsig_verify : Udns.tsig_verify ;
-  tsig_sign : Udns.tsig_sign ;
+  tsig_verify : tsig_verify ;
+  tsig_sign : tsig_sign ;
 }
 (** The state of a DNS server. *)
 
@@ -36,9 +38,9 @@ val create : Udns_trie.t -> Authentication.t -> (int -> Cstruct.t) ->
 val text : Domain_name.t -> t -> (string, string) result
 (** [text name t] results in a string representation (zonefile) of the server. *)
 
-val handle_query : t -> Udns.proto -> Domain_name.t option -> Udns.Header.t ->
-  Udns.query ->
-  (Udns.Header.t * Udns.v, Udns_enum.rcode) result
+val handle_query : t -> proto -> Domain_name.t option -> Header.t ->
+  Packet.Query.t ->
+  (Header.t * Packet.t, Udns_enum.rcode) result
 (** [handle_query t proto key_name header query] handles the DNS query,
    respecting the current state: a whitelist of record types are looked up: A |
    NS | CNAME | SOA | PTR | MX | TXT | AAAA | SRV | ANY | CAA | SSHFP | TLSA |
@@ -46,17 +48,17 @@ val handle_query : t -> Udns.proto -> Domain_name.t option -> Udns.Header.t ->
     for signing, instead of the data trie the key trie is used for lookups. *)
 
 val notify : t -> (Domain_name.t * Ipaddr.V4.t * int) list -> int64 ->
-  Domain_name.t -> Udns.Soa.t ->
-  (int64 * int * Ipaddr.V4.t * int * Udns.Header.t * Udns.query) list
+  Domain_name.t -> Soa.t ->
+  (int64 * int * Ipaddr.V4.t * int * Header.t * Packet.Query.t) list
 (** [notify t active_conns now zone soa] creates notifications for [zone]:
     all secondaries with glue in the server state for [zone],
     all matching [active_conns] of the [zone], and all secondaries where a key
     is in the server state with IP addresses in their names. *)
 
 val handle_tsig : ?mac:Cstruct.t -> t -> Ptime.t -> Udns.Header.t ->
-   Udns.v -> (Domain_name.t * Udns.Tsig.t * int) option ->
-   Cstruct.t -> ((Domain_name.t * Udns.Tsig.t * Cstruct.t *
-   Udns.Dnskey.t) option, Cstruct.t option) result
+   Packet.t -> (Domain_name.t * Tsig.t * int) option ->
+   Cstruct.t -> ((Domain_name.t * Tsig.t * Cstruct.t *
+   Dnskey.t) option, Cstruct.t option) result
 (** [handle_tsig ~mac t now hdr v tsig offset buffer] verifies the tsig
     signature if present, returning the keyname, tsig, mac, and used key. *)
 
@@ -80,8 +82,8 @@ module Primary : sig
   (** [create ~keys ~a ~tsig_verify ~tsig_sign ~rng data] creates a primary server. *)
 
   val handle_frame : s -> int64 -> Ipaddr.V4.t -> int -> Udns.proto ->
-    Domain_name.t option -> Udns.Header.t -> Udns.v ->
-    (s * (Udns.Header.t * Udns.v) option * (Ipaddr.V4.t * int * Cstruct.t) list * [ `Notify | `Signed_notify ] option,
+    Domain_name.t option -> Header.t -> Packet.t ->
+    (s * (Header.t * Packet.t) option * (Ipaddr.V4.t * int * Cstruct.t) list * [ `Notify | `Signed_notify ] option,
      Udns_enum.rcode) result
   (** [handle_frame s now src src_port proto key hdr v] handles the given
      [frame], returning new state, an answer, and potentially notify packets to
@@ -125,22 +127,22 @@ module Secondary : sig
   (** [create ~a ~primary ~tsig_verify ~tsig_sign ~rng keys] creates a secondary
      DNS server state. *)
 
-  val handle_frame : s -> Ptime.t -> int64 -> Ipaddr.V4.t -> Udns.proto ->
-    Domain_name.t option -> Udns.Header.t -> Udns.v ->
-    (s * (Udns.Header.t * Udns.v) option * (Udns.proto * Ipaddr.V4.t * int * Cstruct.t) list,
+  val handle_frame : s -> Ptime.t -> int64 -> Ipaddr.V4.t -> proto ->
+    Domain_name.t option -> Header.t -> Packet.t ->
+    (s * (Header.t * Packet.t) option * (proto * Ipaddr.V4.t * int * Cstruct.t) list,
      Udns_enum.rcode) result
   (** [handle_frame s now ts ip proto key hdr v] handles the incoming frame. *)
 
   val handle : s -> Ptime.t -> int64 -> Udns.proto -> Ipaddr.V4.t -> Cstruct.t ->
-    s * Cstruct.t option * (Udns.proto * Ipaddr.V4.t * int * Cstruct.t) list
+    s * Cstruct.t option * (proto * Ipaddr.V4.t * int * Cstruct.t) list
   (** [handle s now ts proto src buf] decodes [buf], {!handle_frame}, and encodes the results. *)
 
   val timer : s -> Ptime.t -> int64 ->
-    s * (Udns.proto * Ipaddr.V4.t * int * Cstruct.t) list
+    s * (proto * Ipaddr.V4.t * int * Cstruct.t) list
   (** [timer s now ts] may request SOA or retransmit AXFR. *)
 
   val closed : s -> Ptime.t -> int64 -> Ipaddr.V4.t -> int ->
-    s * (Udns.proto * Ipaddr.V4.t * int * Cstruct.t) list
+    s * (proto * Ipaddr.V4.t * int * Cstruct.t) list
     (** [closed s now ts ip port] marks [ip, port] as closed. *)
 
 end

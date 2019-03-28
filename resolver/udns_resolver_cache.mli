@@ -1,4 +1,5 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
+open Udns
 
 type t
 
@@ -22,23 +23,23 @@ val cached : t -> int64 -> Udns_enum.rr_typ -> Domain_name.t ->
 val maybe_insert : Udns_enum.rr_typ -> Domain_name.t -> int64 -> Udns_resolver_entry.rank ->
   Udns_resolver_entry.res -> t -> t
 
-val follow_cname : t -> int64 -> Udns_enum.rr_typ -> Domain_name.t -> Udns.Map.b ->
-  [ `NoError of Udns.Map.t Domain_name.Map.t * t
-  | `Cycle of Udns.Map.t Domain_name.Map.t * t
+val follow_cname : t -> int64 -> Udns_enum.rr_typ -> Domain_name.t -> Umap.b ->
+  [ `NoError of Umap.t Domain_name.Map.t * t
+  | `Cycle of Umap.t Domain_name.Map.t * t
   | `Query of Domain_name.t * t
-  | `NoDom of (Udns.Map.t Domain_name.Map.t * Udns.Map.t Domain_name.Map.t) * t
-  | `NoData of (Udns.Map.t Domain_name.Map.t * Udns.Map.t Domain_name.Map.t) * t
-  | `ServFail of Udns.Map.t Domain_name.Map.t * t
+  | `NoDom of (Umap.t Domain_name.Map.t * Umap.t Domain_name.Map.t) * t
+  | `NoData of (Umap.t Domain_name.Map.t * Umap.t Domain_name.Map.t) * t
+  | `ServFail of Umap.t Domain_name.Map.t * t
   ]
 
-val answer : t -> int64 -> Udns.Question.t -> int ->
+val answer : t -> int64 -> Question.t -> int ->
   [ `Query of Domain_name.t * t
-  | `Packet of Udns.Header.t * Udns.v * t ]
+  | `Packet of Header.t * Packet.t * t ]
 
 val resolve_ns : t -> int64 -> Domain_name.t ->
   ([ `NeedA of Domain_name.t
    | `NeedCname of Domain_name.t
-   | `HaveIPS of Udns.Map.Ipv4_set.t
+   | `HaveIPS of Umap.Ipv4_set.t
    | `NoDom
    | `No ] * t)
 
@@ -47,7 +48,7 @@ val find_ns : t -> (int -> Cstruct.t) -> int64 -> Domain_name.Set.t -> Domain_na
 
 val resolve : t -> rng:(int -> Cstruct.t) ->  int64 -> Domain_name.t -> Udns_enum.rr_typ -> (Domain_name.t * Domain_name.t * Udns_enum.rr_typ * Ipaddr.V4.t * t, string) result
 
-val handle_query : t -> rng:(int -> Cstruct.t) -> int64 -> Udns.Question.t -> int ->
-  [ `Answer of Udns.Header.t * Udns.v
+val handle_query : t -> rng:(int -> Cstruct.t) -> int64 -> Question.t -> int ->
+  [ `Answer of Header.t * Packet.t
   | `Nothing
   | `Query of Domain_name.t * Domain_name.t * Udns_enum.rr_typ * Ipaddr.V4.t ] * t

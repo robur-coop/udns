@@ -25,7 +25,7 @@ type parserstate = {
   mutable origin : Domain_name.t;
   mutable ttl : int32;
   mutable owner : Domain_name.t;
-  mutable zone : Udns.Map.t Domain_name.Map.t;
+  mutable zone : Udns.data ;
 }
 
 let state = {

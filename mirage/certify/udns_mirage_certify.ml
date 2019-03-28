@@ -1,5 +1,7 @@
 (* (c) 2018 Hannes Mehnert, all rights reserved *)
 
+open Udns
+
 open Lwt.Infix
 
 let src = Logs.Src.create "dns_mirage_resolver" ~doc:"effectful DNS certify"
@@ -105,14 +107,13 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
           | Ok _ -> Lwt.return_ok ()
 *)
 
-  
   let query_certificate flow public_key name =
     let good_tlsa tlsa =
-      tlsa.Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
-      && tlsa.Udns.Tlsa.tlsa_selector = Udns_enum.Tlsa_full_certificate
-      && tlsa.Udns.Tlsa.tlsa_matching_type = Udns_enum.Tlsa_no_hash
+      tlsa.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
+      && tlsa.Tlsa.tlsa_selector = Udns_enum.Tlsa_full_certificate
+      && tlsa.Tlsa.tlsa_matching_type = Udns_enum.Tlsa_no_hash
     and parse tlsa =
-      match X509.Encoding.parse tlsa.Udns.Tlsa.tlsa_data with
+      match X509.Encoding.parse tlsa.Tlsa.tlsa_data with
       | Some cert ->
         let keys_equal a b =
           Cstruct.equal (X509.key_id a) (X509.key_id b)
@@ -126,41 +127,39 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
     let header = dns_header ()
     and question = (name, Udns_enum.TLSA)
     in
-    let query = Udns.query question in
-    let buf, _ = Udns.encode `Tcp header (`Query query) in
+    let query = Packet.Query.query question in
+    let buf, _ = Packet.encode `Tcp header (`Query query) in
     Dns.send_tcp (Dns.flow flow) buf >>= function
     | Error () -> Lwt.fail_with "couldn't send tcp"
     | Ok () ->
       Dns.read_tcp flow >>= function
       | Error () -> Lwt.fail_with "couldn't read tcp"
       | Ok data ->
-        match Udns.decode data with
+        match Packet.decode data with
         | Ok (header', `Query q, _, _)
-          when not header'.Udns.Header.query
-            && header'.Udns.Header.id = header.Udns.Header.id ->
+          when not header'.Header.query
+            && header'.Header.id = header.Header.id ->
           (* collect TLSA pems *)
           let tlsa =
-            match Domain_name.Map.find name q.Udns.answer with
+            match Domain_name.Map.find name q.Packet.Query.answer with
             | None -> None
             | Some rrmap ->
-              match Udns.Map.(find Tlsa rrmap) with
+              match Umap.(find Tlsa rrmap) with
               | None -> None
               | Some (_, tlsas) ->
-                Udns.Map.Tlsa_set.fold (fun tlsa acc ->
+                Umap.Tlsa_set.fold (fun tlsa acc ->
                     match parse tlsa, acc with
                     | None, acc -> acc
                     | Some tlsa, _ -> Some tlsa)
-                  Udns.Map.Tlsa_set.(filter good_tlsa tlsas)
+                  Umap.Tlsa_set.(filter good_tlsa tlsas)
                   None
           in
           Lwt.return tlsa
         | Ok (_, v, _, _) ->
-          Log.err (fun m -> m "expected a response, but got %a"
-                       Udns.pp_v v) ;
+          Log.err (fun m -> m "expected a response, but got %a" Packet.pp v) ;
           Lwt.return None
         | Error e ->
-          Log.err (fun m -> m "error %a while decoding answer"
-                       Udns.pp_err e) ;
+          Log.err (fun m -> m "error %a while decoding answer" Packet.pp_err e) ;
           Lwt.return None
 
   let initialise_csr hostname additionals seed =

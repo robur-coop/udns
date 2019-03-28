@@ -1,6 +1,8 @@
 (* (c) 2018 Hannes Mehnert, all rights reserved *)
 open Rresult.R.Infix
 
+open Udns
+
 let find_or_generate_key key_filename bits seed =
   Bos.OS.File.exists key_filename >>= function
   | true ->
@@ -31,12 +33,12 @@ let dns_header () =
 
 let query_certificate sock public_key fqdn =
   let good_tlsa tlsa =
-    tlsa.Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
-    && tlsa.Udns.Tlsa.tlsa_selector = Udns_enum.Tlsa_full_certificate
-    && tlsa.Udns.Tlsa.tlsa_matching_type = Udns_enum.Tlsa_no_hash
+    tlsa.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
+    && tlsa.Tlsa.tlsa_selector = Udns_enum.Tlsa_full_certificate
+    && tlsa.Tlsa.tlsa_matching_type = Udns_enum.Tlsa_no_hash
   in
   let parse tlsa =
-    match X509.Encoding.parse tlsa.Udns.Tlsa.tlsa_data with
+    match X509.Encoding.parse tlsa.Tlsa.tlsa_data with
     | Some cert ->
       let keys_equal a b = Cstruct.equal (X509.key_id a) (X509.key_id b) in
       if keys_equal (X509.public_key cert) public_key then
@@ -48,24 +50,24 @@ let query_certificate sock public_key fqdn =
   let header = dns_header ()
   and question = (fqdn, Udns_enum.TLSA)
   in
-  let query = Udns.query question in
-  let buf, _ = Udns.encode `Tcp header (`Query query) in
+  let query = Packet.Query.query question in
+  let buf, _ = Packet.encode `Tcp header (`Query query) in
   Udns_cli.send_tcp sock buf ;
   let data = Udns_cli.recv_tcp sock in
-  match Udns.decode data with
+  match Packet.decode data with
   | Ok (_, `Query q, _, _) ->
     (* TODO verify id! *)
     (* collect TLSA pems *)
-    Logs.debug (fun m -> m "answer is %a" Udns.pp_map q.Udns.answer) ;
-    begin match Domain_name.Map.find fqdn q.Udns.answer with
+    Logs.debug (fun m -> m "answer is %a" pp_data q.Packet.Query.answer) ;
+    begin match Domain_name.Map.find fqdn q.Packet.Query.answer with
       | None ->
         Logs.err (fun m -> m "no resource records found for %a" Domain_name.pp fqdn) ;
         None
       | Some rrs ->
-        match Udns.Map.find Udns.Map.Tlsa rrs with
+        match Umap.(find Tlsa rrs) with
         | None -> Logs.err (fun m -> m "no TLSA records found") ; None
         | Some (_, tlsas) ->
-          Udns.Map.Tlsa_set.(fold (fun tlsa r ->
+          Umap.Tlsa_set.(fold (fun tlsa r ->
               match parse tlsa, r with
               | Some c, _ -> Some c
               | None, x -> x)
@@ -73,12 +75,10 @@ let query_certificate sock public_key fqdn =
               None)
     end
   | Ok (_, v, _, _) ->
-    Logs.err (fun m -> m "expected a response, but got %a"
-                 Udns.pp_v v) ;
+    Logs.err (fun m -> m "expected a response, but got %a" Packet.pp v) ;
     None
   | Error e ->
-    Logs.err (fun m -> m "error %a while decoding answer"
-                 Udns.pp_err e) ;
+    Logs.err (fun m -> m "error %a while decoding answer" Packet.pp_err e) ;
     None
 (*
 let nsupdate_csr sock now hostname keyname zone dnskey csr =

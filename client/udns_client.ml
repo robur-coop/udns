@@ -1,17 +1,19 @@
+open Udns
+
 type 'key query_state =
   { protocol : Udns.proto ;
     key: 'key ;
     header : Udns.Header.t ;
     question : Udns.Question.t ; (* we only handle one *)
-  } constraint 'key = 'a Udns.Map.key
+  } constraint 'key = 'a Umap.key
 
 let make_query protocol hostname
     : 'xy  ->
       Cstruct.t * 'xy query_state =
   (* SRV records: Service + Protocol are case-insensitive, see RFC2728 pg2. *)
   fun record_type ->
-  let question = (hostname, Udns.Map.k_to_rr_typ record_type) in
-  let query : Udns.query = Udns.query question in
+  let question = (hostname, Umap.k_to_rr_typ record_type) in
+  let query : Packet.Query.t = Packet.Query.query question in
   let header = {
     Udns.Header.id = Random.int 0xffff ; (* TODO *)
     query = true ; operation = Udns_enum.Query; rcode = Udns_enum.NoError ;
@@ -19,7 +21,7 @@ let make_query protocol hostname
   in
   (*let max_size, edns = Udns_packet.size_edns None None proto query in*)
   let cs , _ =
-    Udns.encode ~max_size:1200 ?edns:None
+    Packet.encode ~max_size:1200 ?edns:None
       protocol header (`Query query) in
   begin match protocol with
     | `Udp -> cs
@@ -30,7 +32,7 @@ let make_query protocol hostname
   end, { protocol ; header; question ; key = record_type }
 
 let parse_response (type requested)
-  : requested Udns.Map.k query_state -> Cstruct.t ->
+  : requested Umap.k query_state -> Cstruct.t ->
     (requested, [< `Partial | `Msg of string]) result =
   fun state buf ->
   let open Rresult in
@@ -49,8 +51,8 @@ let parse_response (type requested)
           Ok (Cstruct.sub buf 2 pkt_len)
       end
   end >>= fun buf ->
-  match Udns.decode buf with
-  | Ok ({rcode = NoError ; operation = Query ; id = hdr_id;
+  match Packet.decode buf with
+  | Ok ({Header.rcode = NoError ; operation = Query ; id = hdr_id;
           query = false; _ },
          `Query resp, _edns (* what is flags? *), _tsig)
     when hdr_id = state.header.id
@@ -64,12 +66,12 @@ let parse_response (type requested)
             R.error_msgf "Can't find relevant map in response:@ \
                           %a in [%a]"
               Domain_name.pp q_name
-              Udns.pp_map resp.answer
+              pp_data resp.answer
           ) >>= fun relevant_map ->
-        begin match Udns.Map.find state.key relevant_map with
+        begin match Umap.find state.key relevant_map with
           | Some response -> Ok response
           | None ->
-            begin match Udns.Map.find Cname relevant_map with
+            begin match Umap.(find Cname relevant_map) with
               | None -> Error (`Msg "Invalid DNS response")
               | Some (_ttl, redirected_host) ->
                 follow_cname (pred counter) redirected_host
@@ -83,10 +85,11 @@ let parse_response (type requested)
       Udns.Header.pp h
       h.id state.header.id
       (Udns.Question.compare q.question state.question = 0)
-      Udns.pp_query q
+      Packet.Query.pp q
       (Fmt.option Udns.Edns.pp) edns
       (match tsig with None -> false | Some _ -> true)
   | Ok (_, `Notify _, _, _)-> Error (`Msg "Ok _ Notify _")
   | Ok (_, `Update _, _, _) -> Error (`Msg "Ok _ Update todo")
+  | Ok (_, `Axfr _, _, _) -> Error (`Msg "Ok _ Axfr todo")
   | Error `Partial as err -> err
-  | Error err -> R.error_msgf "Error parsing response: %a" Udns.pp_err err
+  | Error err -> R.error_msgf "Error parsing response: %a" Packet.pp_err err

@@ -1,5 +1,7 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
+open Udns
+
 open Udns_resolver_entry
 
 module V = struct
@@ -143,18 +145,18 @@ let maybe_insert typ nam ts rank res t =
 let resolve_ns t ts name =
   match cached t ts Udns_enum.A name with
   | Error _ -> `NeedA name, t
-  | Ok (NoErr Udns.Map.(B (k, v) as b), t) ->
+  | Ok (NoErr Umap.(B (k, v) as b), t) ->
     begin
       match k, v with
-      | Udns.Map.A, (_, ips) -> `HaveIPS ips, t
-      | Udns.Map.Cname, (_, alias) ->
+      | Umap.A, (_, ips) -> `HaveIPS ips, t
+      | Umap.Cname, (_, alias) ->
         Logs.warn
           (fun m -> m "resolve_ns: asked for A record of NS %a, got cname %a"
               Domain_name.pp name Domain_name.pp alias) ;
         `NeedCname alias, t
       | _ ->
         Logs.warn (fun m -> m "resolve_ns: ignoring %a (looked A %a)"
-                      Udns.Map.pp_b b Domain_name.pp name) ;
+                      Umap.pp_b b Domain_name.pp name) ;
         `NeedA name, t
     end
   | Ok (NoDom _, t) ->
@@ -174,7 +176,7 @@ let find_ns t rng ts stash name =
   in
   match cached t ts Udns_enum.NS name with
   | Error _ -> `NeedNS, t
-  | Ok (NoErr Udns.Map.(B (k, v) as b), t) ->
+  | Ok (NoErr Umap.(B (k, v) as b), t) ->
     (* TODO test case -- we can't pick right now, unfortunately
        the following setup is there in the wild:
        berliner-zeitung.de NS 1.ns.berlinonline.de, 2.ns.berlinonline.de, x.ns.berlinonline.de
@@ -182,7 +184,7 @@ let find_ns t rng ts stash name =
        berlinonline.net NS 2.ns.berlinonline.de, x.ns.berlinonline.de, 1.ns.berlinonline.de.
        --> all delivered without glue *)
     begin match k, v with
-      | Udns.Map.Ns, (_, ns) ->
+      | Umap.Ns, (_, ns) ->
         begin
           let actual = Domain_name.Set.diff ns stash in
           match pick (Domain_name.Set.elements actual) with
@@ -200,7 +202,7 @@ let find_ns t rng ts stash name =
             | `NeedCname cname, t -> `NeedA cname, t
             | `HaveIPS ips, t ->
               (* TODO should use a non-empty list of ips here *)
-              begin match pick (Udns.Map.Ipv4_set.elements ips) with
+              begin match pick (Umap.Ipv4_set.elements ips) with
                 | None -> `NeedA nsname, t
                 | Some ip -> `HaveIP ip, t
               end
@@ -208,10 +210,10 @@ let find_ns t rng ts stash name =
             | `No, t -> `No, t
             | `NoDom, t -> `NoDom, t
         end
-      | Udns.Map.Cname, (_, alias) -> `Cname alias, t (* foo.com CNAME bar.com case *)
+      | Umap.Cname, (_, alias) -> `Cname alias, t (* foo.com CNAME bar.com case *)
       | _ ->
         Logs.err (fun m -> m "find_ns: looked for NS %a, but got %a"
-                     Domain_name.pp name Udns.Map.pp_b b) ;
+                     Domain_name.pp name Umap.pp_b b) ;
         `No, t
     end
   | Ok (_, t) -> `No, t
@@ -229,10 +231,10 @@ let find_nearest_ns rng ts t name =
     | Some ip -> ip
   in
   let find_ns name = match cached t ts Udns_enum.NS name with
-    | Ok (NoErr Udns.Map.(B (Ns, (_, names))), _) -> Domain_name.Set.elements names
+    | Ok (NoErr Umap.(B (Ns, (_, names))), _) -> Domain_name.Set.elements names
     | _ -> []
   and find_a name = match cached t ts Udns_enum.A name with
-    | Ok (NoErr Udns.Map.(B (A, (_, ips))), _) -> Udns.Map.Ipv4_set.elements ips
+    | Ok (NoErr Umap.(B (A, (_, ips))), _) -> Umap.Ipv4_set.elements ips
     | _ -> []
   in
   let rec go nam =
@@ -384,9 +386,9 @@ let _resolve t ~rng ts name typ =
   go t (N.singleton name) typ Domain_name.root (List.rev (Domain_name.to_strings name)) Domain_name.root root
 
 let follow_cname t ts typ name b =
-  let rec follow t acc name Udns.Map.(B (k, v) as b) =
+  let rec follow t acc name Umap.(B (k, v) as b) =
     match k, v with
-    | Udns.Map.Cname, (_, alias) ->
+    | Umap.Cname, (_, alias) ->
       if Domain_name.Map.mem alias acc then begin
         Logs.debug (fun m -> m "follow_cname: cycle detected") ;
         `Cycle (acc, t)
@@ -397,7 +399,7 @@ let follow_cname t ts typ name b =
           `Query (alias, t)
         | Ok (NoErr ans, t) ->
           Logs.debug (fun m -> m "follow_cname: noerr, follow again") ;
-          follow t (Udns.Map.add_entry acc alias ans) alias ans
+          follow t (Umap.add_entry acc alias ans) alias ans
         | Ok (NoDom (ttl, soa) as res, t) ->
           Logs.debug (fun m -> m "follow_cname: nodom") ;
           `NoDom ((acc, to_map res), t)
@@ -410,9 +412,9 @@ let follow_cname t ts typ name b =
           Logs.debug (fun m -> m "follow_cname: servfail") ;
           `ServFail (to_map res, t)
       end
-    | _ -> `NoError (Udns.Map.add_entry acc name b, t)
+    | _ -> `NoError (Umap.add_entry acc name b, t)
   in
-  let initial = Udns.Map.add_entry Domain_name.Map.empty name b in
+  let initial = Umap.add_entry Domain_name.Map.empty name b in
   follow t initial name b
 
 (*
@@ -430,13 +432,13 @@ let answer t ts (name, typ) id =
   let packet t add rcode answer authority =
     (* TODO why is this RA + RD in here? should not be for recursive algorithm
          also, there should be authoritative... *)
-    let flags = Udns.Header.FS.(add `Recursion_desired (singleton `Recursion_available)) in
-    let header = { Udns.Header.id ; query = false ; operation = Udns_enum.Query ;
+    let flags = Header.FS.(add `Recursion_desired (singleton `Recursion_available)) in
+    let header = { Header.id ; query = false ; operation = Udns_enum.Query ;
                    rcode ; flags }
     (* XXX: we should look for a fixpoint here ;) *)
     (*    and additional, t = if add then additionals t ts answer else [], t *)
-    and question = Udns.query (name, typ) in
-    (header, `Query { question with Udns.answer ; authority (* ; additional *) }, t)
+    and query = Packet.Query.query ~answer ~authority (* ~additional *) (name, typ) in
+    (header, `Query query, t)
   in
   match cached t ts typ name with
   | Error _ -> `Query (name, t)

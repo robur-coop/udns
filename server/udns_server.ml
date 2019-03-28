@@ -2,6 +2,7 @@
 
 open Rresult
 open R.Infix
+open Udns
 
 let src = Logs.Src.create "dns_server" ~doc:"DNS server"
 module Log = (val Logs.src_log src : Logs.LOG)
@@ -12,21 +13,21 @@ let guard p err = if p then Ok () else Error err
 
 type proto = [ `Tcp | `Udp ]
 
-let authoritative = Udns.Header.FS.singleton `Authoritative
+let authoritative = Header.FS.singleton `Authoritative
 
 let s_header h =
-  let flags = Udns.Header.(FS.union h.flags authoritative) in
-  let flags = Udns.Header.FS.(remove `Authentic_data (remove `Recursion_available flags)) in
-  { h with Udns.Header.query = false ; flags }
+  let flags = Header.(FS.union h.flags authoritative) in
+  let flags = Header.FS.(remove `Authentic_data (remove `Recursion_available flags)) in
+  { h with Header.query = false ; flags }
 
 let err header v rcode =
   let header =
     let hdr = s_header header in
-    let flags = hdr.Udns.Header.flags in
-    let flags = if rcode = Udns_enum.NotAuth then Udns.Header.FS.remove `Authoritative flags else flags in
-    { hdr with Udns.Header.flags }
+    let flags = hdr.Header.flags in
+    let flags = if rcode = Udns_enum.NotAuth then Header.FS.remove `Authoritative flags else flags in
+    { hdr with Header.flags }
   in
-  Udns.error header v rcode
+  Packet.error header v rcode
 
 
 module Authentication = struct
@@ -101,7 +102,7 @@ module Authentication = struct
         (name, ip, port) :: acc
       | Some (_, _, None), `S -> acc
     in
-    Udns_trie.folde tx Udns.Map.Dnskey trie accumulate []
+    Udns_trie.folde tx Umap.Dnskey trie accumulate []
 
   let secondaries t zone = find_ns `S t zone
 
@@ -124,7 +125,7 @@ module Authentication = struct
     Domain_name.of_array (Array.sub arr 0 zidx)
 
   let soa name =
-    let soa = { Udns.Soa.nameserver = name ; hostmaster = name ;
+    let soa = { Soa.nameserver = name ; hostmaster = name ;
                 serial = 0l ; refresh = 16384l ; retry = 2048l ;
                 expiry = 1048576l ; minimum = 300l }
     in
@@ -133,25 +134,25 @@ module Authentication = struct
   let add_key trie name key =
     let zone = zone name in
     let soa =
-      match Udns_trie.lookup zone Udns.Map.Soa trie with
+      match Udns_trie.lookup zone Umap.Soa trie with
       | Ok (ttl, soa) ->
-        let soa' = { soa with Udns.Soa.serial = Int32.succ soa.Udns.Soa.serial } in
+        let soa' = { soa with Soa.serial = Int32.succ soa.Soa.serial } in
         (ttl, soa')
       | Error _ ->
         soa name
     in
-    let keys = match Udns_trie.lookup name Udns.Map.Dnskey trie with
-      | Error _ -> Udns.Map.Dnskey_set.singleton key
+    let keys = match Udns_trie.lookup name Umap.Dnskey trie with
+      | Error _ -> Umap.Dnskey_set.singleton key
       | Ok (_, keys) ->
         Log.warn (fun m -> m "replacing unexpected Dnskey (name %a, have %a, got %a)"
                      Domain_name.pp name
-                     Fmt.(list ~sep:(unit ",") Udns.Dnskey.pp)
-                     (Udns.Map.Dnskey_set.elements keys)
-                     Udns.Dnskey.pp key ) ;
-        Udns.Map.Dnskey_set.singleton key
+                     Fmt.(list ~sep:(unit ",") Dnskey.pp)
+                     (Umap.Dnskey_set.elements keys)
+                     Dnskey.pp key ) ;
+        Umap.Dnskey_set.singleton key
     in
-    let trie' = Udns_trie.insert zone Udns.Map.Soa soa trie in
-    Udns_trie.insert name Udns.Map.Dnskey (0l, keys) trie'
+    let trie' = Udns_trie.insert zone Umap.Soa soa trie in
+    Udns_trie.insert name Umap.Dnskey (0l, keys) trie'
 
   let of_keys keys =
     List.fold_left (fun trie (name, key) -> add_key trie name key)
@@ -169,13 +170,13 @@ module Authentication = struct
       trie'
 
   let find_key t name =
-    match Udns_trie.lookup name Udns.Map.Dnskey (fst t) with
+    match Udns_trie.lookup name Umap.Dnskey (fst t) with
     | Ok (_, keys) ->
-      if Udns.Map.Dnskey_set.cardinal keys = 1 then
-        Some (Udns.Map.Dnskey_set.choose keys)
+      if Umap.Dnskey_set.cardinal keys = 1 then
+        Some (Umap.Dnskey_set.choose keys)
       else begin
         Log.warn (fun m -> m "found multiple (%d) keys for %a"
-                     (Udns.Map.Dnskey_set.cardinal keys)
+                     (Umap.Dnskey_set.cardinal keys)
                      Domain_name.pp name) ;
         None
       end
@@ -235,7 +236,7 @@ let text name t =
   let buf = Buffer.create 1024 in
   (* first, find the start of authority (if any) *)
   let origin, default_ttl =
-    match Udns_trie.lookup name Udns.Map.Soa t.data with
+    match Udns_trie.lookup name Umap.Soa t.data with
     | Error e ->
       Log.err (fun m -> m "couldn't find SOA when serialising zone for %a: %a"
                   Domain_name.pp name Udns_trie.pp_e e) ;
@@ -251,7 +252,7 @@ let text name t =
     (Fmt.to_to_string Udns_trie.pp_e)
     (Udns_trie.fold name t.data
        (fun name v () ->
-          Buffer.add_string buf (Udns.Map.textb ?origin ?default_ttl name v) ;
+          Buffer.add_string buf (Umap.text_b ?origin ?default_ttl name v) ;
           Buffer.add_char buf '\n')
        ()) >>| fun () ->
   Buffer.contents buf
@@ -271,7 +272,7 @@ let find_glue trie typ name names =
   in
   let insert_rr map typ name =
     match Udns_trie.lookupb name typ trie with
-    | Ok (v, _) -> Udns.Map.add_entry map name v
+    | Ok (v, _) -> Umap.add_entry map name v
     | _ -> map
   in
   Domain_name.Set.fold (fun name map ->
@@ -293,52 +294,50 @@ let lookup trie hdr (name, typ) =
     let hdr = s_header hdr in
     { hdr with rcode = Udns_enum.NoError }
   in
-  let query = Udns.query (name, typ) in
+  let query = Packet.Query.query (name, typ) in
   let r = match typ with
     | Udns_enum.ANY -> Udns_trie.lookup_any name trie
     | _ -> match Udns_trie.lookupb name typ trie with
-      | Ok (B (k, v), au) -> Ok (Udns.Map.singleton k v, au)
+      | Ok (B (k, v), au) -> Ok (Umap.singleton k v, au)
       | Error e -> Error e
   in
   match r with
   | Ok (an, (au, ttl, ns)) ->
     let answer = Domain_name.Map.singleton name an in
     let authority =
-      Udns.Map.remove_sub
-        (Domain_name.Map.singleton au Udns.Map.(singleton Ns (ttl, ns)))
+      Umap.remove_sub
+        (Domain_name.Map.singleton au Umap.(singleton Ns (ttl, ns)))
         answer
     in
     let additional =
       let names =
-        Udns.Map.(fold (fun b s -> Domain_name.Set.union (namesb b) s) an ns)
+        Umap.(fold (fun b s -> Domain_name.Set.union (names_b b) s) an ns)
       in
-      Udns.Map.remove_sub
-        (Udns.Map.remove_sub
-           (find_glue trie typ name names)
-           answer)
+      Umap.remove_sub
+        (Umap.remove_sub (find_glue trie typ name names) answer)
         authority
     in
-    Ok (hdr, `Query { query with Udns.answer ; authority ; additional })
+    Ok (hdr, `Query { query with Packet.Query.answer ; authority ; additional })
   | Error (`Delegation (name, (ttl, ns))) ->
     let additional =
       Domain_name.Set.fold (fun name map ->
           (* TODO aaaa records! *)
           match Udns_trie.lookup_ignore name Udns_enum.A trie with
-          | Ok (Udns.Map.B (Udns.Map.A, _) as v) -> Udns.Map.add_entry map name v
+          | Ok (Umap.(B (A, _) as v)) -> Umap.add_entry map name v
           | _ -> map)
         ns Domain_name.Map.empty
     in
     let hdr =
-      let flags = Udns.Header.FS.remove `Authoritative hdr.Udns.Header.flags in
-      { hdr with Udns.Header.flags }
+      let flags = Header.FS.remove `Authoritative hdr.Header.flags in
+      { hdr with flags }
     in
-    let authority = Domain_name.Map.singleton name Udns.Map.(singleton Ns (ttl, ns)) in
-    Ok (hdr, `Query { query with Udns.authority ; additional })
+    let authority = Domain_name.Map.singleton name Umap.(singleton Ns (ttl, ns)) in
+    Ok (hdr, `Query { query with authority ; additional })
   | Error (`EmptyNonTerminal (zname, soa)) ->
-    Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Udns.Map.(singleton Soa soa) })
+    Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Umap.(singleton Soa soa) })
   | Error (`NotFound (zname, soa)) ->
-    let hdr = { hdr with Udns.Header.rcode = Udns_enum.NXDomain } in
-    Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Udns.Map.(singleton Soa soa) })
+    let hdr = { hdr with Header.rcode = Udns_enum.NXDomain } in
+    Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Umap.(singleton Soa soa) })
   | Error `NotAuthoritative -> Error Udns_enum.NotAuth
 
 let axfr trie proto ((zone, _) as question) =
@@ -348,7 +347,7 @@ let axfr trie proto ((zone, _) as question) =
     end else
      Ok ()) >>= fun () ->
   match Udns_trie.entries zone trie with
-  | Ok (soa, entries) -> Ok (`Axfr (question, Some { Udns.soa ; entries }))
+  | Ok (soa, entries) -> Ok (`Axfr (question, Some { Packet.Axfr.soa ; entries }))
   | Error `Delegation _
   | Error `NotAuthoritative
   | Error `NotFound _ ->
@@ -360,12 +359,12 @@ let axfr t proto key ((zone, _) as question) =
   (if Authentication.authorise t.auth proto key zone `Key_management then begin
       Log.info (fun m -> m "key-management key %a authorised for AXFR %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
-                   Udns.Question.pp question) ;
+                   Question.pp question) ;
       Ok (Authentication.keys t.auth)
     end else if Authentication.authorise t.auth proto key zone `Transfer then begin
       Log.info (fun m -> m "transfer key %a authorised for AXFR %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
-                   Udns.Question.pp question) ;
+                   Question.pp question) ;
       Ok t.data
     end else
      Error Udns_enum.NotAuth) >>= fun trie ->
@@ -376,7 +375,7 @@ let lookup t proto key hdr q =
     if Authentication.authorise t.auth proto key (fst q) `Key_management then begin
       Log.info (fun m -> m "key-management key %a authorised for lookup %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
-                   Udns.Question.pp q) ;
+                   Question.pp q) ;
       Authentication.keys t.auth
     end else
       t.data
@@ -384,17 +383,17 @@ let lookup t proto key hdr q =
   lookup trie hdr q
 
 let safe_decode buf =
-  match Udns.decode buf with
+  match Packet.decode buf with
   | Error `Partial ->
     Log.err (fun m -> m "partial frame (length %d)@.%a" (Cstruct.len buf) Cstruct.hexdump_pp buf) ;
     Error Udns_enum.FormErr
   | Error (`UnsupportedRRTyp _ | `UnsupportedClass _ as e) ->
     Log.err (fun m -> m "refusing %a while decoding@.%a"
-                 Udns.pp_err e Cstruct.hexdump_pp buf) ;
+                 Packet.pp_err e Cstruct.hexdump_pp buf) ;
     Error Udns_enum.Refused
   | Error (`BadRRTyp _ | `BadClass _ | `UnsupportedOpcode _ as e) ->
     Log.err (fun m -> m "not implemented %a while decoding@.%a"
-                 Udns.pp_err e Cstruct.hexdump_pp buf) ;
+                 Packet.pp_err e Cstruct.hexdump_pp buf) ;
     Error Udns_enum.NotImp
   | Error (`BadContent x) ->
     Log.err (fun m -> m "bad content error %s while decoding@.%a"
@@ -406,12 +405,12 @@ let safe_decode buf =
     Error Udns_enum.BadVersOrSig
   | Error e ->
     Log.err (fun m -> m "error %a while decoding@.%a"
-                 Udns.pp_err e Cstruct.hexdump_pp buf) ;
+                 Packet.pp_err e Cstruct.hexdump_pp buf) ;
     Error Udns_enum.FormErr
   | Ok v -> Ok v
 
 let handle_query t proto key header query =
-  let q = query.Udns.question in
+  let q = query.Packet.Query.question in
   let open Udns_enum in
   begin match snd q with
     | AXFR -> assert false (* this won't happen, decoder constructs `Axfr *)
@@ -568,14 +567,14 @@ let notify t l now zone soa =
      2. the IP addresses of secondary servers which have transfer keys
      3. the TCP connections requesting (signed) SOA in l *)
   let ips =
-    match Udns_trie.lookup zone Udns.Map.Ns t.data with
+    match Udns_trie.lookup zone Umap.Ns t.data with
     | Ok (_, ns) ->
-      let secondaries = Domain_name.Set.remove soa.Udns.Soa.nameserver ns in
+      let secondaries = Domain_name.Set.remove soa.Soa.nameserver ns in
       (* TODO AAAA records *)
       Domain_name.Set.fold (fun ns acc ->
-          let ips = match Udns_trie.lookup ns Udns.Map.A t.data with
+          let ips = match Udns_trie.lookup ns Umap.A t.data with
             | Ok (_, ips) ->
-              Udns.Map.Ipv4_set.fold (fun ip acc -> IPM.add ip 53 acc) ips IPM.empty
+              Umap.Ipv4_set.fold (fun ip acc -> IPM.add ip 53 acc) ips IPM.empty
             | _ ->
               Log.err (fun m -> m "lookup for A %a returned nothing as well"
                           Domain_name.pp ns) ;
@@ -601,16 +600,16 @@ let notify t l now zone soa =
                 Fmt.(list ~sep:(unit ", ") (pair ~sep:(unit ":") Ipaddr.V4.pp int))
                 (IPM.bindings ips)) ;
   let notify =
-    let question = Udns.query (zone, Udns_enum.SOA) in
+    let question = Packet.Query.query (zone, Udns_enum.SOA) in
     let answer =
-      Domain_name.Map.singleton zone Udns.Map.(singleton Soa (0l, soa))
+      Domain_name.Map.singleton zone Umap.(singleton Soa (0l, soa))
     in
     { question with answer }
   in
   let one ip port =
     let id = Randomconv.int ~bound:(1 lsl 16 - 1) t.rng in
     let header = {
-      Udns.Header.id ; query = true ; operation = Udns_enum.Notify ; rcode = Udns_enum.NoError ;
+      Header.id ; query = true ; operation = Udns_enum.Notify ; rcode = Udns_enum.NoError ;
       flags = authoritative }
     in
     (now, 0, ip, port, header, notify)
@@ -689,8 +688,8 @@ let raw_server_error buf rcode =
       Some hdr
     else
       (* need an edns! *)
-      let edns = Udns.Edns.edns ~extended_rcode () in
-      let buf = Udns.Edns.allocate_and_encode edns in
+      let edns = Edns.edns ~extended_rcode () in
+      let buf = Edns.allocate_and_encode edns in
       Cstruct.BE.set_uint16 hdr 10 1 ;
       Some (Cstruct.append hdr buf)
 
@@ -698,12 +697,12 @@ let handle_tsig ?mac t now header v tsig buf =
   match tsig with
   | None -> Ok None
   | Some (name, tsig, off) ->
-    let algo = tsig.Udns.Tsig.algorithm in
+    let algo = tsig.Tsig.algorithm in
     let key =
       match Authentication.find_key t.auth name with
       | None -> None
       | Some key ->
-        match Udns.Tsig.dnskey_to_tsig_algo key with
+        match Tsig.dnskey_to_tsig_algo key with
         | Some a when a = algo -> Some key
         | _ -> None
     in
@@ -717,7 +716,7 @@ module Primary = struct
   type s =
     t *
     (Domain_name.t * Ipaddr.V4.t * int) list *
-    (int64 * int * Ipaddr.V4.t * int * Udns.Header.t * Udns.query) list
+    (int64 * int * Ipaddr.V4.t * int * Header.t * Packet.Query.t) list
 
   let server (t, _, _) = t
 
@@ -733,7 +732,7 @@ module Primary = struct
         Log.debug (fun m -> m "soa found for %a" Domain_name.pp name) ;
         acc @ notify t [] 0L name soa
       in
-      match Udns_trie.folde Domain_name.root Udns.Map.Soa data f [] with
+      match Udns_trie.folde Domain_name.root Umap.Soa data f [] with
       | Ok ns -> ns
       | Error e ->
         Logs.warn (fun m -> m "error %a while collecting zones" Udns_trie.pp_e e) ;
@@ -742,12 +741,12 @@ module Primary = struct
     (t, [], notifications)
 
   let tcp_soa_query proto q =
-    match proto, q.Udns.question with
+    match proto, q.Packet.Query.question with
     | `Tcp, query when snd query = Udns_enum.SOA -> Ok (fst query)
     | _ -> Error ()
 
   let handle_frame (t, l, ns) _ts ip port proto key header v =
-    match v, header.Udns.Header.query with
+    match v, header.Header.query with
     | `Query q, true ->
       handle_query t proto key header q >>= fun answer ->
       (* if there was a (transfer-key) signed SOA, and tcp, we add to notification list! *)
@@ -784,7 +783,7 @@ module Primary = struct
     | `Notify _, false ->
       let notifications =
         List.filter (fun (_, _, ip', _, hdr', _) ->
-            not (Ipaddr.V4.compare ip ip' = 0 && header.Udns.Header.id = hdr'.Udns.Header.id))
+            not (Ipaddr.V4.compare ip ip' = 0 && header.Header.id = hdr'.Header.id))
           ns
       in
       Ok ((t, l, notifications), None, [], None)
@@ -795,7 +794,7 @@ module Primary = struct
     | `Notify n, true ->
       Log.warn (fun m -> m "unsolicited notify request") ;
       let reply =
-        let n = Udns.query n.Udns.question in
+        let n = Packet.Query.query n.Packet.Query.question in
         s_header header, `Notify n
       in
       Ok ((t, l, ns), Some reply, [], Some `Notify)
@@ -803,19 +802,19 @@ module Primary = struct
   let handle (t, l, ns) now ts proto ip port buf =
     match
       safe_decode buf >>= fun (header, v, opt, tsig) ->
-      guard (not (Udns.Header.FS.mem `Truncation header.Udns.Header.flags)) Udns_enum.FormErr >>= fun () ->
+      guard (not (Header.FS.mem `Truncation header.Header.flags)) Udns_enum.FormErr >>= fun () ->
       Ok (header, v, opt, tsig)
     with
     | Error rcode -> (t, l, ns), raw_server_error buf rcode, [], None
     | Ok ((header, v, edns, tsig) as response) ->
       Log.debug (fun m -> m "%a sent %a" Ipaddr.V4.pp ip
-                    Udns.pp response) ;
+                    Packet.pp_res response) ;
       let handle_inner keyname =
         match handle_frame (t, l, ns) ts ip port proto keyname header v with
         | Ok (t, Some (header, answer), out, notify) ->
-          let max_size, edns = Udns.Edns.reply edns in
+          let max_size, edns = Edns.reply edns in
           (* be aware, this may be truncated... here's where AXFR is assembled! *)
-          (t, Some (Udns.encode ?max_size ?edns proto header answer), out, notify)
+          (t, Some (Packet.encode ?max_size ?edns proto header answer), out, notify)
         | Ok (t, None, out, notify) -> (t, None, out, notify)
         | Error rcode -> ((t, l, ns), err header v rcode, [], None)
       in
@@ -849,14 +848,14 @@ module Primary = struct
 
   let timer (t, l, ns) now =
     let max = pred (Array.length retransmit) in
-    let encode hdr q = fst @@ Udns.encode `Udp hdr (`Query q) in
+    let encode hdr q = fst @@ Packet.encode `Udp hdr (`Query q) in
     let notifications, out =
       List.fold_left (fun (ns, acc) (ts, count, ip, port, hdr, q) ->
           if Int64.add ts retransmit.(count) < now then
             (if count = max then begin
                 Log.warn (fun m -> m "retransmitting to %a:%d the last time %a %a"
-                             Ipaddr.V4.pp ip port Udns.Header.pp hdr
-                             Udns.pp_query q) ;
+                             Ipaddr.V4.pp ip port Header.pp hdr
+                             Packet.Query.pp q) ;
                 ns
               end else
                (ts, succ count, ip, port, hdr, q) :: ns),
@@ -929,7 +928,7 @@ module Secondary = struct
           Logs.warn (fun m -> m "error %a while looking up keys for %a" Udns_trie.pp_e e Domain_name.pp name) ;
           zones
       in
-      match Udns_trie.folde Domain_name.root Udns.Map.Soa keys f Domain_name.Map.empty with
+      match Udns_trie.folde Domain_name.root Umap.Soa keys f Domain_name.Map.empty with
       | Ok zones -> zones
       | Error e ->
         Log.warn (fun m -> m "error %a while collecting zones" Udns_trie.pp_e e) ;
@@ -940,9 +939,9 @@ module Secondary = struct
   let maybe_sign ?max_size t name signed original_id buf =
     match Authentication.find_key t.auth name with
     | Some key ->
-      begin match Udns.Tsig.dnskey_to_tsig_algo key with
+      begin match Tsig.dnskey_to_tsig_algo key with
         | Some algorithm ->
-          begin match Udns.Tsig.tsig ~algorithm ~original_id ~signed () with
+          begin match Tsig.tsig ~algorithm ~original_id ~signed () with
             | None -> Log.err (fun m -> m "creation of tsig failed") ; None
             | Some tsig -> match t.tsig_sign ?mac:None ?max_size name tsig ~key buf with
               | None -> Log.err (fun m -> m "signing failed") ; None
@@ -954,14 +953,14 @@ module Secondary = struct
 
   let header rng () =
     let id = Randomconv.int ~bound:(1 lsl 16 - 1) rng in
-    id, { Udns.Header.id ; query = true ; operation = Udns_enum.Query ;
-          rcode = Udns_enum.NoError ; flags = Udns.Header.FS.empty }
+    id, { Header.id ; query = true ; operation = Udns_enum.Query ;
+          rcode = Udns_enum.NoError ; flags = Header.FS.empty }
 
   let axfr t proto now ts q_name name =
     let id, header = header t.rng ()
     and question = (q_name, Udns_enum.AXFR)
     in
-    let buf, max_size = Udns.encode proto header (`Axfr (question, None)) in
+    let buf, max_size = Packet.encode proto header (`Axfr (question, None)) in
     match maybe_sign ~max_size t name now id buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_axfr (ts, id, mac), buf)
@@ -970,8 +969,8 @@ module Secondary = struct
     let id, header = header t.rng ()
     and question = (q_name, Udns_enum.SOA)
     in
-    let query = Udns.query question in
-    let buf, max_size = Udns.encode proto header (`Query query) in
+    let query = Packet.Query.query question in
+    let buf, max_size = Packet.encode proto header (`Query query) in
     match maybe_sign ~max_size t name now id buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_soa (ts, id, retry, mac), buf)
@@ -995,17 +994,17 @@ module Secondary = struct
             ((t, Domain_name.Map.add zone (st, ip, port, name) zones), out)
           in
 
-          match Udns_trie.lookup zone Udns.Map.Soa t.data, st with
+          match Udns_trie.lookup zone Umap.Soa t.data, st with
           | Ok (_, soa), Transferred ts ->
             (* TODO: integer overflows (Int64.add) *)
-            let r = Duration.of_sec (Int32.to_int soa.Udns.Soa.refresh) in
+            let r = Duration.of_sec (Int32.to_int soa.Soa.refresh) in
             maybe_out
               (if Int64.add ts r < now then
                  query_soa t `Tcp p_now now zone name
                else
                  None)
           | Ok (_, soa), Requested_soa (ts, _, retry, _) ->
-            let expiry = Duration.of_sec (Int32.to_int soa.Udns.Soa.expiry) in
+            let expiry = Duration.of_sec (Int32.to_int soa.Soa.expiry) in
             if Int64.add ts expiry < now then begin
               Log.warn (fun m -> m "expiry expired, dropping zone %a"
                            Domain_name.pp zone) ;
@@ -1013,7 +1012,7 @@ module Secondary = struct
               (({ t with data }, zones), acc)
             end else
               let retry = succ retry in
-              let e = Duration.of_sec (retry * Int32.to_int soa.Udns.Soa.retry) in
+              let e = Duration.of_sec (retry * Int32.to_int soa.Soa.retry) in
               maybe_out
                 (if Int64.add ts e < now then
                    query_soa ~retry t `Tcp p_now ts zone name
@@ -1043,7 +1042,7 @@ module Secondary = struct
     t, out
 
   let handle_notify t zones now ts ip query =
-    let (zone, typ) = query.Udns.question in
+    let (zone, typ) = query.Packet.Query.question in
     match typ with
     | Udns_enum.SOA ->
       begin match Domain_name.Map.find zone zones with
@@ -1091,7 +1090,7 @@ module Secondary = struct
       Error Udns_enum.Refused
     | Some (st, ip, port, name) ->
       (* TODO use NotAuth instead of Refused here? *)
-      guard (match id st with None -> true | Some id' -> header.Udns.Header.id = id')
+      guard (match id st with None -> true | Some id' -> header.Header.id = id')
         Udns_enum.Refused >>= fun () ->
       guard (authorise name keyname) Udns_enum.Refused >>| fun () ->
       Log.debug (fun m -> m "authorized access to zone %a (with key %a)"
@@ -1104,19 +1103,19 @@ module Secondary = struct
     | Requested_axfr (_, _, _), Some axfr ->
       (* TODO partial AXFR, but decoder already rejects them *)
       Log.info (fun m -> m "received authorised AXFR for %a: %a"
-                   Domain_name.pp zone Udns.pp_axfr axfr) ;
+                   Domain_name.pp zone Packet.Axfr.pp axfr) ;
       (* SOA should be higher than ours! *)
       (match Udns_trie.lookup zone Soa t.data with
        | Error _ ->
          Log.info (fun m -> m "no soa for %a, maybe first axfr" Domain_name.pp zone) ;
          Ok ()
        | Ok (_, soa) ->
-         if Udns.Soa.newer ~old:soa (snd axfr.Udns.soa) then
+         let fresh = snd axfr.Packet.Axfr.soa in
+         if Soa.newer ~old:soa fresh then
            Ok ()
          else begin
            Log.warn (fun m -> m "AXFR for %a (%a) is not newer than ours (%a)"
-                        Domain_name.pp zone
-                        Udns.Soa.pp (snd axfr.Udns.soa) Udns.Soa.pp soa) ;
+                        Domain_name.pp zone Soa.pp fresh Soa.pp soa) ;
            (* TODO what is the right error here? *)
            Error Udns_enum.ServFail
          end) >>= fun () ->
@@ -1127,7 +1126,8 @@ module Secondary = struct
       in
       let trie =
         let trie = Udns_trie.remove_zone zone t.data in
-        let trie = Udns_trie.insert zone Udns.Map.Soa axfr.Udns.soa trie in
+        (* insert SOA explicitly - it's not part of entries (should it be?) *)
+        let trie = Udns_trie.insert zone Umap.Soa axfr.Packet.Axfr.soa trie in
         Udns_trie.insert_map entries trie
       in
       let zones = Domain_name.Map.add zone (Transferred ts, ip, port, name) zones in
@@ -1137,23 +1137,23 @@ module Secondary = struct
       Error Udns_enum.Refused
 
   let handle_answer t zones now ts keyname header query =
-    let (zone, typ) = query.Udns.question in
+    let (zone, typ) = query.Packet.Query.question in
     authorise_zone zones keyname header zone >>= fun (st, ip, port, name) ->
     match st with
     | Requested_soa (_, _, retry, _) ->
       Log.debug (fun m -> m "received SOA after %d retries" retry) ;
       (* request AXFR now in case of serial is higher! *)
       begin match
-          Udns_trie.lookup zone Udns.Map.Soa t.data,
-          Udns.Map.find_entry query.Udns.answer zone Soa
+          Udns_trie.lookup zone Umap.Soa t.data,
+          Umap.find_entry query.Packet.Query.answer zone Soa
         with
         | _, None ->
           Log.err (fun m -> m "didn't receive SOA for %a from %a (answer %a)"
-                      Domain_name.pp zone Ipaddr.V4.pp ip Udns.pp_map query.Udns.answer) ;
+                      Domain_name.pp zone Ipaddr.V4.pp ip pp_data query.Packet.Query.answer) ;
           Error Udns_enum.FormErr
         | Ok (_, cached_soa), Some (_, fresh) ->
           (* TODO: > with wraparound in mind *)
-          if Udns.Soa.newer ~old:cached_soa fresh then
+          if Soa.newer ~old:cached_soa fresh then
             match axfr t `Tcp now ts zone name with
             | None ->
               Log.warn (fun m -> m "trouble creating axfr for %a (using %a)"
@@ -1166,7 +1166,7 @@ module Secondary = struct
               Ok (t, zones, [ (`Tcp, ip, port, buf) ])
           else begin
             Log.info (fun m -> m "received soa (%a) for %a is not newer than cached (%a), moving on"
-                         Udns.Soa.pp fresh Domain_name.pp zone Udns.Soa.pp cached_soa) ;
+                         Soa.pp fresh Domain_name.pp zone Soa.pp cached_soa) ;
             let zones = Domain_name.Map.add zone (Transferred ts, ip, port, name) zones in
             Ok (t, zones, [])
           end
@@ -1226,7 +1226,7 @@ module Secondary = struct
     Ok ((t, zones), outs)
 *)
   let handle_frame (t, zones) now ts ip proto keyname header v =
-    match v, header.Udns.Header.query with
+    match v, header.Header.query with
     | `Query q, true ->
       handle_query t proto keyname header q >>= fun answer ->
       Ok ((t, zones), Some answer, [])
@@ -1252,7 +1252,7 @@ module Secondary = struct
     | `Notify n, true ->
       handle_notify t zones now ts ip n >>= fun (zones, out) ->
       let answer =
-        let n = Udns.query n.question in
+        let n = Packet.Query.query n.question in
         (s_header header, `Notify n)
       in
       Ok ((t, zones), Some answer, out)
@@ -1268,8 +1268,8 @@ module Secondary = struct
       | _ -> None
     in
     match v with
-    | `Query q when not header.Udns.Header.query ->
-      let (name, _) = q.Udns.question in
+    | `Query q when not header.Header.query ->
+      let (name, _) = q.Packet.Query.question in
       find_in_zones name
     | `Axfr ((name, _), _) -> find_in_zones name
     | _ -> None
@@ -1277,7 +1277,7 @@ module Secondary = struct
   let handle (t, zones) now ts proto ip buf =
     match
       safe_decode buf >>= fun (header, v, opt, tsig) ->
-      guard (not (Udns.Header.FS.mem `Truncation header.Udns.Header.flags)) Udns_enum.FormErr >>= fun () ->
+      guard (not (Header.FS.mem `Truncation header.Header.flags)) Udns_enum.FormErr >>= fun () ->
       Ok (header, v, opt, tsig)
     with
     | Error rcode -> ((t, zones), raw_server_error buf rcode, [])
@@ -1285,8 +1285,8 @@ module Secondary = struct
       let handle_inner name =
         match handle_frame (t, zones) now ts ip proto name header v with
         | Ok (t, Some (header, answer), out) ->
-          let max_size, edns = Udns.Edns.reply edns in
-          (t, Some (Udns.encode ?max_size ?edns proto header answer), out)
+          let max_size, edns = Edns.reply edns in
+          (t, Some (Packet.encode ?max_size ?edns proto header answer), out)
         | Ok (t, None, out) -> (t, None, out)
         | Error rcode -> ((t, zones), err header v rcode, [])
       in

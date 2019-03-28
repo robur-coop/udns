@@ -11,26 +11,6 @@ let encode_rdata offs buf off = function
 
 (*
 (* UPDATE *)
-type rr_prereq =
-  | Exists of Domain_name.t * Udns_enum.rr_typ
-  | Exists_data of Domain_name.t * rdata
-  | Not_exists of Domain_name.t * Udns_enum.rr_typ
-  | Name_inuse of Domain_name.t
-  | Not_name_inuse of Domain_name.t
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_rr_prereq ppf = function
-  | Exists (name, typ) ->
-    Fmt.pf ppf "exists? %a %a" Domain_name.pp name Udns_enum.pp_rr_typ typ
-  | Exists_data (name, rd) ->
-    Fmt.pf ppf "exists data? %a %a"
-      Domain_name.pp name pp_rdata rd
-  | Not_exists (name, typ) ->
-    Fmt.pf ppf "doesn't exists? %a %a" Domain_name.pp name Udns_enum.pp_rr_typ typ
-  | Name_inuse name -> Fmt.pf ppf "name inuse? %a" Domain_name.pp name
-  | Not_name_inuse name -> Fmt.pf ppf "name not inuse? %a" Domain_name.pp name
-(*BISECT-IGNORE-END*)
-
 let decode_rr_prereq names buf off =
   decode_ntc names buf off >>= fun ((name, typ, cls), names, off) ->
   let off' = off + 6 in
@@ -85,29 +65,6 @@ let encode_rr_prereq offs buf off = function
     (* ttl + rdlen, both 0 *)
     (offs, off + 6)
 
-type rr_update =
-  | Remove of Domain_name.t * Udns_enum.rr_typ
-  | Remove_all of Domain_name.t
-  | Remove_single of Domain_name.t * rdata
-  | Add of rr
-
-let rr_update_name = function
-  | Remove (name, _) -> name
-  | Remove_all name -> name
-  | Remove_single (name, _) -> name
-  | Add rr -> rr.name
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_rr_update ppf = function
-  | Remove (name, typ) ->
-    Fmt.pf ppf "remove! %a %a" Domain_name.pp name Udns_enum.pp_rr_typ typ
-  | Remove_all name -> Fmt.pf ppf "remove all! %a" Domain_name.pp name
-  | Remove_single (name, rd) ->
-    Fmt.pf ppf "remove single! %a %a" Domain_name.pp name pp_rdata rd
-  | Add rr ->
-    Fmt.pf ppf "add! %a" pp_rr rr
-(*BISECT-IGNORE-END*)
-
 let decode_rr_update names buf off =
   decode_ntc names buf off >>= fun ((name, typ, cls), names, off) ->
   let off' = off + 6 in
@@ -159,39 +116,7 @@ let encode_rr_update offs buf off = function
     Cstruct.BE.set_uint16 buf (rdata_off - 2) (rdata_end - rdata_off) ;
     (offs, rdata_end)
   | Add rr -> encode_rr offs buf off rr
-
-type update = {
-  zone : question ;
-  prereq : rr_prereq list ;
-  update : rr_update list ;
-  addition : rr list ;
-}
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_update ppf t =
-  Fmt.pf ppf "%a@ %a@ %a@ %a"
-    pp_question t.zone
-    (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr_prereq) t.prereq
-    (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr_update) t.update
-    (Fmt.list ~sep:(Fmt.unit ";@ ") pp_rr) t.addition
-(*BISECT-IGNORE-END*)
 *)
-let rec decode_n f names buf off acc = function
-  | 0 -> Ok (names, off, List.rev acc)
-  | n ->
-    match f names buf off with
-    | Ok (ele, names, off') ->
-      decode_n f names buf off' (ele :: acc) (pred n)
-    | Error e -> Error e
-
-let rec decode_n_additional names buf off r (acc, opt, tsig) = function
-  | 0 -> Ok (off, List.rev acc, opt, tsig, r)
-  | n ->
-    match decode_rr names buf off with
-    | Ok (ele, names, off') ->
-      rdata_edns_tsig_ok ele opt tsig >>= fun (opt', tsig') ->
-      decode_n_additional names buf off' (Some off) (ele :: acc, opt', tsig') (pred n)
-    | Error e -> Error e
 (*
 let decode_update buf =
   guard (Cstruct.len buf >= hdr_len) `Partial >>= fun () ->
@@ -223,48 +148,4 @@ let encode_update buf data =
   List.fold_left (fun (offs, off) rr -> encode_rr_update offs buf off rr)
     (offs, off) data.update
 *)
-type v = [ `Query of query | `Update of update | `Notify of query ]
-type t = header * v * opt option * (Domain_name.t * tsig) option
-
-(*BISECT-IGNORE-BEGIN*)
-let pp_v ppf = function
-  | `Query q -> pp_query ppf q
-  | `Update u -> pp_update ppf u
-  | `Notify n -> pp_query ppf n
-
-let pp ppf (hdr, v, _, _) =
-  pp_header ppf hdr ;
-  Fmt.sp ppf () ;
-  pp_v ppf v
-(*BISECT-IGNORE-END*)
-
-let error header v rcode =
-  if not header.query then
-    let header = { header with rcode }
-    and question = match v with
-      | `Update u -> [ u.zone ]
-      | `Query q | `Notify q -> q.question
-    in
-    let errbuf = Cstruct.create max_reply_udp in
-    let query = { question ; answer = [] ; authority = [] ; additional = [] } in
-    encode_header errbuf header ;
-    let encode query =
-      let _, off = encode_query errbuf query in
-      let extended_rcode = (Udns_enum.rcode_to_int rcode) lsr 4 in
-      if extended_rcode > 0 then
-        encode_ad header ~edns:(opt ()) Domain_name.Map.empty errbuf off []
-      else
-        off
-    in
-    let off = try encode query with
-      | Invalid_argument _ ->
-        (* the question section could be larger than 450 byte, a single question
-           can't (domain-name: 256 byte, type: 2 byte, class: 2 byte) *)
-        let question = match question with [] -> [] | q::_ -> [ q ] in
-        let query = { question ; answer = [] ; authority = [] ; additional = [] } in
-        encode query
-    in
-    Some (Cstruct.sub errbuf 0 off, max_reply_udp)
-  else
-    None
 *)

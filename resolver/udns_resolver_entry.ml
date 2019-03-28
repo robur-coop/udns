@@ -1,5 +1,7 @@
 (* (c) 2017 Hannes Mehnert, all rights reserved *)
 
+open Udns
+
 type rank =
   | ZoneFile
   | ZoneTransfer
@@ -40,15 +42,15 @@ let pp_rank ppf r = Fmt.string ppf (match r with
     | Additional -> "additional data")
 
 type res =
-  | NoErr of Udns.Map.b
-  | NoData of Domain_name.t * (int32 * Udns.Soa.t)
-  | NoDom of Domain_name.t * (int32 * Udns.Soa.t)
-  | ServFail of Domain_name.t * (int32 * Udns.Soa.t)
+  | NoErr of Umap.b
+  | NoData of Domain_name.t * (int32 * Soa.t)
+  | NoDom of Domain_name.t * (int32 * Soa.t)
+  | ServFail of Domain_name.t * (int32 * Soa.t)
 
 let decrease_ttl amount = function
   | NoErr b ->
-    let ttl = Int32.sub (Udns.Map.get_ttl b) amount in
-    if ttl < 0l then None else Some (NoErr (Udns.Map.with_ttl b ttl))
+    let ttl = Int32.sub (Umap.get_ttl b) amount in
+    if ttl < 0l then None else Some (NoErr (Umap.with_ttl b ttl))
   | NoData (name, (ttl, soa)) ->
     let ttl = Int32.sub ttl amount in
     if ttl < 0l then None else Some (NoData (name, (ttl, soa)))
@@ -61,15 +63,15 @@ let decrease_ttl amount = function
 
 let smooth_ttl maximum = function
   | NoErr b ->
-    let ttl = Udns.Map.get_ttl b in
-    NoErr (Udns.Map.with_ttl b (min maximum ttl))
+    let ttl = Umap.get_ttl b in
+    NoErr (Umap.with_ttl b (min maximum ttl))
   | NoData (name, (ttl, soa)) -> NoData (name, (min maximum ttl, soa))
   | NoDom (name, (ttl, soa)) -> NoDom (name, (min maximum ttl, soa))
   | ServFail (name, (ttl, soa)) -> ServFail (name, (min maximum ttl, soa))
 
 let to_map =
   let doit name soa =
-    Domain_name.Map.singleton name Udns.Map.(singleton Soa soa)
+    Domain_name.Map.singleton name Umap.(singleton Soa soa)
   in
   function
   | NoErr _ -> assert false
@@ -78,8 +80,8 @@ let to_map =
   | ServFail (name, soa) -> doit name soa
 
 let pp_res ppf = function
-  | NoErr rr -> Fmt.pf ppf "NoError %a" Udns.Map.pp_b rr
-  | NoData (name, (ttl, soa)) -> Fmt.pf ppf "NoData (NoError) %a TTL %lu %a" Domain_name.pp name ttl Udns.Soa.pp soa
-  | NoDom (name, (ttl, soa)) -> Fmt.pf ppf "NXDomain %a TTL %lu %a" Domain_name.pp name ttl Udns.Soa.pp soa
-  | ServFail (name, (ttl, soa)) -> Fmt.pf ppf "servfail %a TTL %lu %a" Domain_name.pp name ttl Udns.Soa.pp soa
+  | NoErr rr -> Fmt.pf ppf "NoError %a" Umap.pp_b rr
+  | NoData (name, (ttl, soa)) -> Fmt.pf ppf "NoData (NoError) %a TTL %lu %a" Domain_name.pp name ttl Soa.pp soa
+  | NoDom (name, (ttl, soa)) -> Fmt.pf ppf "NXDomain %a TTL %lu %a" Domain_name.pp name ttl Soa.pp soa
+  | ServFail (name, (ttl, soa)) -> Fmt.pf ppf "servfail %a TTL %lu %a" Domain_name.pp name ttl Soa.pp soa
 

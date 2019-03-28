@@ -1,12 +1,14 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
+open Udns
+
 (* The cache (a Map!?) for answers: once a specific type/name comes in, we know
    which questions can progress now *)
-module QM = Map.Make(Udns.Question)
+module QM = Map.Make(Question)
 
 type awaiting =
-  int64 * int * Udns.proto * Domain_name.t * Udns.Edns.t option
-                * Ipaddr.V4.t * int * Udns.Question.t * int
+  int64 * int * proto * Domain_name.t * Edns.t option
+                * Ipaddr.V4.t * int * Question.t * int
 
 open Rresult.R.Infix
 
@@ -78,8 +80,8 @@ let pick rng = function
   | xs -> Some (List.nth xs (Randomconv.int ~bound:(List.length xs) rng))
 
 let header id =
-  let flags = Udns.Header.FS.empty in
-  { Udns.Header.id ; query = true ; operation = Udns_enum.Query ; rcode = Udns_enum.NoError ;
+  let flags = Header.FS.empty in
+  { Header.id ; query = true ; operation = Udns_enum.Query ; rcode = Udns_enum.NoError ;
     flags }
 
 let build_query ?id ?(recursion_desired = false) t ts proto q retry zone edns ip =
@@ -87,14 +89,14 @@ let build_query ?id ?(recursion_desired = false) t ts proto q retry zone edns ip
   let header =
     let hdr = header id in
     (* TODO not clear about this.. *)
-    let flags = Udns.Header.FS.add `Recursion_desired hdr.Udns.Header.flags in
-    { hdr with Udns.Header.flags }
+    let flags = Header.FS.add `Recursion_desired hdr.Header.flags in
+    { hdr with Header.flags }
   in
-  let query = `Query (Udns.query q) in
+  let query = `Query (Packet.Query.query q) in
   let el = (ts, retry, proto, zone, edns, ip, 53, q, id) in
   let transit =
     if QM.mem q t.transit then
-      Logs.warn (fun m -> m "overwriting transit of %a" Udns.Question.pp q) ;
+      Logs.warn (fun m -> m "overwriting transit of %a" Question.pp q) ;
     QM.add q el t.transit
   in
   transit, header, query
@@ -106,15 +108,15 @@ let maybe_query ?recursion_desired t ts retry out ip typ name (proto, zone, edns
     let t = { t with queried = QM.add k (await :: QM.find k t.queried) t.queried } in
     `Nothing, t
   else
-    let edns = Some (Udns.Edns.edns ())
+    let edns = Some (Edns.edns ())
     and proto = `Udp
     in
     (* TODO: is `Udp good here? *)
     let transit, hdr, packet = build_query ?recursion_desired t ts proto k retry zone edns ip in
     let t = { t with transit ; queried = QM.add k [await] t.queried } in
     Logs.debug (fun m -> m "maybe_query: query %a %a %a" Ipaddr.V4.pp ip
-                   Udns.Header.pp hdr Udns.pp_v packet) ;
-    let packet, _ = Udns.encode ?edns proto hdr packet in
+                   Header.pp hdr Packet.pp packet) ;
+    let packet, _ = Packet.encode ?edns proto hdr packet in
     `Query (packet, ip), t
 
 let was_in_transit t typ name id sender =
@@ -123,20 +125,20 @@ let was_in_transit t typ name id sender =
   | exception Not_found ->
     s := { !s with drops = succ !s.drops } ;
     Logs.warn (fun m -> m "key %a not present in set (likely retransmitted)"
-                  Udns.Question.pp key) ;
+                  Question.pp key) ;
     None, t
   | (_ts, _retry, _proto, zone, edns, o_sender, _o_port, _o_q, o_id) ->
     if Ipaddr.V4.compare sender o_sender = 0 && id = o_id then
       Some (zone, edns), QM.remove key t
     else
       (Logs.warn (fun m -> m "unsolicited reply for %a (id %d vs o_id %d, sender %a vs o_sender %a)"
-                    Udns.Question.pp key id o_id Ipaddr.V4.pp sender Ipaddr.V4.pp o_sender) ;
+                    Question.pp key id o_id Ipaddr.V4.pp sender Ipaddr.V4.pp o_sender) ;
        None, t)
 
 let find_queries t k =
   match QM.find k t with
   | exception Not_found ->
-    Logs.warn (fun m -> m "couldn't find entry %a in map" Udns.Question.pp k) ;
+    Logs.warn (fun m -> m "couldn't find entry %a in map" Question.pp k) ;
     s := { !s with drops = succ !s.drops } ;
     t, []
   | vals ->
@@ -149,16 +151,16 @@ let stats t =
                 (Udns_resolver_cache.items t.cache) (Udns_resolver_cache.capacity t.cache)) ;
   let names = fst (List.split (QM.bindings t.transit)) in
   Logs.info (fun m -> m "%d queries in transit %a" (QM.cardinal t.transit)
-                Fmt.(list ~sep:(unit "; ") Udns.Question.pp) names) ;
+                Fmt.(list ~sep:(unit "; ") Question.pp) names) ;
   let qs = List.map (fun (q, v) -> (List.length v, q)) (QM.bindings t.queried) in
   Logs.info (fun m -> m "%d queries %a" (QM.cardinal t.queried)
                 Fmt.(list ~sep:(unit "; ")
-                       (pair ~sep:(unit ": ") int Udns.Question.pp)) qs)
+                       (pair ~sep:(unit ": ") int Question.pp)) qs)
 
 let handle_query t its out ?(retry = 0) proto edns from port ts q qid =
   if Int64.sub ts its > Int64.shift_left retry_interval 2 then begin
     Logs.warn (fun m -> m "dropping q %a from %a:%d (timed out)"
-                  Udns.Question.pp q Ipaddr.V4.pp from port) ;
+                  Question.pp q Ipaddr.V4.pp from port) ;
     s := { !s with drop_timeout = succ !s.drop_timeout } ;
     `Nothing, t
   end else
@@ -167,7 +169,7 @@ let handle_query t its out ?(retry = 0) proto edns from port ts q qid =
     match r with
     | `Query _ when out >= 30 ->
       Logs.warn (fun m -> m "dropping q %a from %a:%d (already sent 30 packets)"
-                    Udns.Question.pp q Ipaddr.V4.pp from port) ;
+                    Question.pp q Ipaddr.V4.pp from port) ;
       s := { !s with drop_send = succ !s.drop_send } ;
       (* TODO reply with error! *)
       `Nothing, t
@@ -186,12 +188,12 @@ let handle_query t its out ?(retry = 0) proto edns from port ts q qid =
              max_time ; total_time = Int64.add !s.total_time time ;
            } ;
       Logs.debug (fun m -> m "answering %a after %a %d out packets: %a %a"
-                     Udns.Question.pp q
+                     Question.pp q
                      Duration.pp time out
-                     Udns.Header.pp hdr
-                     Udns.pp_v a) ;
-      let max_size, edns = Udns.Edns.reply edns in
-      let cs, _ = Udns.encode ?max_size ?edns proto hdr a in
+                     Header.pp hdr
+                     Packet.pp a) ;
+      let max_size, edns = Edns.reply edns in
+      let cs, _ = Packet.encode ?max_size ?edns proto hdr a in
       `Answer cs, t
     | `Nothing -> `Nothing, t
 
@@ -206,7 +208,7 @@ let scrub_it mode t proto zone edns ts q header query =
            Udns_resolver_cache.maybe_insert ty n ts r e t)
         t xs
     in
-    if Udns.Header.FS.mem `Truncation header.Udns.Header.flags && proto = `Udp then
+    if Header.FS.mem `Truncation header.Header.flags && proto = `Udp then
       (Logs.warn (fun m -> m "NS truncated reply, using TCP now") ;
        `Upgrade_to_tcp cache)
     else
@@ -223,18 +225,18 @@ let guard p err = if p then Ok () else Error (err ())
 let handle_primary t now ts proto sender sport header v opt tsig buf =
   (* makes only sense to ask primary for query=true since we'll never issue questions from primary *)
   let handle_inner name =
-    if not header.Udns.Header.query then
+    if not header.Header.query then
       `No
     else
       match Udns_server.Primary.handle_frame t ts sender sport proto name header v with
       | Ok (_, None, _, _) -> `None (* incoming notifications are never replied to *)
       | Ok (t, Some (header, v'), _, _) ->
           (* delegation if authoritative is not set! *)
-          if Udns.Header.FS.mem `Authoritative header.Udns.Header.flags then begin
+          if Header.FS.mem `Authoritative header.Header.flags then begin
             s := { !s with authoritative = succ !s.authoritative } ;
-            let max_size, edns = Udns.Edns.reply opt in
-            Logs.debug (fun m -> m "authoritative reply %a %a" Udns.Header.pp header Udns.pp_v v) ;
-            let out = Udns.encode ?max_size ?edns proto header v' in
+            let max_size, edns = Edns.reply opt in
+            Logs.debug (fun m -> m "authoritative reply %a %a" Header.pp header Packet.pp v) ;
+            let out = Packet.encode ?max_size ?edns proto header v' in
             `Reply (t, out)
           end else begin
             s := { !s with delegation = succ !s.delegation } ;
@@ -269,7 +271,7 @@ let handle_awaiting_queries ?retry t ts q =
   let queried, values = find_queries t.queried q in
   let t = { t with queried } in
   List.fold_left (fun (t, out_a, out_q) (old_ts, out, proto, _, edns, from, port, q, qid) ->
-      Logs.debug (fun m -> m "now querying %a" Udns.Question.pp q) ;
+      Logs.debug (fun m -> m "now querying %a" Question.pp q) ;
       match handle_query ?retry t old_ts out proto edns from port ts q qid with
       | `Nothing, t -> t, out_a, out_q
       | `Query (pkt, dst), t -> t, out_a, (`Udp, dst, pkt) :: out_q
@@ -277,20 +279,20 @@ let handle_awaiting_queries ?retry t ts q =
     (t, [], []) values
 
 let resolve t ts proto sender sport header v opt =
-  let id = header.Udns.Header.id
+  let id = header.Header.id
   and error rcode =
     s := { !s with errors = succ !s.errors } ;
-    let header = { header with Udns.Header.query = not header.Udns.Header.query } in
-    match Udns.error header v rcode with
+    let header = { header with Header.query = not header.Header.query } in
+    match Packet.error header v rcode with
     | None -> None
     | Some (cs, _) -> Some cs
   in
   match v with
   | `Query query ->
-    let q = query.Udns.question in
-    Logs.info (fun m -> m "resolving %a %a" Udns.Header.pp header
-                  Udns.Question.pp q) ;
-    if not (Udns.Header.FS.mem `Recursion_desired header.Udns.Header.flags) then
+    let q = query.Packet.Query.question in
+    Logs.info (fun m -> m "resolving %a %a" Header.pp header
+                  Question.pp q) ;
+    if not (Header.FS.mem `Recursion_desired header.Header.flags) then
           Logs.warn (fun m -> m "recursion not desired") ;
         guard (List.mem (snd q) supported)
           (fun () ->
@@ -305,23 +307,23 @@ let resolve t ts proto sender sport header v opt =
           | `Query (packet, dst), t -> Ok (t, [], [ `Udp, dst, packet ])
         end
   | v ->
-    Logs.err (fun m -> m "ignoring %a %a" Udns.Header.pp header Udns.pp_v v) ;
+    Logs.err (fun m -> m "ignoring %a %a" Header.pp header Packet.pp v) ;
     Error (error Udns_enum.FormErr)
 
 let handle_reply t ts proto sender header v =
-  let id = header.Udns.Header.id
+  let id = header.Header.id
   and error rcode =
     s := { !s with errors = succ !s.errors } ;
-    let header = { header with Udns.Header.query = not header.Udns.Header.query } in
-    match Udns.error header v rcode with
+    let header = { header with Header.query = not header.Header.query } in
+    match Packet.error header v rcode with
     | None -> None
     | Some (cs, _) -> Some cs
   in
   match v with
   | `Query query ->
-    let q = query.Udns.question in
-    Logs.info (fun m -> m "handling reply %a %a" Udns.Header.pp header
-                  Udns.Question.pp q) ;
+    let q = query.Packet.Query.question in
+    Logs.info (fun m -> m "handling reply %a %a" Header.pp header
+                  Question.pp q) ;
     (* (a) first check whether frame was in transit! *)
     let r, transit = was_in_transit t.transit (snd q) (fst q) id sender in
     let t = { t with transit } in
@@ -335,9 +337,9 @@ let handle_reply t ts proto sender header v =
           s := { !s with retry_edns = succ !s.retry_edns } ;
           let transit, header, packet = build_query t ts proto q 1 zone None sender in
           Logs.debug (fun m -> m "resolve: requery without edns %a %a %a"
-                         Ipaddr.V4.pp sender Udns.Header.pp header
-                         Udns.pp_v packet) ;
-          let cs, _ = Udns.encode `Udp header packet in
+                         Ipaddr.V4.pp sender Header.pp header
+                         Packet.pp packet) ;
+          let cs, _ = Packet.encode `Udp header packet in
           ({ t with transit }, [], [ `Udp, sender, cs ])
         | `Upgrade_to_tcp cache ->
           s := { !s with tcp_upgrade = succ !s.tcp_upgrade } ;
@@ -359,9 +361,9 @@ let handle_reply t ts proto sender header v =
           let transit, header, packet = build_query ~recursion_desired t ts `Tcp q 1 zone None sender in
           Logs.debug (fun m -> m "resolve: upgrade to tcp %a %a %a"
                          Ipaddr.V4.pp sender
-                         Udns.Header.pp header
-                         Udns.pp_v packet) ;
-          let cs, _ = Udns.encode `Tcp header packet in
+                         Header.pp header
+                         Packet.pp packet) ;
+          let cs, _ = Packet.encode `Tcp header packet in
           ({ t with transit }, out_a, (`Tcp, sender, cs) :: out_q)
         | `Try_another_ns ->
           (* is this the right behaviour? by luck we'll use another path *)
@@ -372,44 +374,43 @@ let handle_reply t ts proto sender header v =
     in
     Ok r
   | v ->
-    Logs.err (fun m -> m "ignoring %a %a" Udns.Header.pp header Udns.pp_v v) ;
+    Logs.err (fun m -> m "ignoring %a %a" Header.pp header Packet.pp v) ;
     Error (error Udns_enum.FormErr)
 
 let handle_delegation t ts proto sender sport header v opt v' =
-  Logs.debug (fun m -> m "handling delegation %a (for %a)"
-                 Udns.pp_v v' Udns.pp_v v) ;
+  Logs.debug (fun m -> m "handling delegation %a (for %a)" Packet.pp v' Packet.pp v) ;
   let error rcode =
     s := { !s with errors = succ !s.errors } ;
-    let header = { header with Udns.Header.query = not header.Udns.Header.query } in
-    match Udns.error header v rcode with
+    let header = { header with Header.query = not header.Header.query } in
+    match Packet.error header v rcode with
     | None -> t, [], []
     | Some (cs, _) -> t, [ (proto, sender, sport, cs) ], []
   in
   match v with
   | `Query q ->
-    let q = q.Udns.question in
-    begin match Udns_resolver_cache.answer t.cache ts q header.Udns.Header.id with
+    let q = q.Packet.Query.question in
+    begin match Udns_resolver_cache.answer t.cache ts q header.Header.id with
       | `Query (name, cache) ->
         (* parse v', which should contain an a record ask that for the very same query! *)
         Logs.debug (fun m -> m "looking for %a" Domain_name.pp name) ;
         let t = { t with cache } in
         let ip =
           let ips = Domain_name.Map.fold (fun n rrmap ips ->
-              Logs.debug (fun m -> m "%a maybe in %a" Domain_name.pp n Udns.Map.pp rrmap) ;
-              match Udns.Map.(find A rrmap) with
+              Logs.debug (fun m -> m "%a maybe in %a" Domain_name.pp n Umap.pp rrmap) ;
+              match Umap.(find A rrmap) with
               | None -> ips
-              | Some (_, ips') -> Udns.Map.Ipv4_set.union ips ips')
-              (match v' with `Query q -> q.Udns.additional | _ -> assert false)
-              Udns.Map.Ipv4_set.empty
+              | Some (_, ips') -> Umap.Ipv4_set.union ips ips')
+              (match v' with `Query q -> q.Packet.Query.additional | _ -> assert false)
+              Umap.Ipv4_set.empty
           in
-          match pick t.rng (Udns.Map.Ipv4_set.elements ips) with
+          match pick t.rng (Umap.Ipv4_set.elements ips) with
           | None -> assert false
           | Some x -> x
         in
         Logs.debug (fun m -> m "found ip %a, maybe querying for %a (%a)"
                        Ipaddr.V4.pp ip Udns_enum.pp_rr_typ (snd q) Domain_name.pp name) ;
         (* TODO is Domain_name.root correct here? *)
-        begin match maybe_query ~recursion_desired:true t ts 0 0 ip (snd q) name (proto, Domain_name.root, opt, sender, sport, q, header.Udns.Header.id) with
+        begin match maybe_query ~recursion_desired:true t ts 0 0 ip (snd q) name (proto, Domain_name.root, opt, sender, sport, q, header.Header.id) with
           | `Nothing, t ->
             Logs.warn (fun m -> m "maybe_query for %a at %a returned nothing"
                           Domain_name.pp name Ipaddr.V4.pp ip) ;
@@ -417,35 +418,35 @@ let handle_delegation t ts proto sender sport header v opt v' =
           | `Query (cs, ip), t -> t, [], [ (`Udp, ip, cs) ]
         end
       | `Packet (header, pkt, cache) ->
-        let max_size, edns = Udns.Edns.reply opt in
+        let max_size, edns = Edns.reply opt in
         Logs.debug (fun m -> m "delegation reply from cache %a %a"
-                       Udns.Header.pp header Udns.pp_v pkt) ;
-        let pkt, _ = Udns.encode ?max_size ?edns proto header pkt in
+                       Header.pp header Packet.pp pkt) ;
+        let pkt, _ = Packet.encode ?max_size ?edns proto header pkt in
         { t with cache }, [ (proto, sender, sport, pkt) ], []
         (* send it out! we've a cache hit here! *)
     end
   | v ->
-    Logs.err (fun m -> m "ignoring %a %a" Udns.Header.pp header Udns.pp_v v) ;
+    Logs.err (fun m -> m "ignoring %a %a" Header.pp header Packet.pp v) ;
     error Udns_enum.FormErr
 
 let handle_error ?(error = Udns_enum.FormErr) proto sender sport buf =
-  match Udns.Header.decode buf with
+  match Header.decode buf with
   | Error e ->
     Logs.err (fun m -> m "couldn't parse header %a:@.%a"
-                 Udns.pp_err e Cstruct.hexdump_pp buf) ;
+                 Packet.pp_err e Cstruct.hexdump_pp buf) ;
     []
   | Ok header -> []
 (*    let empty = 
-      `Query { Udns.question = [] ; answer = [] ;
+      `Query { question = [] ; answer = [] ;
                authority = [] ; additional = [] }
-    and header = { header with Udns.Header.query = not header.Udns.Header.query }
+    and header = { header with Header.query = not header.Header.query }
     in
-    match Udns.error header empty error with
+    match error header empty error with
     | None -> []
       | Some (cs, _) -> [ (proto, sender, sport, cs) ] *)
 
 let handle t now ts query proto sender sport buf =
-  match Udns.decode buf with
+  match Packet.decode buf with
   | Error (`Bad_edns_version v) ->
     Logs.err (fun m -> m "bad edns version (from %a:%d) %u for@.%a"
                  Ipaddr.V4.pp sender sport
@@ -455,15 +456,15 @@ let handle t now ts query proto sender sport buf =
   | Error e ->
     Logs.err (fun m -> m "parse error (from %a:%d) %a for@.%a"
                  Ipaddr.V4.pp sender sport
-                 Udns.pp_err e Cstruct.hexdump_pp buf) ;
+                 Packet.pp_err e Cstruct.hexdump_pp buf) ;
     s := { !s with errors = succ !s.errors } ;
     t, handle_error proto sender sport buf, []
   | Ok (header, v, opt, tsig) ->
     Logs.info (fun m -> m "reacting to (from %a:%d) %a: %a"
                   Ipaddr.V4.pp sender sport
-                  Udns.Header.pp header
-                  Udns.pp_v v) ;
-    match header.Udns.Header.query, query with
+                  Header.pp header
+                  Packet.pp v) ;
+    match header.Header.query, query with
     | true, true ->
       begin
         match handle_primary t.primary now ts proto sender sport header v opt tsig buf with
@@ -504,11 +505,11 @@ let query_root t now proto =
   let q = (q_name, q_type)
   and id = Randomconv.int16 t.rng
   in
-  let packet = `Query (Udns.query q) in
-  let edns = Some (Udns.Edns.edns ()) in
+  let packet = `Query (Packet.Query.query q) in
+  let edns = Some (Edns.edns ()) in
   let el = (now, 0, proto, Domain_name.root, edns, ip, 53, q, id) in
   let t = { t with transit = QM.add q el t.transit ; cache } in
-  let cs, _ = Udns.encode ?edns proto (header id) packet in
+  let cs, _ = Packet.encode ?edns proto (header id) packet in
   t, (proto, ip, cs)
 
 let max_retries = 5
@@ -516,13 +517,13 @@ let max_retries = 5
 let err_retries t q_type q_name =
   let t, reqs = find_queries t (q_type, q_name) in
   t, List.fold_left (fun acc (_, _, proto, _, _, ip, port, q, qid) ->
-      Logs.debug (fun m -> m "now erroring to %a" Udns.Question.pp q) ;
-      let q = `Query (Udns.query q) in
+      Logs.debug (fun m -> m "now erroring to %a" Question.pp q) ;
+      let q = `Query (Packet.Query.query q) in
       let header =
         let h = header qid in
-        { h with Udns.Header.query = false }
+        { h with Header.query = false }
       in
-      match Udns.error header q Udns_enum.ServFail with
+      match Packet.error header q Udns_enum.ServFail with
       | None -> acc
       | Some (pkt, _) -> (proto, ip, port, pkt) :: acc)
     [] reqs

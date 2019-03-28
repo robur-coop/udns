@@ -49,7 +49,7 @@ let parse_uint32 s =
 let parse_ipv6 s =
   Ipaddr.V6.of_string_exn s
 
-open Udns.Map
+open Udns.Umap
 %}
 
 %token EOF
@@ -83,7 +83,7 @@ open Udns.Map
 %token <string> CLASS_HS
 
 %start zfile
-%type <Udns.Map.t Domain_name.Map.t> zfile
+%type <Udns.data> zfile
 
 %%
 
