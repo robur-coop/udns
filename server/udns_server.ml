@@ -272,7 +272,7 @@ let find_glue trie typ name names =
   in
   let insert_rr map typ name =
     match Udns_trie.lookupb name typ trie with
-    | Ok (v, _) -> Umap.add_entry map name v
+    | Ok (v, _) -> Umap.add_entry name v map
     | _ -> map
   in
   Domain_name.Set.fold (fun name map ->
@@ -294,7 +294,7 @@ let lookup trie hdr (name, typ) =
     let hdr = s_header hdr in
     { hdr with rcode = Udns_enum.NoError }
   in
-  let query = Packet.Query.query (name, typ) in
+  let query = Packet.Query.create (name, typ) in
   let r = match typ with
     | Udns_enum.ANY -> Udns_trie.lookup_any name trie
     | _ -> match Udns_trie.lookupb name typ trie with
@@ -323,7 +323,7 @@ let lookup trie hdr (name, typ) =
       Domain_name.Set.fold (fun name map ->
           (* TODO aaaa records! *)
           match Udns_trie.lookup_ignore name Udns_enum.A trie with
-          | Ok (Umap.(B (A, _) as v)) -> Umap.add_entry map name v
+          | Ok (Umap.(B (A, _) as v)) -> Umap.add_entry name v map
           | _ -> map)
         ns Domain_name.Map.empty
     in
@@ -600,7 +600,7 @@ let notify t l now zone soa =
                 Fmt.(list ~sep:(unit ", ") (pair ~sep:(unit ":") Ipaddr.V4.pp int))
                 (IPM.bindings ips)) ;
   let notify =
-    let question = Packet.Query.query (zone, Udns_enum.SOA) in
+    let question = Packet.Query.create (zone, Udns_enum.SOA) in
     let answer =
       Domain_name.Map.singleton zone Umap.(singleton Soa (0l, soa))
     in
@@ -794,7 +794,7 @@ module Primary = struct
     | `Notify n, true ->
       Log.warn (fun m -> m "unsolicited notify request") ;
       let reply =
-        let n = Packet.Query.query n.Packet.Query.question in
+        let n = Packet.Query.create n.Packet.Query.question in
         s_header header, `Notify n
       in
       Ok ((t, l, ns), Some reply, [], Some `Notify)
@@ -969,7 +969,7 @@ module Secondary = struct
     let id, header = header t.rng ()
     and question = (q_name, Udns_enum.SOA)
     in
-    let query = Packet.Query.query question in
+    let query = Packet.Query.create question in
     let buf, max_size = Packet.encode proto header (`Query query) in
     match maybe_sign ~max_size t name now id buf with
     | None -> None
@@ -1149,7 +1149,7 @@ module Secondary = struct
         with
         | _, None ->
           Log.err (fun m -> m "didn't receive SOA for %a from %a (answer %a)"
-                      Domain_name.pp zone Ipaddr.V4.pp ip pp_data query.Packet.Query.answer) ;
+                      Domain_name.pp zone Ipaddr.V4.pp ip Packet.pp_data query.Packet.Query.answer) ;
           Error Udns_enum.FormErr
         | Ok (_, cached_soa), Some (_, fresh) ->
           (* TODO: > with wraparound in mind *)
@@ -1252,7 +1252,7 @@ module Secondary = struct
     | `Notify n, true ->
       handle_notify t zones now ts ip n >>= fun (zones, out) ->
       let answer =
-        let n = Packet.Query.query n.question in
+        let n = Packet.Query.create n.question in
         (s_header header, `Notify n)
       in
       Ok ((t, zones), Some answer, out)

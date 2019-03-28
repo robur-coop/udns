@@ -13,7 +13,7 @@ let make_query protocol hostname
   (* SRV records: Service + Protocol are case-insensitive, see RFC2728 pg2. *)
   fun record_type ->
   let question = (hostname, Umap.k_to_rr_typ record_type) in
-  let query : Packet.Query.t = Packet.Query.query question in
+  let query : Packet.Query.t = Packet.Query.create question in
   let header = {
     Udns.Header.id = Random.int 0xffff ; (* TODO *)
     query = true ; operation = Udns_enum.Query; rcode = Udns_enum.NoError ;
@@ -66,7 +66,7 @@ let parse_response (type requested)
             R.error_msgf "Can't find relevant map in response:@ \
                           %a in [%a]"
               Domain_name.pp q_name
-              pp_data resp.answer
+              Packet.pp_data resp.answer
           ) >>= fun relevant_map ->
         begin match Umap.find state.key relevant_map with
           | Some response -> Ok response

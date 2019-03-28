@@ -399,7 +399,7 @@ let follow_cname t ts typ name b =
           `Query (alias, t)
         | Ok (NoErr ans, t) ->
           Logs.debug (fun m -> m "follow_cname: noerr, follow again") ;
-          follow t (Umap.add_entry acc alias ans) alias ans
+          follow t (Umap.add_entry alias ans acc) alias ans
         | Ok (NoDom (ttl, soa) as res, t) ->
           Logs.debug (fun m -> m "follow_cname: nodom") ;
           `NoDom ((acc, to_map res), t)
@@ -412,9 +412,9 @@ let follow_cname t ts typ name b =
           Logs.debug (fun m -> m "follow_cname: servfail") ;
           `ServFail (to_map res, t)
       end
-    | _ -> `NoError (Umap.add_entry acc name b, t)
+    | _ -> `NoError (Umap.add_entry name b acc, t)
   in
-  let initial = Umap.add_entry Domain_name.Map.empty name b in
+  let initial = Umap.add_entry name b Domain_name.Map.empty in
   follow t initial name b
 
 (*
@@ -437,7 +437,7 @@ let answer t ts (name, typ) id =
                    rcode ; flags }
     (* XXX: we should look for a fixpoint here ;) *)
     (*    and additional, t = if add then additionals t ts answer else [], t *)
-    and query = Packet.Query.query ~answer ~authority (* ~additional *) (name, typ) in
+    and query = Packet.Query.create ~answer ~authority (* ~additional *) (name, typ) in
     (header, `Query query, t)
   in
   match cached t ts typ name with

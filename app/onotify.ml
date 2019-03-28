@@ -11,8 +11,7 @@ let notify zone serial key now =
       in
       Domain_name.Map.singleton zone (Umap.singleton Umap.Soa (0l, soa))
     in
-    let query = Packet.Query.query question in
-    { query with answer }
+    Packet.Query.create ~answer question
   and header =
     let hdr = Udns_cli.dns_header (Random.int 0xFFFF) in
     { hdr with Header.operation = Udns_enum.Notify ; flags = Header.FS.singleton `Authoritative }

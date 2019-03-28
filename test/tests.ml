@@ -312,31 +312,9 @@ module Packet = struct
 
   let q_ok =
     let module M = struct
-      open Packet
       type t = Header.t * Packet.t
       let pp = Fmt.(pair Header.pp Packet.pp)
-      let equal (ah, a) (bh, b) =
-        let q_equal a b =
-          Question.compare a.Query.question b.Query.question = 0 &&
-          equal_data a.Query.answer b.Query.answer &&
-          equal_data a.Query.authority b.Query.authority &&
-          equal_data a.Query.additional b.Query.additional
-
-(*        and u_equal a b =
-          question_equal a.zone b.zone &&
-          List.length a.prereq = List.length b.prereq &&
-          List.for_all (fun a -> List.exists (prereq_equal a) b.prereq) a.prereq &&
-          List.length a.update = List.length b.update &&
-          List.for_all (fun a -> List.exists (update_equal a) b.update) a.update &&
-          List.length a.addition = List.length b.addition &&
-          List.for_all (fun a -> List.exists (rr_equal a) b.addition) a.addition *)
-        in
-        Header.compare ah bh = 0 &&
-        match a, b with
-        | `Query a, `Query b -> q_equal a b
-        | `Notify a, `Notify b -> q_equal a b
-        (*        | `Update a, `Update b -> u_equal a b*)
-        | _ -> false
+      let equal (ah, a) (bh, b) = Header.compare ah bh = 0 && Packet.equal a b
     end in
     (module M: Alcotest.TESTABLE with type t = M.t)
 
@@ -497,7 +475,7 @@ module Packet = struct
         rcode = Udns_enum.NoError ; flags }
     in
     Alcotest.(check (result q_ok p_err) "regression 1 decodes"
-                (Ok (header, `Query (Packet.Query.query (n_of_s "keys.riseup.net", Udns_enum.AAAA))))
+                (Ok (header, `Query (Packet.Query.create (n_of_s "keys.riseup.net", Udns_enum.AAAA))))
                 (decode data))
 
   let regression2 () =
@@ -618,7 +596,7 @@ module Packet = struct
       (Domain_name.of_string_exn "ns4.bbc.net.uk", Udns_enum.NS)
     in
     Alcotest.(check (result q_ok p_err) "regression 5 decodes"
-                (Ok (header, `Query (Packet.Query.query question)))
+                (Ok (header, `Query (Packet.Query.create question)))
                 (decode data))
 
 
@@ -845,7 +823,6 @@ module Packet = struct
     | Error _ -> Alcotest.fail "expected to fail with none or multiple questions"
     | Ok _ -> Alcotest.fail "got ok, expected to fail with multiple questions"
 
-  (*
   let regression7 () =
     (* encoding a remove_single in an update frame lead to wrong rdlength (off by 2) *)
     let header, update =
@@ -853,35 +830,38 @@ module Packet = struct
         let rcode = Udns_enum.NoError in
         { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
           rcode ; flags = Header.FS.empty }
-      and update = Remove_single (n_of_s "www.example.com", A Ipaddr.V4.localhost)
-      and zone = { q_name = n_of_s "example.com" ; q_type = Udns_enum.SOA }
+      and update = Domain_name.Map.singleton
+          (n_of_s "www.example.com")
+          (Packet.Update.Remove_single Umap.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))))
+      and zone = n_of_s "example.com", Udns_enum.SOA
       in
-      header, { zone ; prereq = [] ; update = [ update ] ; addition = [] }
+      header, { Packet.Update.zone ; prereq = Domain_name.Map.empty ;
+                update = update ; addition = Domain_name.Map.empty }
     in
     (* encode followed by decode should lead to same data *)
     Alcotest.(check (result q_ok p_err) "regression 7 decode encode works"
                 (Ok (header, `Update update))
-                (decode @@ fst @@ encode `Udp header (`Update update)))
+                (decode @@ fst @@ Packet.encode `Udp header (`Update update)))
 
   let regression8 () =
     (* encoding a exists_data in an update frame lead to wrong rdlength (off by 2) *)
     let header, update =
       let header =
         let rcode = Udns_enum.NoError in
-        { query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
-          authoritative = false ; truncation = false ; recursion_desired = false ;
-          recursion_available = false ; authentic_data = false ;
-          checking_disabled = false ; rcode }
-      and prereq = Exists_data (n_of_s "www.example.com", A Ipaddr.V4.localhost)
-      and zone = { q_name = n_of_s "example.com" ; q_type = Udns_enum.SOA }
+        { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
+          rcode ; flags = Header.FS.empty }
+      and prereq =
+        Domain_name.Map.singleton (n_of_s "www.example.com")
+          (Packet.Update.Exists_data Umap.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))))
+      and zone = (n_of_s "example.com", Udns_enum.SOA)
       in
-      header, { zone ; prereq = [ prereq ] ; update = [] ; addition = [] }
+      header, Packet.Update.create ~prereq zone
     in
     (* encode followed by decode should lead to same data *)
     Alcotest.(check (result q_ok p_err) "regression 8 decode encode works"
                 (Ok (header, `Update update))
-                (decode @@ fst @@ encode `Udp header (`Update update)))
-*)
+                (decode @@ fst @@ Packet.encode `Udp header (`Update update)))
+
   let code_tests = [
     "basic header", `Quick, basic_header ;
     "bad query", `Quick, bad_query ;
@@ -892,8 +872,8 @@ module Packet = struct
     (* "regression4", `Quick, regression4 ; *)
     "regression5", `Quick, regression5 ;
     "regression6", `Quick, regression6 ;
-(*    "regression7", `Quick, regression7 ;
-      "regression8", `Quick, regression8 ; *)
+    "regression7", `Quick, regression7 ;
+    "regression8", `Quick, regression8 ;
   ]
 end
 

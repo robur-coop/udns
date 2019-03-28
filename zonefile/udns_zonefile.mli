@@ -16,5 +16,5 @@
  *
  *)
 
-val load : string list -> string -> (Udns.data, string) result
+val load : string list -> string -> (Udns.Packet.data, string) result
 (** Load a domain's zone from a string. *)

@@ -294,6 +294,9 @@ module Umap : sig
 
   (** {2 Conversion functions} *)
 
+  val to_rr_typ : b -> Udns_enum.rr_typ
+  (** [to_rr_typ b] is the resource record typ of [b]. *)
+
   val k_to_rr_typ : 'a k -> Udns_enum.rr_typ
   (** [k_to_rr_typ k] is the resource record typ of [k]. *)
 
@@ -326,7 +329,7 @@ module Umap : sig
   val get_ttl : b -> int32
   val with_ttl : b -> int32 -> b
 
-  val add_entry : t Domain_name.Map.t -> Domain_name.t -> b -> t Domain_name.Map.t
+  val add_entry : Domain_name.t -> b -> t Domain_name.Map.t -> t Domain_name.Map.t
 
   val find_entry : t Domain_name.Map.t -> Domain_name.t -> 'a k -> 'a option
 
@@ -393,14 +396,13 @@ module Question : sig
      | `UnsupportedClass of Udns_enum.clas ]) result
 end
 
-
-type data = Umap.t Domain_name.Map.t
-
-val equal_data : data -> data -> bool
-
-val pp_data : data Fmt.t
-
 module Packet : sig
+
+  type data = Umap.t Domain_name.Map.t
+
+  val equal_data : data -> data -> bool
+
+  val pp_data : data Fmt.t
 
   module Query : sig
 
@@ -411,9 +413,11 @@ module Packet : sig
       additional : data ;
     }
 
-    val query : ?answer:data -> ?authority:data -> ?additional:data -> Question.t -> t
+    val create : ?answer:data -> ?authority:data -> ?additional:data -> Question.t -> t
 
     val pp : t Fmt.t
+
+    val equal : t -> t -> bool
   end
 
   module Axfr : sig
@@ -424,6 +428,8 @@ module Packet : sig
     }
 
     val pp : t Fmt.t
+
+    val equal : t -> t -> bool
   end
 
   module Update : sig
@@ -435,11 +441,17 @@ module Packet : sig
       | Name_inuse
       | Not_name_inuse
 
+    val pp_prereq : prereq Fmt.t
+    val equal_prereq : prereq -> prereq -> bool
+
     type update =
       | Remove of Udns_enum.rr_typ
       | Remove_all
       | Remove_single of Umap.b
       | Add of Umap.b
+
+    val pp_update : update Fmt.t
+    val equal_update : update -> update -> bool
 
     type t = {
       zone : Question.t ;
@@ -448,7 +460,13 @@ module Packet : sig
       addition : data ;
     }
 
+    val create : ?prereq:prereq Domain_name.Map.t ->
+      ?update:update Domain_name.Map.t ->
+      ?addition:data -> Question.t -> t
+
     val pp : t Fmt.t
+
+    val equal : t -> t -> bool
   end
 
   type t = [
@@ -459,6 +477,8 @@ module Packet : sig
   ]
 
   val pp : t Fmt.t
+
+  val equal : t -> t -> bool
 
   type res = Header.t * t * Edns.t option * (Domain_name.t * Tsig.t * int) option
 

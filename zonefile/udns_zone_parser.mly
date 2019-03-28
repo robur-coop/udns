@@ -83,7 +83,7 @@ open Udns.Umap
 %token <string> CLASS_HS
 
 %start zfile
-%type <Udns.data> zfile
+%type <Udns.Packet.data> zfile
 
 %%
 
@@ -103,11 +103,11 @@ origin: SORIGIN s domain { state.origin <- $3 }
 ttl: STTL s int32 { state.ttl <- $3 }
 
 rrline:
-   owner s int32 s rrclass s rr { state.zone <- add_entry state.zone $1 (with_ttl $7 $3) }
- | owner s rrclass s int32 s rr { state.zone <- add_entry state.zone $1 (with_ttl $7 $5) }
- | owner s rrclass s rr { state.zone <- add_entry state.zone $1 (with_ttl $5 state.ttl) }
- | owner s int32 s rr { state.zone <- add_entry state.zone $1 (with_ttl $5 $3) }
- | owner s rr { state.zone <- add_entry state.zone $1 (with_ttl $3 state.ttl) }
+   owner s int32 s rrclass s rr { state.zone <- add_entry $1 (with_ttl $7 $3) state.zone }
+ | owner s rrclass s int32 s rr { state.zone <- add_entry $1 (with_ttl $7 $5) state.zone  }
+ | owner s rrclass s rr { state.zone <- add_entry $1 (with_ttl $5 state.ttl) state.zone }
+ | owner s int32 s rr { state.zone <- add_entry $1 (with_ttl $5 $3) state.zone }
+ | owner s rr { state.zone <- add_entry $1 (with_ttl $3 state.ttl) state.zone }
 
 rrclass:
    CLASS_IN {}

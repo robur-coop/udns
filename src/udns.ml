@@ -1068,10 +1068,10 @@ module Umap = struct
     | Tlsa -> Udns_enum.TLSA
     | Sshfp -> Udns_enum.SSHFP
 
-  let encode : type a. Domain_name.t -> a k -> a -> Name.name_offset_map -> Cstruct.t -> int ->
-    (Name.name_offset_map * int) * int = fun name k v offs buf off ->
+  let encode : type a. ?clas:Udns_enum.clas -> Domain_name.t -> a k -> a -> Name.name_offset_map -> Cstruct.t -> int ->
+    (Name.name_offset_map * int) * int = fun ?(clas = Udns_enum.IN) name k v offs buf off ->
     let typ = k_to_rr_typ k
-    and clas = Udns_enum.clas_to_int Udns_enum.IN
+    and clas = Udns_enum.clas_to_int clas
     in
     let rr offs f off ttl =
       let offs', off' = encode_ntc offs buf off (name, typ, clas) in
@@ -1365,6 +1365,8 @@ module Umap = struct
 
   let names_b (B (k, v)) = names k v
 
+  let to_rr_typ (B (k, _)) = k_to_rr_typ k
+
   let lookup_rr : Udns_enum.rr_typ -> t -> b option = fun rr t ->
     match rr with
     | Udns_enum.MX -> findb Mx t
@@ -1450,7 +1452,7 @@ module Umap = struct
     guard (len = rdata_end - rdata_start) `LeftOver >>| fun () ->
     (b, names, rdata_end)
 
-  let add_entry dmap name (B (k, v)) =
+  let add_entry name (B (k, v)) dmap =
     let m = match Domain_name.Map.find name dmap with
       | None -> empty
       | Some map -> map
@@ -1657,17 +1659,16 @@ module Question = struct
     encode_ntc offs buf off (name, typ, Udns_enum.clas_to_int Udns_enum.IN)
 end
 
-
-type data = Umap.t Domain_name.Map.t
-
-let equal_data a b =
-  Domain_name.Map.equal (Umap.equal Umap.equal_b) a b
-
-let pp_data ppf map =
-  Fmt.(list ~sep:(unit ";@ ") (pair ~sep:(unit " ") Domain_name.pp Umap.pp))
-    ppf (Domain_name.Map.bindings map)
-
 module Packet = struct
+
+  type data = Umap.t Domain_name.Map.t
+
+  let equal_data a b =
+    Domain_name.Map.equal (Umap.equal Umap.equal_b) a b
+
+  let pp_data ppf map =
+    Fmt.(list ~sep:(unit ";@ ") (pair ~sep:(unit " ") Domain_name.pp Umap.pp))
+      ppf (Domain_name.Map.bindings map)
 
   let encode_data map offs buf off =
     Domain_name.Map.fold (fun name rrmap acc ->
@@ -1684,19 +1685,19 @@ module Packet = struct
     Umap.decode names buf off typ >>| fun (b, names, off) ->
     (name, b, names, off)
 
-  let rec decode_n names buf off acc = function
+  let rec decode_n add f names buf off acc = function
     | 0 -> Ok (names, off, acc)
-    | n -> match decode_rr names buf off with
+    | n -> match f names buf off with
       | Ok (name, b, names, off') ->
-        let acc' = Umap.add_entry acc name b in
-        decode_n names buf off' acc' (pred n)
+        let acc' = add name b acc in
+        decode_n add f names buf off' acc' (pred n)
       | Error e -> Error e
 
   let rec decode_n_partial names buf off acc = function
     | 0 -> Ok (`Full (names, off, acc))
     | n -> match decode_rr names buf off with
       | Ok (name, b, names, off') ->
-        let acc' = Umap.add_entry acc name b in
+        let acc' = Umap.add_entry name b acc in
         decode_n_partial names buf off' acc' (pred n)
       | Error `Partial -> Ok (`Partial acc)
       | Error e -> Error e
@@ -1716,7 +1717,7 @@ module Packet = struct
     | _ ->
       guard (clas = Udns_enum.(clas_to_int IN)) (`BadClass clas) >>= fun () ->
       Umap.decode names buf off' typ >>| fun (b, names, off') ->
-      (Umap.add_entry map name b, edns, None), names, off'
+      (Umap.add_entry name b map, edns, None), names, off'
 
   let rec decode_n_additional names buf off map edns tsig = function
     | 0 -> Ok (off, map, edns, tsig)
@@ -1750,8 +1751,14 @@ module Packet = struct
       additional : data ;
     }
 
-    let query ?(answer = Domain_name.Map.empty) ?(authority = Domain_name.Map.empty) ?(additional = Domain_name.Map.empty) question =
+    let create ?(answer = Domain_name.Map.empty) ?(authority = Domain_name.Map.empty) ?(additional = Domain_name.Map.empty) question =
       { question ; answer ; authority ; additional }
+
+    let equal a b =
+      Question.compare a.question b.question = 0 &&
+      equal_data a.answer b.answer &&
+      equal_data a.authority b.authority &&
+      equal_data a.additional b.additional
 
     let pp ppf t =
       Fmt.pf ppf "question %a@ answer %a@ authority %a@ additional %a"
@@ -1766,7 +1773,7 @@ module Packet = struct
       and adcount = Cstruct.BE.get_uint16 buf 10
       in
       let empty = Domain_name.Map.empty in
-      let query = query question in
+      let query = create question in
       decode_n_partial names buf off empty ancount >>= function
       | `Partial answer ->
         guard truncated `Partial >>| fun () -> { query with answer }, None, None
@@ -1839,6 +1846,10 @@ module Packet = struct
       entries : data ;
     }
 
+    let equal a b =
+      Soa.compare (snd a.soa) (snd b.soa) = 0 &&
+      equal_data a.entries b.entries
+
     let pp ppf axfr =
       Fmt.pf ppf "soa %a data %a" Soa.pp (snd axfr.soa) pp_data axfr.entries
 
@@ -1865,7 +1876,7 @@ module Packet = struct
          (* TODO: verify name == zname in question, also all RR sub of zname *)
          match k, v with
          | Soa, (ttl, soa) ->
-           decode_n names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
+           decode_n Umap.add_entry decode_rr names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
            decode_rr names buf off >>= fun (name', B (k', v'), names, off) ->
            begin
              match k', v' with
@@ -1899,7 +1910,7 @@ module Packet = struct
         (* serialise: SOA .. other data .. SOA *)
         let (offs, off), _ = Umap.encode (fst question) Soa axfr.soa offs buf off in
         let (offs, off), count = encode_data axfr.entries offs buf off in
-        let (offs, off), _ = Umap.encode (fst question) Soa axfr.soa offs buf off in
+        let (_offs, off), _ = Umap.encode (fst question) Soa axfr.soa offs buf off in
         Cstruct.BE.set_uint16 buf 6 (count + 2) ;
         off
 
@@ -1914,6 +1925,14 @@ module Packet = struct
       | Name_inuse
       | Not_name_inuse
 
+    let equal_prereq a b = match a, b with
+      | Exists t, Exists t' -> int_compare (Udns_enum.rr_typ_to_int t) (Udns_enum.rr_typ_to_int t') = 0
+      | Exists_data b, Exists_data b' -> Umap.equal_b b b'
+      | Not_exists t, Not_exists t' -> int_compare (Udns_enum.rr_typ_to_int t) (Udns_enum.rr_typ_to_int t') = 0
+      | Name_inuse, Name_inuse -> true
+      | Not_name_inuse, Not_name_inuse -> true
+      | _ -> false
+
     let pp_prereq ppf = function
       | Exists typ -> Fmt.pf ppf "exists? %a" Udns_enum.pp_rr_typ typ
       | Exists_data rd -> Fmt.pf ppf "exists data? %a" Umap.pp_b rd
@@ -1921,17 +1940,120 @@ module Packet = struct
       | Name_inuse -> Fmt.string ppf "name inuse?"
       | Not_name_inuse -> Fmt.string ppf "name not inuse?"
 
+    let decode_prereq names buf off =
+      let open Rresult.R.Infix in
+      decode_ntc names buf off >>= fun ((name, typ, cls), names, off) ->
+      let off' = off + 6 in
+      guard (Cstruct.len buf >= off') `Partial >>= fun () ->
+      let ttl = Cstruct.BE.get_uint32 buf off in
+      guard (ttl = 0l) (`NonZeroTTL ttl) >>= fun () ->
+      let rlen = Cstruct.BE.get_uint16 buf (off + 4) in
+      let r0 = guard (rlen = 0) (`NonZeroRdlen rlen) in
+      let open Udns_enum in
+      match int_to_clas cls, typ with
+      | Some ANY_CLASS, ANY -> r0 >>= fun () -> Ok (name, Name_inuse, names, off')
+      | Some NONE, ANY -> r0 >>= fun () -> Ok (name, Not_name_inuse, names, off')
+      | Some ANY_CLASS, _ -> r0 >>= fun () -> Ok (name, Exists typ, names, off')
+      | Some NONE, _ -> r0 >>= fun () -> Ok (name, Not_exists typ, names, off')
+      | Some IN, _ ->
+        Umap.decode names buf off typ >>= fun (rdata, names, off'') ->
+        Ok (name, Exists_data rdata, names, off'')
+      | _ -> Error (`BadClass cls)
+
+    let encode_prereq offs buf off count name = function
+      | Exists typ ->
+        let offs, off =
+          encode_ntc offs buf off (name, typ, Udns_enum.(clas_to_int ANY_CLASS))
+        in
+        (* ttl + rdlen, both 0 *)
+        (offs, off + 6), succ count
+      | Exists_data (B (k, v)) ->
+        let ret, count' = Umap.encode name k v offs buf off in
+        ret, count' + count
+      | Not_exists typ ->
+        let offs, off =
+          encode_ntc offs buf off (name, typ, Udns_enum.(clas_to_int NONE))
+        in
+        (* ttl + rdlen, both 0 *)
+        (offs, off + 6), succ count
+      | Name_inuse ->
+        let offs, off =
+          encode_ntc offs buf off Udns_enum.(name, ANY, clas_to_int ANY_CLASS)
+        in
+        (* ttl + rdlen, both 0 *)
+        (offs, off + 6), succ count
+      | Not_name_inuse ->
+        let offs, off =
+          encode_ntc offs buf off Udns_enum.(name, ANY, clas_to_int NONE)
+        in
+        (* ttl + rdlen, both 0 *)
+        (offs, off + 6), succ count
+
     type update =
       | Remove of Udns_enum.rr_typ
       | Remove_all
       | Remove_single of Umap.b
       | Add of Umap.b
 
+    let equal_update a b = match a, b with
+      | Remove t, Remove t' -> int_compare (Udns_enum.rr_typ_to_int t) (Udns_enum.rr_typ_to_int t') = 0
+      | Remove_all, Remove_all -> true
+      | Remove_single b, Remove_single b' -> Umap.equal_b b b'
+      | Add b, Add b' -> Umap.equal_b b b'
+      | _ -> false
+
     let pp_update ppf = function
       | Remove typ -> Fmt.pf ppf "remove! %a" Udns_enum.pp_rr_typ typ
       | Remove_all -> Fmt.string ppf "remove all!"
       | Remove_single rd -> Fmt.pf ppf "remove single! %a" Umap.pp_b rd
       | Add rr -> Fmt.pf ppf "add! %a" Umap.pp_b rr
+
+    let decode_update names buf off =
+      let open Rresult.R.Infix in
+      decode_ntc names buf off >>= fun ((name, typ, cls), names, off) ->
+      let off' = off + 6 in
+      guard (Cstruct.len buf >= off') `Partial >>= fun () ->
+      let ttl = Cstruct.BE.get_uint32 buf off in
+      let rlen = Cstruct.BE.get_uint16 buf (off + 4) in
+      let r0 = guard (rlen = 0) (`NonZeroRdlen rlen) in
+      let ttl0 = guard (ttl = 0l) (`NonZeroTTL ttl) in
+      match Udns_enum.int_to_clas cls, typ with
+      | Some Udns_enum.ANY_CLASS, Udns_enum.ANY ->
+        ttl0 >>= fun () ->
+        r0 >>= fun () ->
+        Ok (name, Remove_all, names, off')
+      | Some Udns_enum.ANY_CLASS, _ ->
+        ttl0 >>= fun () ->
+        r0 >>= fun () ->
+        Ok (name, Remove typ, names, off')
+      | Some Udns_enum.NONE, _ ->
+        ttl0 >>= fun () ->
+        Umap.decode names buf off typ >>= fun (rdata, names, off) ->
+        Ok (name, Remove_single rdata, names, off)
+      | Some Udns_enum.IN, _ ->
+        Umap.decode names buf off typ >>= fun (rdata, names, off) ->
+        Ok (name, Add rdata, names, off)
+      | _ -> Error (`BadClass cls)
+
+    let encode_update offs buf off count name = function
+      | Remove typ ->
+        let offs, off =
+          encode_ntc offs buf off (name, typ, Udns_enum.(clas_to_int ANY_CLASS))
+        in
+        (* ttl + rdlen, both 0 *)
+        (offs, off + 6), succ count
+      | Remove_all ->
+        let offs, off =
+          encode_ntc offs buf off Udns_enum.(name, ANY, clas_to_int ANY_CLASS)
+        in
+        (* ttl + rdlen, both 0 *)
+        (offs, off + 6), succ count
+      | Remove_single (B (k, v)) ->
+        let ret, count' = Umap.encode ~clas:Udns_enum.NONE name k v offs buf off in
+        ret, count + count'
+      | Add (B (k, v)) ->
+        let ret, count' = Umap.encode name k v offs buf off in
+        ret, count + count'
 
     type t = {
       zone : Question.t ;
@@ -1940,6 +2062,16 @@ module Packet = struct
       addition : data ;
     }
 
+    let create ?(prereq = Domain_name.Map.empty) ?(update = Domain_name.Map.empty)
+        ?(addition = Domain_name.Map.empty) zone =
+      { zone ; prereq ; update ; addition }
+
+    let equal t t' =
+      Question.compare t.zone t'.zone = 0 &&
+      Domain_name.Map.equal equal_prereq t.prereq t'.prereq &&
+      Domain_name.Map.equal equal_update t.update t'.update &&
+      equal_data t.addition t'.addition
+
     let pp ppf t =
       Fmt.pf ppf "%a@ %a@ %a@ %a"
         Question.pp t.zone
@@ -1947,6 +2079,34 @@ module Packet = struct
         Fmt.(list ~sep:(unit ";@ ") (pair ~sep:(unit ":") Domain_name.pp pp_update)) (Domain_name.Map.bindings t.update)
         pp_data t.addition
 
+    let decode header zone buf names off =
+      let open Rresult.R.Infix in
+      let prcount = Cstruct.BE.get_uint16 buf 6
+      and upcount = Cstruct.BE.get_uint16 buf 8
+      and adcount = Cstruct.BE.get_uint16 buf 10
+      in
+      guard (snd zone = Udns_enum.SOA) (`InvalidZoneRR (snd zone)) >>= fun () ->
+      decode_n Domain_name.Map.add decode_prereq names buf off Domain_name.Map.empty prcount >>= fun (namess, off, prereq) ->
+      decode_n Domain_name.Map.add decode_update names buf off Domain_name.Map.empty upcount >>= fun (ns, off, update) ->
+      decode_n_additional names buf off Domain_name.Map.empty None None adcount >>= fun (off, addition, edns, tsig) ->
+      guard (Cstruct.len buf = off) `LeftOver >>= fun () ->
+      Ok ({ zone ; prereq ; update ; addition }, edns, tsig)
+
+    let encode_map map f offs buf off =
+      Domain_name.Map.fold (fun name v ((offs, off), count) ->
+          f offs buf off count name v)
+        map ((offs, off), 0)
+
+    let encode buf t =
+      let offs, off = Question.encode Domain_name.Map.empty buf Header.len t.zone in
+      Cstruct.BE.set_uint16 buf 4 1 ;
+      let (offs, off), prereq_count = encode_map t.prereq encode_prereq offs buf off in
+      Cstruct.BE.set_uint16 buf 6 prereq_count ;
+      let (offs, off), update_count = encode_map t.update encode_update offs buf off in
+      Cstruct.BE.set_uint16 buf 8 update_count ;
+      let (_offs, off), ad_count = encode_data t.addition offs buf off in
+      Cstruct.BE.set_uint16 buf 10 ad_count ;
+      off
   end
 
   type t = [
@@ -1955,6 +2115,18 @@ module Packet = struct
     | `Axfr of Question.t * Axfr.t option
     | `Update of Update.t
   ]
+
+  let equal a b = match a, b with
+    | `Update u, `Update u' -> Update.equal u u'
+    | `Query q, `Query q' -> Query.equal q q'
+    | `Notify n, `Notify n' -> Query.equal n n'
+    | `Axfr (q, axfr), `Axfr (q', axfr') ->
+      begin Question.compare q q' = 0 && match axfr, axfr' with
+        | None, None -> true
+        | Some a, Some b -> Axfr.equal a b
+        | _ -> false
+      end
+    | _ -> false
 
   let pp ppf = function
     | `Query q -> Query.pp ppf q
@@ -2076,7 +2248,10 @@ module Packet = struct
       Query.decode hdr question buf names off >>= fun (n, edns, tsig) ->
       ext_rcode hdr edns >>| fun hdr ->
       hdr, `Notify n, edns, tsig
-    | Udns_enum.Update -> assert false
+    | Udns_enum.Update ->
+      Update.decode hdr question buf names off >>= fun (u, edns, tsig) ->
+      ext_rcode hdr edns >>| fun hdr ->
+      hdr, `Update u, edns, tsig
     | x -> Error (`UnsupportedOpcode x)
 
   let max_udp = 1484 (* in MirageOS. using IPv4 this is max UDP payload via ethernet *)
@@ -2105,7 +2280,7 @@ module Packet = struct
     | `Query q -> Query.encode buf q
     | `Notify n -> Query.encode buf n
     | `Axfr data -> Axfr.encode buf data
-    | `Update u -> assert false
+    | `Update u -> Update.encode buf u
 
   let encode_edns hdr edns buf off = match edns with
     | None -> off
@@ -2156,7 +2331,7 @@ module Packet = struct
         | `Query q | `Notify q -> q.Query.question
       in
       let errbuf = Cstruct.create max_reply_udp in
-      let query = Query.query question in
+      let query = Query.create question in
       Header.encode errbuf header ;
       let encode query =
         let off = Query.encode errbuf query in

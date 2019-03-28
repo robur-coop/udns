@@ -186,7 +186,7 @@ let collect_entries name sub map =
   | Some soa ->
     let entries = collect_rrs name sub map in
     let map = List.fold_left (fun acc (name, b) ->
-        Umap.add_entry acc name b) Domain_name.Map.empty entries
+        Umap.add_entry name b acc) Domain_name.Map.empty entries
     in
     Ok (soa, map)
 

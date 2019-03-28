@@ -3,6 +3,8 @@
 open Udns_resolver_entry
 open Udns_resolver_cache
 
+open Udns
+
 let empty = empty 100
 
 let ip = Ipaddr.V4.of_string_exn
@@ -20,34 +22,34 @@ let rng i = Cstruct.create i
 let follow_res =
   let module M = struct
     type t =
-      [ `Cycle of Udns.Map.t Domain_name.Map.t * Udns_resolver_cache.t
-      | `NoData of (Udns.Map.t Domain_name.Map.t * Udns.Map.t Domain_name.Map.t) * Udns_resolver_cache.t
-      | `NoDom of (Udns.Map.t Domain_name.Map.t * Udns.Map.t Domain_name.Map.t) * Udns_resolver_cache.t
-      | `NoError of Udns.Map.t Domain_name.Map.t * Udns_resolver_cache.t
+      [ `Cycle of Umap.t Domain_name.Map.t * Udns_resolver_cache.t
+      | `NoData of (Umap.t Domain_name.Map.t * Umap.t Domain_name.Map.t) * Udns_resolver_cache.t
+      | `NoDom of (Umap.t Domain_name.Map.t * Umap.t Domain_name.Map.t) * Udns_resolver_cache.t
+      | `NoError of Umap.t Domain_name.Map.t * Udns_resolver_cache.t
       | `Query of Domain_name.t * Udns_resolver_cache.t
-      | `ServFail of Udns.Map.t Domain_name.Map.t * Udns_resolver_cache.t
+      | `ServFail of Umap.t Domain_name.Map.t * Udns_resolver_cache.t
       ]
       let pp ppf = function
-        | `Cycle (rrs, _) -> Fmt.pf ppf "cycle %a" Udns.pp_map rrs
-        | `NoData ((rrs, soa), _) -> Fmt.pf ppf "nodata %a, soa %a" Udns.pp_map rrs Udns.pp_map soa
-        | `NoDom ((rrs, soa), _) -> Fmt.pf ppf "nodom %a, soa %a" Udns.pp_map rrs Udns.pp_map soa
-        | `NoError (rrs, _) -> Fmt.pf ppf "noerror %a" Udns.pp_map rrs
+        | `Cycle (rrs, _) -> Fmt.pf ppf "cycle %a" Packet.pp_data rrs
+        | `NoData ((rrs, soa), _) -> Fmt.pf ppf "nodata %a, soa %a" Packet.pp_data rrs Packet.pp_data soa
+        | `NoDom ((rrs, soa), _) -> Fmt.pf ppf "nodom %a, soa %a" Packet.pp_data rrs Packet.pp_data soa
+        | `NoError (rrs, _) -> Fmt.pf ppf "noerror %a" Packet.pp_data rrs
         | `Query (name, _) -> Fmt.pf ppf "query %a" Domain_name.pp name
-        | `ServFail (soa, _) -> Fmt.pf ppf "servfail %a" Udns.pp_map soa
+        | `ServFail (soa, _) -> Fmt.pf ppf "servfail %a" Packet.pp_data soa
       let equal a b = match a, b with
-        | `Cycle (rrs, _), `Cycle (rrs', _) -> Udns.equal_map rrs rrs'
-        | `NoData ((rrs, soa), _), `NoData ((rrs', soa'), _) -> Udns.equal_map rrs rrs' && Udns.equal_map soa soa'
-        | `NoDom ((rrs, soa), _), `NoDom ((rrs', soa'), _) -> Udns.equal_map rrs rrs' && Udns.equal_map soa soa'
-        | `NoError (rrs, _), `NoError (rrs', _) -> Udns.equal_map rrs rrs'
+        | `Cycle (rrs, _), `Cycle (rrs', _) -> Packet.equal_data rrs rrs'
+        | `NoData ((rrs, soa), _), `NoData ((rrs', soa'), _) -> Packet.equal_data rrs rrs' && Packet.equal_data soa soa'
+        | `NoDom ((rrs, soa), _), `NoDom ((rrs', soa'), _) -> Packet.equal_data rrs rrs' && Packet.equal_data soa soa'
+        | `NoError (rrs, _), `NoError (rrs', _) -> Packet.equal_data rrs rrs'
         | `Query (name, _), `Query (name', _) -> Domain_name.equal name name'
-        | `ServFail (soa, _), `ServFail (soa', _) -> Udns.equal_map soa soa'
+        | `ServFail (soa, _), `ServFail (soa', _) -> Packet.equal_data soa soa'
         | _, _ -> false
     end in
     (module M: Alcotest.TESTABLE with type t = M.t)
 
 let follow_cname_cycle () =
-  let circ = Udns.Map.(B (Cname, (250l, name "foo.com"))) in
-  let circ_map = Domain_name.Map.singleton (name "foo.com") Udns.Map.(addb circ empty) in
+  let circ = Umap.(B (Cname, (250l, name "foo.com"))) in
+  let circ_map = Domain_name.Map.singleton (name "foo.com") Umap.(addb circ empty) in
   let cache = maybe_insert Udns_enum.A (name "foo.com") 0L AuthoritativeAnswer (NoErr circ) empty in
   Alcotest.check follow_res "CNAME single cycle is detected"
     (`Cycle (circ_map, cache))
@@ -55,8 +57,8 @@ let follow_cname_cycle () =
   Alcotest.check follow_res "CNAME single cycle after timeout is still a cycle (how did you get the rr in the first place?)"
     (`Cycle (circ_map, cache))
     (follow_cname cache (sec 251) Udns_enum.A (name "foo.com") circ) ;
-  let a = Udns.Map.(B (Cname, (250l, name "bar.com")))
-  and b = Udns.Map.(B (Cname, (500l, name "foo.com")))
+  let a = Umap.(B (Cname, (250l, name "bar.com")))
+  and b = Umap.(B (Cname, (500l, name "foo.com")))
   in
   let cache =
     maybe_insert Udns_enum.A (name "bar.com") 0L AuthoritativeAnswer (NoErr b)
@@ -64,8 +66,8 @@ let follow_cname_cycle () =
          empty)
   in
   let c_map =
-    Domain_name.Map.add (name "bar.com") Udns.Map.(addb b empty)
-      (Domain_name.Map.singleton (name "foo.com") Udns.Map.(addb a empty))
+    Domain_name.Map.add (name "bar.com") Umap.(addb b empty)
+      (Domain_name.Map.singleton (name "foo.com") Umap.(addb a empty))
   in
   Alcotest.check follow_res "CNAME cycle is detected"
     (`Cycle (c_map, cache))
@@ -80,17 +82,17 @@ let follow_cname_tests = [
 
 let resolve_ns_ret =
   let module M = struct
-    type t = [ `NeedA of Domain_name.t | `NeedCname of Domain_name.t | `HaveIPS of Udns.Map.Ipv4_set.t | `No | `NoDom ] * Udns_resolver_cache.t
+    type t = [ `NeedA of Domain_name.t | `NeedCname of Domain_name.t | `HaveIPS of Umap.Ipv4_set.t | `No | `NoDom ] * Udns_resolver_cache.t
     let pp ppf = function
       | `NeedA nam, _ -> Fmt.pf ppf "need A of %a" Domain_name.pp nam
       | `NeedCname nam, _ -> Fmt.pf ppf "need cname of %a" Domain_name.pp nam
-      | `HaveIPS ips, _ -> Fmt.pf ppf "have IPs %a" Fmt.(list ~sep:(unit ", ") Ipaddr.V4.pp) (Udns.Map.Ipv4_set.elements ips)
+      | `HaveIPS ips, _ -> Fmt.pf ppf "have IPs %a" Fmt.(list ~sep:(unit ", ") Ipaddr.V4.pp) (Umap.Ipv4_set.elements ips)
       | `No, _ -> Fmt.string ppf "no"
       | `NoDom, _ -> Fmt.string ppf "nodom"
     let equal a b = match a, b with
       | (`NeedA n, _), (`NeedA n', _) -> Domain_name.equal n n'
       | (`NeedCname n, _), (`NeedCname n', _) -> Domain_name.equal n n'
-      | (`HaveIPS ips, _), (`HaveIPS ips', _) -> Udns.Map.Ipv4_set.equal ips ips'
+      | (`HaveIPS ips, _), (`HaveIPS ips', _) -> Umap.Ipv4_set.equal ips ips'
       | (`No, _), (`No, _) -> true
       | (`NoDom, _), (`NoDom, _) -> true
       | _, _ -> false
@@ -104,7 +106,7 @@ let resolve_ns_empty () =
               (resolve_ns empty 0L (name "foo.com")))
 
 let resolve_ns_cname () =
-  let cname = Udns.Map.(B (Cname, (250l, name "bar.com"))) in
+  let cname = Umap.(B (Cname, (250l, name "bar.com"))) in
   let cache = maybe_insert Udns_enum.A (name "foo.com") 0L AuthoritativeAnswer (NoErr cname) empty in
   Alcotest.(check resolve_ns_ret
               "looking for NS in cache with CNAME returns needA"
@@ -116,7 +118,7 @@ let resolve_ns_cname () =
               (resolve_ns cache (sec 251) (name "foo.com")))
 
 let resolve_ns_noerr_aaaa () =
-  let aaaa = Udns.Map.(B (Aaaa, (250l, Ipv6_set.singleton (ip6 "::1")))) in
+  let aaaa = Umap.(B (Aaaa, (250l, Ipv6_set.singleton (ip6 "::1")))) in
   let cache = maybe_insert Udns_enum.AAAA (name "ns1.foo.com") 0L AuthoritativeAnswer (NoErr aaaa) empty in
   Alcotest.(check resolve_ns_ret
               "looking for NS in cache with AAAA returns needA"
@@ -128,11 +130,11 @@ let resolve_ns_noerr_aaaa () =
               (resolve_ns cache (sec 251) (name "ns1.foo.com")))
 
 let resolve_ns_a () =
-  let a_rr = Udns.Map.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4")))) in
+  let a_rr = Umap.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4")))) in
   let cache = maybe_insert Udns_enum.A (name "ns1.foo.com") 0L AuthoritativeAnswer (NoErr a_rr) empty in
   Alcotest.(check resolve_ns_ret
               "looking for NS in cache with A returns haveIP"
-              (`HaveIPS (Udns.Map.Ipv4_set.singleton (ip "1.2.3.4")), cache)
+              (`HaveIPS (Umap.Ipv4_set.singleton (ip "1.2.3.4")), cache)
               (resolve_ns cache 0L (name "ns1.foo.com"))) ;
   Alcotest.(check resolve_ns_ret
               "looking for NS in cache with A returns NeedA after timeout"
@@ -140,11 +142,11 @@ let resolve_ns_a () =
               (resolve_ns cache (sec 251) (name "ns1.foo.com")))
 
 let resolve_ns_as () =
-  let a_rrs = Udns.Map.(B (A, (250l, Ipv4_set.(add (ip "1.2.3.4") (singleton (ip "1.2.3.5")))))) in
+  let a_rrs = Umap.(B (A, (250l, Ipv4_set.(add (ip "1.2.3.4") (singleton (ip "1.2.3.5")))))) in
   let cache = maybe_insert Udns_enum.A (name "ns1.foo.com") 0L AuthoritativeAnswer (NoErr a_rrs) empty in
   Alcotest.(check resolve_ns_ret
               "looking for NS in cache with multiple A returns all IPs"
-              (`HaveIPS Udns.Map.Ipv4_set.(add (ip "1.2.3.4") (singleton (ip "1.2.3.5"))), cache)
+              (`HaveIPS Umap.Ipv4_set.(add (ip "1.2.3.4") (singleton (ip "1.2.3.5"))), cache)
               (resolve_ns cache 0L (name "ns1.foo.com"))) ;
   Alcotest.(check resolve_ns_ret
               "looking for NS in cache with multiple A after TTL expired for all returns NeedA"
@@ -245,7 +247,7 @@ let find_ns_prefilled () =
     (find_ns with_root rng 0L eds Domain_name.root)
 
 let find_ns_cname () =
-  let cname = Udns.Map.(B (Cname, (250l, name "bar.com"))) in
+  let cname = Umap.(B (Cname, (250l, name "bar.com"))) in
   let cache = maybe_insert Udns_enum.NS (name "foo.com") 0L AuthoritativeAnswer (NoErr cname) empty in
   Alcotest.check find_ns_ret "looking for NS in cache with CNAME returns cname"
     (`Cname (name "bar.com"), cache) (find_ns cache rng 0L eds (name "foo.com"))
@@ -269,7 +271,7 @@ let find_ns_bad () =
     (`NeedNS, cache) (find_ns cache rng (sec 301) eds (name "foo.com"))
 
 let find_ns_ns () =
-  let ns = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com")))) in
+  let ns = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com")))) in
   let cache = maybe_insert Udns_enum.NS (name "foo.com") 0L AuthoritativeAnswer (NoErr ns) empty in
   Alcotest.check find_ns_ret "looking for NS in cache with NS returns NeedA"
     (`NeedGlue (name "foo.com"), cache) (find_ns cache rng 0L eds (name "foo.com")) ;
@@ -277,8 +279,8 @@ let find_ns_ns () =
     (`NeedNS, cache) (find_ns cache rng (sec 251) eds (name "foo.com"))
 
 let find_ns_ns_and_a () =
-  let ns = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
-  and a = Udns.Map.(B (A, (2500l, Ipv4_set.singleton (ip "1.2.3.4"))))
+  let ns = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
+  and a = Umap.(B (A, (2500l, Ipv4_set.singleton (ip "1.2.3.4"))))
   in
   let cache =
     maybe_insert Udns_enum.NS (name "foo.com") 0L AuthoritativeAnswer (NoErr ns)
@@ -290,8 +292,8 @@ let find_ns_ns_and_a () =
     (`NeedNS, cache) (find_ns cache rng (sec 251) eds (name "foo.com"))
 
 let find_ns_ns_and_a_exp () =
-  let ns = Udns.Map.(B (Ns, (2500l, Domain_name.Set.singleton (name "ns1.foo.com"))))
-  and a = Udns.Map.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4"))))
+  let ns = Umap.(B (Ns, (2500l, Domain_name.Set.singleton (name "ns1.foo.com"))))
+  and a = Umap.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4"))))
   in
   let cache =
     maybe_insert Udns_enum.NS (name "foo.com") 0L AuthoritativeAnswer (NoErr ns)
@@ -304,11 +306,11 @@ let find_ns_ns_and_a_exp () =
 
 let find_ns_ns_and_a_a_exp () =
   let ns =
-    Udns.Map.(B (Ns, (250l, Domain_name.Set.(add (name "ns1.foo.com") (singleton (name "ns2.foo.com"))))))
+    Umap.(B (Ns, (250l, Domain_name.Set.(add (name "ns1.foo.com") (singleton (name "ns2.foo.com"))))))
   and a1 =
-    Udns.Map.(B (A, (150l, Ipv4_set.(add (ip "1.2.3.4") (singleton (ip "1.2.3.2"))))))
+    Umap.(B (A, (150l, Ipv4_set.(add (ip "1.2.3.4") (singleton (ip "1.2.3.2"))))))
   and a2 =
-    Udns.Map.(B (A, (200l, Ipv4_set.singleton (ip "1.2.3.5"))))
+    Umap.(B (A, (200l, Ipv4_set.singleton (ip "1.2.3.5"))))
   in
   let cache =
     maybe_insert Udns_enum.NS (name "foo.com") 0L AuthoritativeAnswer (NoErr ns)
@@ -330,8 +332,8 @@ let find_ns_ns_and_a_a_exp () =
     (`NeedNS, cache) (find_ns cache rng (sec 2501) eds (name "foo.com"))
 
 let find_ns_ns_and_cname () =
-  let ns = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
-  and cname = Udns.Map.(B (Cname, (2500l, name "ns1.bar.com")))
+  let ns = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
+  and cname = Umap.(B (Cname, (2500l, name "ns1.bar.com")))
   in
   let cache =
     maybe_insert Udns_enum.NS (name "foo.com") 0L AuthoritativeAnswer (NoErr ns)
@@ -344,8 +346,8 @@ let find_ns_ns_and_cname () =
     (`NeedNS, cache) (find_ns cache rng (sec 251) eds (name "foo.com"))
 
 let find_ns_ns_and_aaaa () =
-  let ns = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
-  and aaaa = Udns.Map.(B (Aaaa, (2500l, Ipv6_set.singleton (ip6 "::1"))))
+  let ns = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
+  and aaaa = Umap.(B (Aaaa, (2500l, Ipv6_set.singleton (ip6 "::1"))))
   in
   let cache =
     maybe_insert Udns_enum.NS (name "foo.com") 0L AuthoritativeAnswer (NoErr ns)
@@ -424,7 +426,7 @@ let resolve_with_root () =
     (resolve ~rng with_root 0L (name "1.2.3.4.in-addr.arpa") Udns_enum.PTR)
 
 let resolve_with_ns () =
-  let ns = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.org"))))
+  let ns = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.org"))))
   in
   let cache = maybe_insert Udns_enum.NS (name "com") 0L AuthoritativeAnswer (NoErr ns) with_root in
   Alcotest.check resolve_res "looking for A for foo.com asks for NS org"
@@ -432,7 +434,7 @@ let resolve_with_ns () =
     (resolve ~rng cache 0L (name "foo.com") Udns_enum.A)
 
 let resolve_with_ns_err () =
-  let ns = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
+  let ns = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
   and (bad_name, bad_soa) = invalid_soa (name "ns1.foo.com")
   in
   let cache =
@@ -471,8 +473,8 @@ let resolve_with_ns_err () =
     (resolve ~rng cache 0L (name "com") Udns_enum.A)
 
 let resolve_with_ns_a () =
-  let ns = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
-  and a = Udns.Map.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4"))))
+  let ns = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.foo.com"))))
+  and a = Umap.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4"))))
   in
   let cache =
     maybe_insert Udns_enum.NS (name "com") 0L AuthoritativeAnswer (NoErr ns)
@@ -484,10 +486,10 @@ let resolve_with_ns_a () =
     (resolve ~rng cache 0L (name "foo.com") Udns_enum.A)
 
 let resolve_with_ns_a_ns () =
-  let ns = Udns.Map.(B (Ns, (2500l, Domain_name.Set.singleton (name "ns1.foo.com"))))
-  and a = Udns.Map.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4"))))
-  and ns2 = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns2.foo.com"))))
-  and a2 = Udns.Map.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.5"))))
+  let ns = Umap.(B (Ns, (2500l, Domain_name.Set.singleton (name "ns1.foo.com"))))
+  and a = Umap.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4"))))
+  and ns2 = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns2.foo.com"))))
+  and a2 = Umap.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.5"))))
   in
   let cache =
     maybe_insert Udns_enum.NS (name "com") 0L AuthoritativeAnswer (NoErr ns)
@@ -504,8 +506,8 @@ let resolve_with_ns_a_ns () =
     (resolve ~rng cache (sec 251) (name "foo.com") Udns_enum.A)
 
 let resolve_cycle () =
-  let ns = Udns.Map.(B (Ns, (2500l, Domain_name.Set.singleton (name "ns1.org"))))
-  and ns2 = Udns.Map.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.com"))))
+  let ns = Umap.(B (Ns, (2500l, Domain_name.Set.singleton (name "ns1.org"))))
+  and ns2 = Umap.(B (Ns, (250l, Domain_name.Set.singleton (name "ns1.com"))))
   in
   let cache =
     maybe_insert Udns_enum.NS (name "com") 0L AuthoritativeAnswer (NoErr ns)
@@ -527,7 +529,7 @@ let resolve_tests = [
 ]
 
 let res_eq a b = match a, b with
-  | NoErr b, NoErr b' -> Udns.Map.equal_b b b'
+  | NoErr b, NoErr b' -> Umap.equal_b b b'
   | NoData (name, (ttl, soa)), NoData (name', (ttl', soa')) -> Domain_name.equal name name' && ttl = ttl' && Udns.Soa.compare soa soa' = 0
   | NoDom (name, (ttl, soa)), NoDom (name', (ttl', soa')) -> Domain_name.equal name name' && ttl = ttl' && Udns.Soa.compare soa soa' = 0
   | ServFail (name, (ttl, soa)), ServFail (name', (ttl', soa')) -> Domain_name.equal name name' && ttl = ttl' && Udns.Soa.compare soa soa' = 0
@@ -572,7 +574,7 @@ let empty_cache () =
 
 let cache_a () =
   let name = name "foo.com" in
-  let a = Udns.Map.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4")))) in
+  let a = Umap.(B (A, (250l, Ipv4_set.singleton (ip "1.2.3.4")))) in
   let cache = maybe_insert Udns_enum.A name 0L AuthoritativeAnswer (NoErr a) empty in
   Alcotest.check cached_r "cache with A results in res"
     (Ok (NoErr a, cache))
@@ -584,7 +586,7 @@ let cache_a () =
 let cache_cname () =
   let rel = name "bar.com" in
   let name = name "foo.com" in
-  let cname = Udns.Map.(B (Cname, (250l, rel))) in
+  let cname = Umap.(B (Cname, (250l, rel))) in
   let cache = maybe_insert Udns_enum.CNAME name 0L AuthoritativeAnswer (NoErr cname) empty in
   Alcotest.check cached_r "cache with CNAME results in res"
     (Ok (NoErr cname, cache))
@@ -599,7 +601,7 @@ let cache_cname () =
 let cache_cname_nodata () =
   let rel = name "bar.com" in
   let name = name "foo.com" in
-  let cname = Udns.Map.(B (Cname, (250l, rel))) in
+  let cname = Umap.(B (Cname, (250l, rel))) in
   let bad_name, bad_soa = invalid_soa name in
   let cache =
     maybe_insert Udns_enum.CNAME name 0L AuthoritativeAnswer (NoErr cname)
@@ -678,7 +680,7 @@ let scrub q hdr dns = Udns_resolver_utils.scrub (fst q) q hdr dns
 let scrub_empty () =
   let name = name "foo.com" in
   let q = (name, Udns_enum.A) in
-  let dns = Udns.query q in
+  let dns = Packet.Query.create q in
   let bad_name, bad_soa = invalid_soa name in
   Alcotest.check res "empty frame results in empty scrub"
     (Ok [ Udns_enum.A, name, Additional, NoData (bad_name, bad_soa) ])
@@ -694,9 +696,9 @@ let scrub_empty () =
 let scrub_a () =
   let q_name = name "foo.com" in
   let q = (q_name, Udns_enum.A) in
-  let tdns = Udns.query q in
-  let b = Udns.Map.(B (A, (1l, Ipv4_set.singleton (ip "1.2.3.4")))) in
-  let answer = Domain_name.Map.singleton q_name Udns.Map.(addb b empty) in
+  let tdns = Packet.Query.create q in
+  let b = Umap.(B (A, (1l, Ipv4_set.singleton (ip "1.2.3.4")))) in
+  let answer = Domain_name.Map.singleton q_name Umap.(addb b empty) in
   let dns = { tdns with answer } in
   Alcotest.check res "A record results in scrubbed A"
     (Ok [ Udns_enum.A, q_name, NonAuthoritativeAnswer, NoErr b])
@@ -712,9 +714,9 @@ let scrub_a () =
 let scrub_a_a () =
   let q_name = name "foo.com" in
   let q = (q_name, Udns_enum.A) in
-  let tdns = Udns.query q in
-  let b = Udns.Map.(B (A, (1l, Ipv4_set.(add (ip "1.2.3.4") (singleton (ip "1.2.3.5")))))) in
-  let answer = Domain_name.Map.singleton q_name Udns.Map.(addb b empty) in
+  let tdns = Packet.Query.create q in
+  let b = Umap.(B (A, (1l, Ipv4_set.(add (ip "1.2.3.4") (singleton (ip "1.2.3.5")))))) in
+  let answer = Domain_name.Map.singleton q_name Umap.(addb b empty) in
   let dns = { tdns with answer } in
   Alcotest.check res "A records results in scrubbed A with same records"
     (Ok [ Udns_enum.A, q_name, NonAuthoritativeAnswer, NoErr b ])
@@ -730,9 +732,9 @@ let scrub_a_a () =
 let scrub_cname () =
   let q_name = name "foo.com" in
   let q = (q_name, Udns_enum.A) in
-  let tdns = Udns.query q in
-  let b = Udns.Map.(B (Cname, (1l, name "bar.com"))) in
-  let answer = Domain_name.Map.singleton q_name Udns.Map.(addb b empty) in
+  let tdns = Packet.Query.create q in
+  let b = Umap.(B (Cname, (1l, name "bar.com"))) in
+  let answer = Domain_name.Map.singleton q_name Umap.(addb b empty) in
   let dns = { tdns with answer } in
   Alcotest.check res "CNAME record results in scrubbed CNAME with same record"
     (Ok [ Udns_enum.CNAME, q_name, NonAuthoritativeAnswer, NoErr b])
@@ -748,15 +750,15 @@ let scrub_cname () =
 let scrub_soa () =
   let q_name = name "foo.com" in
   let q = (q_name, Udns_enum.A) in
-  let tdns = Udns.query q in
+  let tdns = Packet.Query.create q in
   let (ttl, soa) =
     (1l, {
         Udns.Soa.nameserver = name "a" ; hostmaster = name "b" ;
         serial = 1l ; refresh = 2l ; retry = 3l ; expiry = 4l ; minimum = 5l
       })
   in
-  let b = Udns.Map.(B (Soa, (ttl, soa))) in
-  let authority = Domain_name.Map.singleton q_name Udns.Map.(addb b empty) in
+  let b = Umap.(B (Soa, (ttl, soa))) in
+  let authority = Domain_name.Map.singleton q_name Umap.(addb b empty) in
   let dns = { tdns with authority } in
   Alcotest.check res "SOA record results in NoData SOA"
     (Ok [ Udns_enum.A, q_name, Additional, NoData (q_name, (ttl, soa)) ])
@@ -772,15 +774,15 @@ let scrub_soa () =
 let scrub_bad_soa () =
   let q_name = name "foo.com" in
   let q = (q_name, Udns_enum.A) in
-  let tdns = Udns.query q in
+  let tdns = Packet.Query.create q in
   let (ttl, soa) =
     (1l, {
         Udns.Soa.nameserver = name "a" ; hostmaster = name "b" ;
         serial = 1l ; refresh = 2l ; retry = 3l ; expiry = 4l ; minimum = 5l
       })
   in
-  let b = Udns.Map.(B (Soa, (ttl, soa))) in
-  let authority = Domain_name.Map.singleton q_name Udns.Map.(addb b empty) in
+  let b = Umap.(B (Soa, (ttl, soa))) in
+  let authority = Domain_name.Map.singleton q_name Umap.(addb b empty) in
   let dns = { tdns with authority } in
   let bad_name, bad_soa = invalid_soa q_name in
   Alcotest.check res "bad SOA record results in NoData SOA"
@@ -797,15 +799,15 @@ let scrub_bad_soa () =
 let scrub_soa_super () =
   let q_name = name "foo.com" in
   let q = (q_name, Udns_enum.A) in
-  let tdns = Udns.query q in
+  let tdns = Packet.Query.create q in
   let (ttl, soa) =
     (1l, {
         Udns.Soa.nameserver = name "a" ; hostmaster = name "b" ;
         serial = 1l ; refresh = 2l ; retry = 3l ; expiry = 4l ; minimum = 5l
       })
   in
-  let b = Udns.Map.(B (Soa, (ttl, soa))) in
-  let authority = Domain_name.Map.singleton (name "com") Udns.Map.(addb b empty) in
+  let b = Umap.(B (Soa, (ttl, soa))) in
+  let authority = Domain_name.Map.singleton (name "com") Umap.(addb b empty) in
   let dns = { tdns with authority } in
   Alcotest.check res "SOA record results in NoData SOA"
     (Ok [ Udns_enum.A, q_name, Additional, NoData (q_name, (ttl, soa)) ])

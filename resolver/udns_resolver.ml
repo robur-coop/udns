@@ -92,7 +92,7 @@ let build_query ?id ?(recursion_desired = false) t ts proto q retry zone edns ip
     let flags = Header.FS.add `Recursion_desired hdr.Header.flags in
     { hdr with Header.flags }
   in
-  let query = `Query (Packet.Query.query q) in
+  let query = `Query (Packet.Query.create q) in
   let el = (ts, retry, proto, zone, edns, ip, 53, q, id) in
   let transit =
     if QM.mem q t.transit then
@@ -505,7 +505,7 @@ let query_root t now proto =
   let q = (q_name, q_type)
   and id = Randomconv.int16 t.rng
   in
-  let packet = `Query (Packet.Query.query q) in
+  let packet = `Query (Packet.Query.create q) in
   let edns = Some (Edns.edns ()) in
   let el = (now, 0, proto, Domain_name.root, edns, ip, 53, q, id) in
   let t = { t with transit = QM.add q el t.transit ; cache } in
@@ -518,7 +518,7 @@ let err_retries t q_type q_name =
   let t, reqs = find_queries t (q_type, q_name) in
   t, List.fold_left (fun acc (_, _, proto, _, _, ip, port, q, qid) ->
       Logs.debug (fun m -> m "now erroring to %a" Question.pp q) ;
-      let q = `Query (Packet.Query.query q) in
+      let q = `Query (Packet.Query.create q) in
       let header =
         let h = header qid in
         { h with Header.query = false }

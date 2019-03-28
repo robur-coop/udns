@@ -127,7 +127,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
     let header = dns_header ()
     and question = (name, Udns_enum.TLSA)
     in
-    let query = Packet.Query.query question in
+    let query = Packet.Query.create question in
     let buf, _ = Packet.encode `Tcp header (`Query query) in
     Dns.send_tcp (Dns.flow flow) buf >>= function
     | Error () -> Lwt.fail_with "couldn't send tcp"

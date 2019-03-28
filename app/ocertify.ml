@@ -50,7 +50,7 @@ let query_certificate sock public_key fqdn =
   let header = dns_header ()
   and question = (fqdn, Udns_enum.TLSA)
   in
-  let query = Packet.Query.query question in
+  let query = Packet.Query.create question in
   let buf, _ = Packet.encode `Tcp header (`Query query) in
   Udns_cli.send_tcp sock buf ;
   let data = Udns_cli.recv_tcp sock in
@@ -58,7 +58,7 @@ let query_certificate sock public_key fqdn =
   | Ok (_, `Query q, _, _) ->
     (* TODO verify id! *)
     (* collect TLSA pems *)
-    Logs.debug (fun m -> m "answer is %a" pp_data q.Packet.Query.answer) ;
+    Logs.debug (fun m -> m "answer is %a" Packet.pp_data q.Packet.Query.answer) ;
     begin match Domain_name.Map.find fqdn q.Packet.Query.answer with
       | None ->
         Logs.err (fun m -> m "no resource records found for %a" Domain_name.pp fqdn) ;
