@@ -384,21 +384,20 @@ let _resolve t ~rng ts name typ =
   go t (N.singleton name) typ Domain_name.root (List.rev (Domain_name.to_strings name)) Domain_name.root root
 
 let follow_cname t ts typ name b =
-  let rec follow t names acc name Udns.Map.(B (k, v) as b) =
+  let rec follow t acc name Udns.Map.(B (k, v) as b) =
     match k, v with
     | Udns.Map.Cname, (_, alias) ->
-      if Domain_name.Set.mem alias names then begin
+      if Domain_name.Map.mem alias acc then begin
         Logs.debug (fun m -> m "follow_cname: cycle detected") ;
         `Cycle (acc, t)
       end else begin
-        let names = N.add alias names in
         match cached t ts typ alias with
         | Error _ ->
           Logs.debug (fun m -> m "follow_cname: cache miss, need to query %a" Domain_name.pp alias) ;
           `Query (alias, t)
         | Ok (NoErr ans, t) ->
           Logs.debug (fun m -> m "follow_cname: noerr, follow again") ;
-          follow t names (Udns.Map.add_entry acc alias ans) alias ans
+          follow t (Udns.Map.add_entry acc alias ans) alias ans
         | Ok (NoDom (ttl, soa) as res, t) ->
           Logs.debug (fun m -> m "follow_cname: nodom") ;
           `NoDom ((acc, to_map res), t)
@@ -406,7 +405,7 @@ let follow_cname t ts typ name b =
           Logs.debug (fun m -> m "follow_cname: nodata") ;
           `NoData ((acc, to_map res), t)
         (* XXX: the last case here is not symmetric... the acc is dropped
-           TODO: write tests and evalute what we need (what clients expect) *)
+           TODO: write tests and evaluate what we need (what clients expect) *)
         | Ok (ServFail (ttl, soa) as res, t) ->
           Logs.debug (fun m -> m "follow_cname: servfail") ;
           `ServFail (to_map res, t)
@@ -414,7 +413,7 @@ let follow_cname t ts typ name b =
     | _ -> `NoError (Udns.Map.add_entry acc name b, t)
   in
   let initial = Udns.Map.add_entry Domain_name.Map.empty name b in
-  follow t (N.singleton name) initial name b
+  follow t initial name b
 
 (*
 let additionals t ts rrs =
