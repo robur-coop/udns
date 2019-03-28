@@ -1,5 +1,5 @@
 (* (c) 2017 Hannes Mehnert, all rights reserved *)
-
+open Udns
 open Astring
 
 let of_hex s =
@@ -28,8 +28,8 @@ let p_cs = Alcotest.testable Cstruct.hexdump_pp Cstruct.equal
 module Name = struct
   let p_err =
     let module M = struct
-      type t = Udns.Name.err
-      let pp = Udns.Name.pp_err
+      type t = Name.err
+      let pp = Name.pp_err
       let equal a b = match a, b with
         | `Partial, `Partial -> true
         | `TooLong, `TooLong -> true
@@ -42,18 +42,18 @@ module Name = struct
 
   let p_ok =
     let module M = struct
-      type t = Domain_name.t * (Domain_name.t * int) Udns.Name.IntMap.t * int
+      type t = Domain_name.t * (Domain_name.t * int) Name.IntMap.t * int
       let pp ppf (name, map, off) =
         Fmt.pf ppf "%a (map: %a) %d"
           Domain_name.pp name
           (Fmt.list ~sep:(Fmt.unit ";@ ")
              (Fmt.pair ~sep:(Fmt.unit "->") Fmt.int
                 (Fmt.pair ~sep:(Fmt.unit " ") Domain_name.pp Fmt.int)))
-          (Udns.Name.IntMap.bindings map)
+          (Name.IntMap.bindings map)
           off
       let equal (n, m, off) (n', m', off') =
         Domain_name.equal n n' && off = off' &&
-        Udns.Name.IntMap.equal
+        Name.IntMap.equal
           (fun (nam, siz) (nam', siz') -> Domain_name.equal nam nam' && siz = siz')
           m m'
     end in
@@ -86,65 +86,65 @@ module Name = struct
 
   let simple () =
     let m =
-      Udns.Name.IntMap.add 0 (n_of_s "foo.com", 9)
-        (Udns.Name.IntMap.add 4 (n_of_s "com", 5)
-           (Udns.Name.IntMap.add 8 (Domain_name.root, 1) Udns.Name.IntMap.empty))
+      Name.IntMap.add 0 (n_of_s "foo.com", 9)
+        (Name.IntMap.add 4 (n_of_s "com", 5)
+           (Name.IntMap.add 8 (Domain_name.root, 1) Name.IntMap.empty))
     in
     Alcotest.(check (result p_ok p_err) "simple name decode test"
                 (Ok (n_of_s "foo.com", m, 9))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\003foo\003com\000") 0)) ;
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\003foo\003com\000") 0)) ;
     Alcotest.(check (result p_ok p_err) "another simple name decode test"
-                (Ok (n_of_s "foo.com", Udns.Name.IntMap.add 9 (n_of_s "foo.com", 9) m, 11))
-                (Udns.Name.decode m (Cstruct.of_string "\003foo\003com\000\xC0\000") 9)) ;
+                (Ok (n_of_s "foo.com", Name.IntMap.add 9 (n_of_s "foo.com", 9) m, 11))
+                (Name.decode m (Cstruct.of_string "\003foo\003com\000\xC0\000") 9)) ;
     Alcotest.(check (result p_ok p_err) "a ptr added to the name decode test"
                 (Ok (n_of_s "bar.foo.com",
-                     Udns.Name.IntMap.add 13 (n_of_s "foo.com", 9)
-                       (Udns.Name.IntMap.add 9 (n_of_s "bar.foo.com", 13) m),
+                     Name.IntMap.add 13 (n_of_s "foo.com", 9)
+                       (Name.IntMap.add 9 (n_of_s "bar.foo.com", 13) m),
                      15))
-                (Udns.Name.decode m (Cstruct.of_string "\003foo\003com\000\003bar\xC0\000") 9)) ;
+                (Name.decode m (Cstruct.of_string "\003foo\003com\000\003bar\xC0\000") 9)) ;
     Alcotest.(check (result p_ok p_err) "a ptr with bar- added to the name decode test"
                 (Ok (n_of_s "bar-.foo.com",
-                     Udns.Name.IntMap.add 14 (n_of_s "foo.com", 9)
-                       (Udns.Name.IntMap.add 9 (n_of_s "bar-.foo.com", 14) m),
+                     Name.IntMap.add 14 (n_of_s "foo.com", 9)
+                       (Name.IntMap.add 9 (n_of_s "bar-.foo.com", 14) m),
                      16))
-                (Udns.Name.decode m (Cstruct.of_string "\003foo\003com\000\004bar-\xC0\000") 9)) ;
+                (Name.decode m (Cstruct.of_string "\003foo\003com\000\004bar-\xC0\000") 9)) ;
     let m =
-      Udns.Name.IntMap.add 0 (n_of_s "f23", 5) (Udns.Name.IntMap.add 4 (Domain_name.root, 1) Udns.Name.IntMap.empty)
+      Name.IntMap.add 0 (n_of_s "f23", 5) (Name.IntMap.add 4 (Domain_name.root, 1) Name.IntMap.empty)
     in
     Alcotest.(check (result p_ok p_err) "simple name decode test of f23"
                 (Ok (n_of_s "f23", m, 5))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\003f23\000") 0)) ;
-    let m = Udns.Name.IntMap.add 0 (n_of_s ~hostname:false "23", 4)
-        (Udns.Name.IntMap.add 3 (Domain_name.root, 1) Udns.Name.IntMap.empty)
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\003f23\000") 0)) ;
+    let m = Name.IntMap.add 0 (n_of_s ~hostname:false "23", 4)
+        (Name.IntMap.add 3 (Domain_name.root, 1) Name.IntMap.empty)
     in
     Alcotest.(check (result p_ok p_err) "simple DNS name decode test of 23"
                 (Ok (n_of_s ~hostname:false "23", m, 4))
-                (Udns.Name.decode ~hostname:false Udns.Name.IntMap.empty
+                (Name.decode ~hostname:false Name.IntMap.empty
                    (Cstruct.of_string "\00223\000") ~off:0))
 
   let encode () =
     let cs = Cstruct.create 30 in
     Alcotest.check p_enc "compressed encode of root is good"
-      (Domain_name.Map.empty, 1) (Udns.Name.encode Domain_name.root Domain_name.Map.empty cs 0) ;
+      (Domain_name.Map.empty, 1) (Name.encode Domain_name.root Domain_name.Map.empty cs 0) ;
     Alcotest.check p_cs "cstruct is good" (of_hex "00") (Cstruct.sub cs 0 1) ;
     Alcotest.check p_enc "uncompressed encode of root is good"
-      (Domain_name.Map.empty, 1) (Udns.Name.encode ~compress:false Domain_name.root Domain_name.Map.empty cs 0) ;
+      (Domain_name.Map.empty, 1) (Name.encode ~compress:false Domain_name.root Domain_name.Map.empty cs 0) ;
     Alcotest.check p_cs "cstruct is good" (of_hex "00") (Cstruct.sub cs 0 1) ;
     let map =
       Domain_name.Map.add (n_of_s "foo.bar") 0
         (Domain_name.Map.add (n_of_s "bar") 4 Domain_name.Map.empty)
     in
     Alcotest.check p_enc "encode of 'foo.bar' is good"
-      (map, 9) (Udns.Name.encode (n_of_s "foo.bar") Domain_name.Map.empty cs 0) ;
+      (map, 9) (Name.encode (n_of_s "foo.bar") Domain_name.Map.empty cs 0) ;
     Alcotest.check p_cs "cstruct is good" (of_hex "03 66 6f 6f 03 62 61 72 00")
       (Cstruct.sub cs 0 9) ;
     Alcotest.check p_enc "uncompressed encode of 'foo.bar' is good"
-      (map, 9) (Udns.Name.encode ~compress:false (n_of_s "foo.bar") Domain_name.Map.empty cs 0) ;
+      (map, 9) (Name.encode ~compress:false (n_of_s "foo.bar") Domain_name.Map.empty cs 0) ;
     Alcotest.check p_cs "cstruct is good" (of_hex "03 66 6f 6f 03 62 61 72 00")
       (Cstruct.sub cs 0 9) ;
     let emap = Domain_name.Map.add (n_of_s "baz.foo.bar") 9 map in
     Alcotest.check p_enc "encode of 'baz.foo.bar' is good"
-      (emap, 15) (Udns.Name.encode (n_of_s "baz.foo.bar") map cs 9) ;
+      (emap, 15) (Name.encode (n_of_s "baz.foo.bar") map cs 9) ;
     Alcotest.check p_cs "cstruct is good"
       (of_hex "03 66 6f 6f 03 62 61 72 00 03 62 61 7a c0 00")
       (Cstruct.sub cs 0 15) ;
@@ -154,7 +154,7 @@ module Name = struct
            (Domain_name.Map.add (n_of_s "bar") 17 Domain_name.Map.empty))
     in
     Alcotest.check p_enc "uncompressed encode of 'baz.foo.bar' is good"
-      (map', 22) (Udns.Name.encode ~compress:false (n_of_s "baz.foo.bar") map cs 9) ;
+      (map', 22) (Name.encode ~compress:false (n_of_s "baz.foo.bar") map cs 9) ;
     Alcotest.check p_cs "cstruct is good"
       (of_hex "03 66 6f 6f 03 62 61 72 00 03 62 61 7a 03 66 6f 6f 03 62 61 72 00")
       (Cstruct.sub cs 0 22)
@@ -162,43 +162,43 @@ module Name = struct
   let partial () =
     Alcotest.(check (result p_ok p_err) "partial domain name (bar)"
                 (Error `Partial)
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\003bar") 0));
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\003bar") 0));
     Alcotest.(check (result p_ok p_err) "partial domain name (one byte ptr)"
                 (Error `Partial)
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\xC0") 0)) ;
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0") 0)) ;
     Alcotest.(check (result p_ok p_err) "partial domain name (5foo)"
                 (Error `Partial)
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\005foo") 0))
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\005foo") 0))
 
   let bad_ptr () =
     Alcotest.(check (result p_ok p_err) "bad pointer in label"
                 (Error (`BadOffset 10))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\xC0\x0A") 0)) ;
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x0A") 0)) ;
     Alcotest.(check (result p_ok p_err) "cyclic self-pointer in label"
                 (Error (`BadOffset 0))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\xC0\x00") 0)) ;
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x00") 0)) ;
     Alcotest.(check (result p_ok p_err) "cyclic self-pointer in label"
                 (Error (`BadOffset 1))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\xC0\x01") 0))
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x01") 0))
 
   let bad_tag () =
     Alcotest.(check (result p_ok p_err) "bad tag (0x40) in label"
                 (Error (`BadTag 0x40))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\x40") 0)) ;
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\x40") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad tag (0x80) in label"
                 (Error (`BadTag 0x80))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\x80") 0))
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\x80") 0))
 
   let bad_content () =
     Alcotest.(check (result p_ok p_err) "bad content '-' in label"
                 (Error (`BadContent "-"))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\001-\000") 0)) ;
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\001-\000") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad content 'foo-+' in label"
                 (Error (`BadContent "foo-+"))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\005foo-+\000") 0)) ;
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\005foo-+\000") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad content '23' in label"
                 (Error (`BadContent "23"))
-                (Udns.Name.decode Udns.Name.IntMap.empty (Cstruct.of_string "\00223\000") 0))
+                (Name.decode Name.IntMap.empty (Cstruct.of_string "\00223\000") 0))
 
   let length () =
     let max = "s23456789012345678901234567890123456789012345678901234567890123" in
@@ -206,23 +206,23 @@ module Name = struct
     let full = n_of_s (String.concat ~sep:"." [ max ; max ; max ; lst ]) in
     Alcotest.(check (result p_ok p_err) "longest allowed domain name"
                 (Ok (full,
-                     Udns.Name.IntMap.add 0 (full, 255)
-                       (Udns.Name.IntMap.add 64 (n_of_s (String.concat ~sep:"." [ max ; max ; lst ]), 191)
-                          (Udns.Name.IntMap.add 128 (n_of_s (String.concat ~sep:"." [ max ; lst ]), 127)
-                             (Udns.Name.IntMap.add 192 (n_of_s lst, 63)
-                                (Udns.Name.IntMap.add 254 (Domain_name.root, 1) Udns.Name.IntMap.empty)))),
+                     Name.IntMap.add 0 (full, 255)
+                       (Name.IntMap.add 64 (n_of_s (String.concat ~sep:"." [ max ; max ; lst ]), 191)
+                          (Name.IntMap.add 128 (n_of_s (String.concat ~sep:"." [ max ; lst ]), 127)
+                             (Name.IntMap.add 192 (n_of_s lst, 63)
+                                (Name.IntMap.add 254 (Domain_name.root, 1) Name.IntMap.empty)))),
                      255))
-                (Udns.Name.decode Udns.Name.IntMap.empty
+                (Name.decode Name.IntMap.empty
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3D" ^ lst ^ "\000"))
                    0)) ;
     Alcotest.(check (result p_ok p_err) "domain name too long"
                 (Error `TooLong)
-                (Udns.Name.decode Udns.Name.IntMap.empty
+                (Name.decode Name.IntMap.empty
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3E" ^ lst ^ "1\000"))
                    0)) ;
     Alcotest.(check (result p_ok p_err) "domain name really too long"
                 (Error `TooLong)
-                (Udns.Name.decode Udns.Name.IntMap.empty
+                (Name.decode Name.IntMap.empty
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\000"))
                    0))
 
@@ -241,25 +241,8 @@ end
 module Packet = struct
   let p_err =
     let module M = struct
-      type t = [ Udns.Name.err | `BadTTL of int32
-               | `BadRRTyp of int | `UnsupportedRRTyp of Udns_enum.rr_typ
-               | `BadClass of int | `UnsupportedClass of Udns_enum.clas
-               | `BadOpcode of int | `UnsupportedOpcode of Udns_enum.opcode
-               | `BadRcode of int
-               | `BadProto of int | `BadAlgorithm of int
-               | `BadEdns | `BadKeepalive
-               | `BadCaaTag
-               | `LeftOver | `InvalidTimestamp of int64
-               | `InvalidAlgorithm of Domain_name.t
-               | `NonZeroTTL of int32
-               | `NonZeroRdlen of int | `InvalidZoneCount of int
-               | `InvalidZoneRR of Udns_enum.rr_typ
-               | `BadTlsaCertUsage of int | `BadTlsaSelector of int | `BadTlsaMatchingType of int
-               | `BadSshfpAlgorithm of int | `BadSshfpType of int
-               | `Bad_edns_version of int
-               | `None_or_multiple_questions
-               ]
-      let pp = Udns.pp_err
+      type t = Packet.err
+      let pp = Packet.pp_err
       let equal a b = match a, b with
         | `Partial, `Partial -> true
         | `TooLong, `TooLong -> true
@@ -297,7 +280,7 @@ module Packet = struct
     end in
     (module M: Alcotest.TESTABLE with type t = M.t)
 
-  let question_equal a b = Udns.Question.compare a b = 0
+  let question_equal a b = Question.compare a b = 0
 
 (*  let prereq_equal a b = match a, b with
     | Exists (name, typ), Exists (name', typ') ->
@@ -323,20 +306,21 @@ module Packet = struct
       rr_equal rr rr'
     | _ -> false
 *)
-  let header_equal a b = Udns.Header.compare a b = 0
+  let header_equal a b = Header.compare a b = 0
 
-  let h_ok = Alcotest.testable Udns.Header.pp header_equal
+  let h_ok = Alcotest.testable Header.pp header_equal
 
   let q_ok =
     let module M = struct
-      type t = Udns.Header.t * Udns.v
-      let pp = Fmt.(pair Udns.Header.pp Udns.pp_v)
+      open Packet
+      type t = Header.t * Packet.t
+      let pp = Fmt.(pair Header.pp Packet.pp)
       let equal (ah, a) (bh, b) =
         let q_equal a b =
-          Udns.Question.compare a.Udns.question b.Udns.question = 0 &&
-          Domain_name.Map.equal Udns.Map.(equal equal_b) a.Udns.answer b.Udns.answer &&
-          Domain_name.Map.equal Udns.Map.(equal equal_b) a.Udns.authority b.Udns.authority &&
-          Domain_name.Map.equal Udns.Map.(equal equal_b) a.Udns.additional b.Udns.additional
+          Question.compare a.Query.question b.Query.question = 0 &&
+          equal_data a.Query.answer b.Query.answer &&
+          equal_data a.Query.authority b.Query.authority &&
+          equal_data a.Query.additional b.Query.additional
 
 (*        and u_equal a b =
           question_equal a.zone b.zone &&
@@ -347,7 +331,7 @@ module Packet = struct
           List.length a.addition = List.length b.addition &&
           List.for_all (fun a -> List.exists (rr_equal a) b.addition) a.addition *)
         in
-        Udns.Header.compare ah bh = 0 &&
+        Header.compare ah bh = 0 &&
         match a, b with
         | `Query a, `Query b -> q_equal a b
         | `Notify a, `Notify b -> q_equal a b
@@ -357,90 +341,90 @@ module Packet = struct
     (module M: Alcotest.TESTABLE with type t = M.t)
 
   let basic_header () =
-    let hdr = { Udns.Header.id = 1 ; query = true ; operation = Udns_enum.Query ;
-                rcode = Udns_enum.NoError ; flags = Udns.Header.FS.empty }
+    let hdr = { Header.id = 1 ; query = true ; operation = Udns_enum.Query ;
+                rcode = Udns_enum.NoError ; flags = Header.FS.empty }
     in
     let cs = Cstruct.create 12 in
-    Udns.Header.encode cs hdr ;
+    Header.encode cs hdr ;
     Alcotest.check p_cs "first encoded header is good"
       (of_hex "00 01 00 00") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "first encoded header can be decoded"
-                (Ok hdr) (Udns.Header.decode cs)) ;
+                (Ok hdr) (Header.decode cs)) ;
     let hdr' = { hdr with query = false ; rcode = Udns_enum.NXDomain } in
-    Udns.Header.encode cs hdr' ;
+    Header.encode cs hdr' ;
     Alcotest.check p_cs "second encoded header' is good"
       (of_hex "00 01 80 03") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "second encoded header can be decoded"
-                (Ok hdr') (Udns.Header.decode cs)) ;
+                (Ok hdr') (Header.decode cs)) ;
     let hdr' =
-      let flags = Udns.Header.FS.singleton `Authentic_data in
-      { hdr with Udns.Header.operation = Udns_enum.Update ; flags }
+      let flags = Header.FS.singleton `Authentic_data in
+      { hdr with Header.operation = Udns_enum.Update ; flags }
     in
-    Udns.Header.encode cs hdr' ;
+    Header.encode cs hdr' ;
     Alcotest.check p_cs "third encoded header' is good"
       (of_hex "00 01 28 20") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "third encoded header can be decoded"
-                (Ok hdr') (Udns.Header.decode cs)) ;
+                (Ok hdr') (Header.decode cs)) ;
     let hdr' =
-      let flags = Udns.Header.FS.singleton `Truncation in
-      { hdr with Udns.Header.flags }
+      let flags = Header.FS.singleton `Truncation in
+      { hdr with Header.flags }
     in
-    Udns.Header.encode cs hdr' ;
+    Header.encode cs hdr' ;
     Alcotest.check p_cs "fourth encoded header' is good"
       (of_hex "00 01 02 00") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "fourth encoded header can be decoded"
-                (Ok hdr') (Udns.Header.decode cs)) ;
+                (Ok hdr') (Header.decode cs)) ;
     let hdr' =
-      let flags = Udns.Header.FS.singleton `Checking_disabled in
-      { hdr with Udns.Header.flags } in
-    Udns.Header.encode cs hdr' ;
+      let flags = Header.FS.singleton `Checking_disabled in
+      { hdr with Header.flags } in
+    Header.encode cs hdr' ;
     Alcotest.check p_cs "fifth encoded header' is good"
       (of_hex "00 01 00 10") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "fifth encoded header can be decoded"
-                (Ok hdr') (Udns.Header.decode cs)) ;
+                (Ok hdr') (Header.decode cs)) ;
     Alcotest.(check (result h_ok p_err) "header with bad opcode"
                 (Error (`BadOpcode 14))
-                (Udns.Header.decode (of_hex "0000 7000 0000 0000 0000 0000"))) ;
+                (Header.decode (of_hex "0000 7000 0000 0000 0000 0000"))) ;
     Alcotest.(check (result h_ok p_err) "header with bad rcode"
                 (Error (`BadRcode 14))
-                (Udns.Header.decode (of_hex "0000 000e 0000 0000 0000 0000"))) ;
+                (Header.decode (of_hex "0000 000e 0000 0000 0000 0000"))) ;
     let hdr' =
-      let flags = Udns.Header.FS.singleton `Authoritative in
-      { hdr with Udns.Header.flags }
+      let flags = Header.FS.singleton `Authoritative in
+      { hdr with Header.flags }
     in
-    Udns.Header.encode cs hdr' ;
+    Header.encode cs hdr' ;
     Alcotest.check p_cs "sixth encoded header' is good"
       (of_hex "00 01 04 00") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "sixth encoded header can be decoded"
-                (Ok hdr') (Udns.Header.decode cs)) ;
+                (Ok hdr') (Header.decode cs)) ;
     let hdr' =
-      let flags = Udns.Header.FS.singleton `Recursion_desired in
-      { hdr with Udns.Header.flags } in
-    Udns.Header.encode cs hdr' ;
+      let flags = Header.FS.singleton `Recursion_desired in
+      { hdr with Header.flags } in
+    Header.encode cs hdr' ;
     Alcotest.check p_cs "seventh encoded header' is good"
       (of_hex "00 01 01 00") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "seventh encoded header can be decoded"
-                (Ok hdr') (Udns.Header.decode cs)) ;
+                (Ok hdr') (Header.decode cs)) ;
     let hdr' =
-      let flags = Udns.Header.FS.(add `Recursion_desired (singleton `Authoritative)) in
-      { hdr with Udns.Header.flags }
+      let flags = Header.FS.(add `Recursion_desired (singleton `Authoritative)) in
+      { hdr with Header.flags }
     in
-    Udns.Header.encode cs hdr' ;
+    Header.encode cs hdr' ;
     Alcotest.check p_cs "eigth encoded header' is good"
       (of_hex "00 01 05 00") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "eigth encoded header can be decoded"
-                (Ok hdr') (Udns.Header.decode cs)) ;
+                (Ok hdr') (Header.decode cs)) ;
     let hdr' =
-      let flags = Udns.Header.FS.singleton `Recursion_available in
-      { hdr with Udns.Header.flags } in
-    Udns.Header.encode cs hdr' ;
+      let flags = Header.FS.singleton `Recursion_available in
+      { hdr with Header.flags } in
+    Header.encode cs hdr' ;
     Alcotest.check p_cs "nineth encoded header' is good"
       (of_hex "00 01 00 80") (Cstruct.sub cs 0 4) ;
     Alcotest.(check (result h_ok p_err) "nineth encoded header can be decoded"
-                (Ok hdr') (Udns.Header.decode cs))
+                (Ok hdr') (Header.decode cs))
 
   let decode cs =
-    match Udns.decode cs with
+    match Packet.decode cs with
     | Error e -> Error e
     | Ok (header, v, _, _) -> Ok (header, v)
 
@@ -479,12 +463,12 @@ module Packet = struct
              03 84 00 12 75 00 00 00 2a 30|___}
     in
     let header =
-      let flags = Udns.Header.FS.(add `Authoritative (add `Recursion_desired (singleton `Recursion_available))) in
-      { Udns.Header.id = 0xD4E4 ; query = false ; operation = Udns_enum.Query ;
+      let flags = Header.FS.(add `Authoritative (add `Recursion_desired (singleton `Recursion_available))) in
+      { Header.id = 0xD4E4 ; query = false ; operation = Udns_enum.Query ;
         rcode = Udns_enum.NXDomain ; flags }
     in
     let soa = {
-      Udns.Soa.nameserver = n_of_s "CON1R.NIPR.MIL" ;
+      Soa.nameserver = n_of_s "CON1R.NIPR.MIL" ;
       hostmaster =
         Domain_name.of_strings_exn ~hostname:false
           ["DANIEL.W.KNOPPS.CIV" ; "MAIL" ; "MIL" ] ;
@@ -498,7 +482,7 @@ module Packet = struct
                      answer = Domain_name.Map.empty ;
                      authority =
                        Domain_name.Map.singleton (n_of_s "150.138.in-addr.arpa")
-                         Udns.Map.(singleton Soa (0x2a30l, soa)) ;
+                         Umap.(singleton Soa (0x2a30l, soa)) ;
                      additional = Domain_name.Map.empty}))
                 (decode data))
 
@@ -508,12 +492,12 @@ module Packet = struct
                            01|___}
     in
     let header =
-      let flags = Udns.Header.FS.singleton `Recursion_desired in
-      { Udns.Header.id = 0x83D9 ; query = true ; operation = Udns_enum.Query ;
+      let flags = Header.FS.singleton `Recursion_desired in
+      { Header.id = 0x83D9 ; query = true ; operation = Udns_enum.Query ;
         rcode = Udns_enum.NoError ; flags }
     in
     Alcotest.(check (result q_ok p_err) "regression 1 decodes"
-                (Ok (header, `Query (Udns.query (n_of_s "keys.riseup.net", Udns_enum.AAAA))))
+                (Ok (header, `Query (Packet.Query.query (n_of_s "keys.riseup.net", Udns_enum.AAAA))))
                 (decode data))
 
   let regression2 () =
@@ -527,13 +511,13 @@ module Packet = struct
     in
     let header =
       let rcode = Udns_enum.NXDomain
-      and flags = Udns.Header.FS.singleton `Authoritative
+      and flags = Header.FS.singleton `Authoritative
       in
-      { Udns.Header.query = false ; id = 0xAE00 ; operation = Udns_enum.Query ;
+      { Header.query = false ; id = 0xAE00 ; operation = Udns_enum.Query ;
         rcode ; flags }
     in
     let soa = {
-      Udns.Soa.nameserver = n_of_s ~hostname:false "212.58.230.200" ;
+      Soa.nameserver = n_of_s ~hostname:false "212.58.230.200" ;
       hostmaster = n_of_s "bofh.bbc.co.uk" ;
       serial = 0x595cbdcel ; refresh = 0x00015180l ; retry = 0x00015180l ;
       expiry = 0x00015180l ; minimum = 0x0000012cl
@@ -543,7 +527,7 @@ module Packet = struct
                      question = (n_of_s "news.bbc.net.uk", Udns_enum.NS) ;
                      authority =
                        Domain_name.Map.singleton (n_of_s "bbc.net.uk")
-                         Udns.Map.(singleton Soa (0x0E10l, soa)) ;
+                         Umap.(singleton Soa (0x0E10l, soa)) ;
                      answer = Domain_name.Map.empty ;
                      additional = Domain_name.Map.empty }))
                 (decode data))
@@ -557,20 +541,20 @@ module Packet = struct
     in
     let header =
       let rcode = Udns_enum.NoError
-      and flags = Udns.Header.FS.(add `Recursion_desired (singleton `Recursion_available))
+      and flags = Header.FS.(add `Recursion_desired (singleton `Recursion_available))
       in
-      { Udns.Header.query = false ; id = 0xe213 ; operation = Udns_enum.Query ;
+      { Header.query = false ; id = 0xe213 ; operation = Udns_enum.Query ;
         rcode ; flags }
     in
     let question =
       (Domain_name.of_string_exn ~hostname:false "foo.com", Udns_enum.MX)
     and answer =
       let mx = {
-        Udns.Mx.preference = 1000 ;
+        Mx.preference = 1000 ;
         mail_exchange = Domain_name.of_string_exn ~hostname:false "0.0.0.0"
       } in
       Domain_name.Map.singleton (Domain_name.of_string_exn "foo.com")
-        Udns.Map.(singleton Mx (556l, Mx_set.singleton mx))
+        Umap.(singleton Mx (556l, Mx_set.singleton mx))
     and additional = Domain_name.Map.empty
     in
 (*      let opt = Udns_packet.opt ~payload_size:450 () in
@@ -594,19 +578,19 @@ module Packet = struct
     in
     let header =
       let rcode = Udns_enum.NXDomain in
-      { Udns.Header.query = false ; id = 0x9FCA ; operation = Udns_enum.Query ;
-        rcode ; flags = Udns.Header.FS.empty }
+      { Header.query = false ; id = 0x9FCA ; operation = Udns_enum.Query ;
+        rcode ; flags = Header.FS.empty }
     in
     let question =
       (Domain_name.of_string_exn ~hostname:false "_tcp.keys.riseup.net", Udns_enum.NS)
     and authority =
-      let soa = { Udns.Soa.nameserver = Domain_name.of_string_exn "primary.riseup.net" ;
+      let soa = { Soa.nameserver = Domain_name.of_string_exn "primary.riseup.net" ;
                   hostmaster = Domain_name.of_string_exn "collective.riseup.net" ;
                   serial = 0x78488b04l ; refresh = 0x1c20l ; retry = 0x0e10l ;
                   expiry = 0x127500l ; minimum = 0x012cl }
       in
       Domain_name.Map.singleton (Domain_name.of_string_exn "riseup.net")
-        Udns.Map.(singleton Soa (300l, soa))
+        Umap.(singleton Soa (300l, soa))
     and additional = Domain_name.Map.empty
 (*      let opt = Udns_packet.opt ~payload_size:4096 () in
         [ { name = Domain_name.root ; ttl = 0l ; rdata = OPTS opt } ] *)
@@ -625,16 +609,16 @@ module Packet = struct
     in
     let header =
       let rcode = Udns_enum.FormErr
-      and flags = Udns.Header.FS.singleton `Authoritative
+      and flags = Header.FS.singleton `Authoritative
       in
-      { Udns.Header.query = false ; id = 0x5B12 ; operation = Udns_enum.Query ;
+      { Header.query = false ; id = 0x5B12 ; operation = Udns_enum.Query ;
         rcode ; flags }
     in
     let question =
       (Domain_name.of_string_exn "ns4.bbc.net.uk", Udns_enum.NS)
     in
     Alcotest.(check (result q_ok p_err) "regression 5 decodes"
-                (Ok (header, `Query (Udns.query question)))
+                (Ok (header, `Query (Packet.Query.query question)))
                 (decode data))
 
 
@@ -867,8 +851,8 @@ module Packet = struct
     let header, update =
       let header =
         let rcode = Udns_enum.NoError in
-        { Udns.Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
-          rcode ; flags = Udns.Header.FS.empty }
+        { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
+          rcode ; flags = Header.FS.empty }
       and update = Remove_single (n_of_s "www.example.com", A Ipaddr.V4.localhost)
       and zone = { q_name = n_of_s "example.com" ; q_type = Udns_enum.SOA }
       in

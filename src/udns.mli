@@ -17,6 +17,12 @@ module Name : sig
   type offset_name_map = (Domain_name.t * int) IntMap.t
 
   type name_offset_map = int Domain_name.Map.t
+
+  val decode : ?hostname:bool -> offset_name_map -> Cstruct.t -> off:int ->
+    (Domain_name.t * offset_name_map * int, err) result
+
+  val encode : ?compress:bool -> Domain_name.t -> name_offset_map -> Cstruct.t ->
+    int -> name_offset_map * int
 end
 
 (* start of authority *)
@@ -363,6 +369,8 @@ module Header : sig
   val pp : t Fmt.t
 
   val decode : Cstruct.t -> (t, [> `BadOpcode of int | `BadRcode of int | `Partial ]) result
+
+  val encode : Cstruct.t -> t -> unit
 end
 
 module Question : sig
