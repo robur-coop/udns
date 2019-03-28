@@ -386,11 +386,12 @@ let handle_delegation t ts proto sender sport header v opt v' =
     begin match Udns_resolver_cache.answer t.cache ts q header.Udns.Header.id with
       | `Query (name, cache) ->
         (* parse v', which should contain an a record ask that for the very same query! *)
+        Logs.debug (fun m -> m "looking for %a" Domain_name.pp name) ;
         let t = { t with cache } in
         let ip =
-          match
-            Domain_name.Map.find name (match v' with `Query v -> v.Udns.additional | _ -> Domain_name.Map.empty)
-          with
+          let map = match v' with `Query v -> v.Udns.additional | _ -> Domain_name.Map.empty in
+          Logs.debug (fun m -> m "looking into %a" Udns.pp_map map) ;
+          match Domain_name.Map.find name map with
           | None -> assert false
           | Some rrmap ->
             let (_, ips) = Udns.Map.(get A rrmap) in
