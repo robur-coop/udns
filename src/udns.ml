@@ -1993,9 +1993,17 @@ let error header v rcode =
   else
     None
 
+type axfr = {
+  question : Question.t ;
+  zone : Domain_name.t ;
+  soa : (int32 * Soa.t) ;
+  rrs : (Domain_name.t * Map.b) list
+}
+
 type v = [
   | `Query of query
   | `Notify of query
+  | `Axfr of axfr
 ]
 
 (*BISECT-IGNORE-BEGIN*)

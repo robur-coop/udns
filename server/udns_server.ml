@@ -341,21 +341,15 @@ let lookup trie hdr (name, typ) =
     Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Udns.Map.(singleton Soa soa) })
   | Error `NotAuthoritative -> Error Udns_enum.NotAuth
 
-(*
-let axfr trie proto q zone =
+let axfr trie proto ((zone, _) as question) =
   (if proto = `Udp then begin
       Log.err (fun m -> m "refusing AXFR query via UDP") ;
       Error Udns_enum.Refused
     end else
      Ok ()) >>= fun () ->
   match Udns_trie.entries zone trie with
-  | Ok (soa, rrs) ->
-    let answer = soa :: rrs @ [ soa ]
-    and question = q.Udns_packet.question
-    and authority = []
-    and additional = []
-    in
-    Ok (`Query { Udns_packet.question ; answer ; authority ; additional })
+  | Ok (zname, soa, rrs) ->
+    Ok (`Axfr (question, zname, soa, rrs))
   | Error `Delegation _
   | Error `NotAuthoritative
   | Error `NotFound _ ->
@@ -363,21 +357,21 @@ let axfr trie proto q zone =
                  Domain_name.pp zone) ;
     Error Udns_enum.NXDomain
 
-let axfr t proto key q zone =
+let axfr t proto key ((zone, _) as question) =
   (if Authentication.authorise t.auth proto key zone `Key_management then begin
       Log.info (fun m -> m "key-management key %a authorised for AXFR %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
-                   Udns_packet.pp_query q) ;
+                   Udns.Question.pp question) ;
       Ok (Authentication.keys t.auth)
     end else if Authentication.authorise t.auth proto key zone `Transfer then begin
       Log.info (fun m -> m "transfer key %a authorised for AXFR %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
-                   Udns_packet.pp_query q) ;
+                   Udns.Question.pp question) ;
       Ok t.data
     end else
      Error Udns_enum.NotAuth) >>= fun trie ->
-  axfr trie proto q zone
-*)
+  axfr trie proto question
+
 let lookup t proto key hdr q =
   let trie =
     if Authentication.authorise t.auth proto key (fst q) `Key_management then begin
@@ -421,10 +415,10 @@ let handle_query t proto key header query =
   let q = query.Udns.question in
   let open Udns_enum in
   begin match snd q with
-(*      | AXFR ->
-        axfr t proto key query q.Udns_types.q_name >>= fun answer ->
+      | AXFR ->
+        axfr t proto key query.Udns.question >>= fun answer ->
         let hdr = s_header header in
-        Ok (hdr, answer) *)
+        Ok (hdr, answer)
       | A | NS | CNAME | SOA | PTR | MX | TXT | AAAA | SRV | ANY | CAA | SSHFP | TLSA | DNSKEY ->
         lookup t proto key header q
       | r ->
