@@ -301,11 +301,11 @@ let lookup trie hdr (name, typ) =
       | Error e -> Error e
   in
   match r with
-  | Ok (an, (name, ttl, ns)) ->
+  | Ok (an, (au, ttl, ns)) ->
     let answer = Domain_name.Map.singleton name an in
     let authority =
       Udns.Map.remove_sub
-        (Domain_name.Map.singleton name Udns.Map.(singleton Ns (ttl, ns)))
+        (Domain_name.Map.singleton au Udns.Map.(singleton Ns (ttl, ns)))
         answer
     in
     let additional =
