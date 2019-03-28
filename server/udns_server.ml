@@ -414,15 +414,12 @@ let handle_query t proto key header query =
   let q = query.Udns.question in
   let open Udns_enum in
   begin match snd q with
-      | AXFR ->
-        axfr t proto key query.Udns.question >>= fun answer ->
-        let hdr = s_header header in
-        Ok (hdr, answer)
-      | A | NS | CNAME | SOA | PTR | MX | TXT | AAAA | SRV | ANY | CAA | SSHFP | TLSA | DNSKEY ->
-        lookup t proto key header q
-      | r ->
-        Log.err (fun m -> m "refusing query type %a" Udns_enum.pp_rr_typ r) ;
-        Error Udns_enum.Refused
+    | AXFR -> assert false (* this won't happen, decoder constructs `Axfr *)
+    | A | NS | CNAME | SOA | PTR | MX | TXT | AAAA | SRV | ANY | CAA | SSHFP | TLSA | DNSKEY ->
+      lookup t proto key header q
+    | r ->
+      Log.err (fun m -> m "refusing query type %a" Udns_enum.pp_rr_typ r) ;
+      Error Udns_enum.Refused
   end
 (* TODO : on multiple or none question, return FormErr
   | qs ->
@@ -753,6 +750,7 @@ module Primary = struct
     match v, header.Udns.Header.query with
     | `Query q, true ->
       handle_query t proto key header q >>= fun answer ->
+      (* if there was a (transfer-key) signed SOA, and tcp, we add to notification list! *)
       let l' = match tcp_soa_query proto q, key with
         | Ok zone, Some key when Authentication.is_op `Transfer key ->
           let other (z, i, p) =
@@ -777,7 +775,12 @@ module Primary = struct
       in
         Ok ((t', l, ns), Some answer, out, None) *)
       assert false
-    | `Axfr _, true -> assert false
+    | `Axfr (question, None), true ->
+      axfr t proto key question >>= fun answer ->
+      let hdr = s_header header in
+      Ok ((t, l, ns), Some (hdr, answer), [], None)
+    | `Axfr (_, Some _), true ->
+      Error Udns_enum.FormErr
     | `Notify _, false ->
       let notifications =
         List.filter (fun (_, _, ip', _, hdr', _) ->
@@ -787,8 +790,8 @@ module Primary = struct
       Ok ((t, l, notifications), None, [], None)
     | _, false ->
       (* this happens when the other side is a tinydns and we're sending notify *)
-      Log.err (fun m -> m "ignoring unsolicited answer, replying with FormErr") ;
-      Error Udns_enum.FormErr
+      Log.err (fun m -> m "ignoring unsolicited answer") ;
+      Ok ((t, l, ns), None, [], None)
     | `Notify n, true ->
       Log.warn (fun m -> m "unsolicited notify request") ;
       let reply =
@@ -872,6 +875,11 @@ module Secondary = struct
     | Requested_soa of int64 * int * int * Cstruct.t
     | Requested_axfr of int64 * int * Cstruct.t
 
+  let id = function
+    | Transferred _ -> None
+    | Requested_soa (_, id, _, _) -> Some id
+    | Requested_axfr (_, id, _) -> Some id
+
   (* TODO undefined what happens if there are multiple transfer keys for zone x *)
   type s = t * (state * Ipaddr.V4.t * int * Domain_name.t) Domain_name.Map.t
 
@@ -953,8 +961,7 @@ module Secondary = struct
     let id, header = header t.rng ()
     and question = (q_name, Udns_enum.AXFR)
     in
-    let query = Udns.query question in
-    let buf, max_size = Udns.encode proto header (`Query query) in
+    let buf, max_size = Udns.encode proto header (`Axfr (question, None)) in
     match maybe_sign ~max_size t name now id buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_axfr (ts, id, mac), buf)
@@ -967,7 +974,7 @@ module Secondary = struct
     let buf, max_size = Udns.encode proto header (`Query query) in
     match maybe_sign ~max_size t name now id buf with
     | None -> None
-    | Some (buf, mac) -> Some (Requested_soa (ts, retry, id, mac), buf)
+    | Some (buf, mac) -> Some (Requested_soa (ts, id, retry, mac), buf)
 
   let timer (t, zones) p_now now =
     (* what is there to be done?
@@ -997,7 +1004,7 @@ module Secondary = struct
                  query_soa t `Tcp p_now now zone name
                else
                  None)
-          | Ok (_, soa), Requested_soa (ts, retry, _, _) ->
+          | Ok (_, soa), Requested_soa (ts, _, retry, _) ->
             let expiry = Duration.of_sec (Int32.to_int soa.Udns.Soa.expiry) in
             if Int64.add ts expiry < now then begin
               Log.warn (fun m -> m "expiry expired, dropping zone %a"
@@ -1012,7 +1019,7 @@ module Secondary = struct
                    query_soa ~retry t `Tcp p_now ts zone name
                  else
                    None)
-          | Error _, Requested_soa (ts, retry, _, _) ->
+          | Error _, Requested_soa (ts, _, retry, _) ->
             let e = Duration.of_sec 5 in
             maybe_out
               (if Int64.add ts e < now || ts = 0L then
@@ -1066,120 +1073,117 @@ module Secondary = struct
                        Domain_name.pp zone Udns_enum.pp_rr_typ t) ;
           Error Udns_enum.FormErr
 
-  (*
-  let check_valid_axfr zone rrs =
-    List.fold_left (fun r rr ->
-        r >>= fun (first, more) ->
-        guard more Udns_enum.FormErr >>= fun () ->
-        let is_soa =
-          match rr.Udns_packet.rdata with
-          | Udns_packet.SOA _ -> Domain_name.equal zone rr.Udns_packet.name
-          | _ -> false
-        in
-        (if first then
-           guard is_soa Udns_enum.FormErr >>= fun () ->
-           Ok true
-         else if is_soa then
-           Ok false
-         else
-           Ok true) >>= fun more ->
-        guard (in_zone zone rr.Udns_packet.name) Udns_enum.FormErr >>= fun () ->
-        (Ok (false, more)))
-      (Ok (true, true)) rrs >>= fun (first, more) ->
-    guard (not first && not more) Udns_enum.FormErr >>= fun () ->
-    match rrs with
-    | _soa::tl -> Ok tl
-    | [] -> Error Udns_enum.FormErr
-*)
+  let authorise should is =
+    let r = match is with
+      | None -> false
+      | Some x -> Domain_name.equal x should
+    in
+    if not r then
+      Log.warn (fun m -> m "%a is not authorised (should %a)"
+                   Fmt.(option ~none:(unit "no key") Domain_name.pp) is
+                   Domain_name.pp should) ;
+    r
+
+  let authorise_zone zones keyname header zone =
+    match Domain_name.Map.find zone zones with
+    | None ->
+      Log.warn (fun m -> m "ignoring %a, unknown zone" Domain_name.pp zone) ;
+      Error Udns_enum.Refused
+    | Some (st, ip, port, name) ->
+      (* TODO use NotAuth instead of Refused here? *)
+      guard (match id st with None -> true | Some id' -> header.Udns.Header.id = id')
+        Udns_enum.Refused >>= fun () ->
+      guard (authorise name keyname) Udns_enum.Refused >>| fun () ->
+      Log.debug (fun m -> m "authorized access to zone %a (with key %a)"
+                    Domain_name.pp zone Domain_name.pp name) ;
+      (st, ip, port, name)
+
+  let handle_axfr t zones ts keyname header (zone, _) axfr =
+    authorise_zone zones keyname header zone >>= fun (st, ip, port, name) ->
+    match st, axfr with
+    | Requested_axfr (_, _, _), Some axfr ->
+      (* TODO partial AXFR, but decoder already rejects them *)
+      Log.info (fun m -> m "received authorised AXFR for %a: %a"
+                   Domain_name.pp zone Udns.pp_axfr axfr) ;
+      (* SOA should be higher than ours! *)
+      (match Udns_trie.lookup zone Soa t.data with
+       | Error _ ->
+         Log.info (fun m -> m "no soa for %a, maybe first axfr" Domain_name.pp zone) ;
+         Ok ()
+       | Ok (_, soa) ->
+         if Udns.Soa.newer ~old:soa (snd axfr.Udns.soa) then
+           Ok ()
+         else begin
+           Log.warn (fun m -> m "AXFR for %a (%a) is not newer than ours (%a)"
+                        Domain_name.pp zone
+                        Udns.Soa.pp (snd axfr.Udns.soa) Udns.Soa.pp soa) ;
+           (* TODO what is the right error here? *)
+           Error Udns_enum.ServFail
+         end) >>= fun () ->
+      (* filter map to ensure that all entries are in the zone! *)
+      let entries =
+        Domain_name.Map.filter (fun name _ -> Domain_name.sub ~subdomain:name ~domain:zone)
+          axfr.entries
+      in
+      let trie =
+        let trie = Udns_trie.remove_zone zone t.data in
+        let trie = Udns_trie.insert zone Udns.Map.Soa axfr.Udns.soa trie in
+        Udns_trie.insert_map entries trie
+      in
+      let zones = Domain_name.Map.add zone (Transferred ts, ip, port, name) zones in
+      Ok ({ t with data = trie }, zones, [])
+    | _ ->
+      Log.warn (fun m -> m "ignoring AXFR %a unmatched state" Domain_name.pp zone) ;
+      Error Udns_enum.Refused
 
   let handle_answer t zones now ts keyname header query =
     let (zone, typ) = query.Udns.question in
-    match Domain_name.Map.find zone zones with
-    | None ->
-      Log.warn (fun m -> m "ignoring %a (%a), unknown zone"
+    authorise_zone zones keyname header zone >>= fun (st, ip, port, name) ->
+    match st with
+    | Requested_soa (_, _, retry, _) ->
+      Log.debug (fun m -> m "received SOA after %d retries" retry) ;
+      (* request AXFR now in case of serial is higher! *)
+      begin match
+          Udns_trie.lookup zone Udns.Map.Soa t.data,
+          Udns.Map.find_entry query.Udns.answer zone Soa
+        with
+        | _, None ->
+          Log.err (fun m -> m "didn't receive SOA for %a from %a (answer %a)"
+                      Domain_name.pp zone Ipaddr.V4.pp ip Udns.pp_map query.Udns.answer) ;
+          Error Udns_enum.FormErr
+        | Ok (_, cached_soa), Some (_, fresh) ->
+          (* TODO: > with wraparound in mind *)
+          if Udns.Soa.newer ~old:cached_soa fresh then
+            match axfr t `Tcp now ts zone name with
+            | None ->
+              Log.warn (fun m -> m "trouble creating axfr for %a (using %a)"
+                           Domain_name.pp zone Domain_name.pp name) ;
+              (* TODO: reset state? *)
+              Ok (t, zones, [])
+            | Some (st, buf) ->
+              Log.debug (fun m -> m "requesting AXFR for %a now!" Domain_name.pp zone) ;
+              let zones = Domain_name.Map.add zone (st, ip, port, name) zones in
+              Ok (t, zones, [ (`Tcp, ip, port, buf) ])
+          else begin
+            Log.info (fun m -> m "received soa (%a) for %a is not newer than cached (%a), moving on"
+                         Udns.Soa.pp fresh Domain_name.pp zone Udns.Soa.pp cached_soa) ;
+            let zones = Domain_name.Map.add zone (Transferred ts, ip, port, name) zones in
+            Ok (t, zones, [])
+          end
+        | Error _, _ ->
+          Log.info (fun m -> m "couldn't find soa, requesting AXFR") ;
+          begin match axfr t `Tcp now ts zone name with
+            | None -> Log.warn (fun m -> m "trouble building axfr") ; Ok (t, zones, [])
+            | Some (st, buf) ->
+              Log.debug (fun m -> m "requesting AXFR for %a now!" Domain_name.pp zone) ;
+              let zones = Domain_name.Map.add zone (st, ip, port, name) zones in
+              Ok (t, zones, [ (`Tcp, ip, port, buf) ])
+          end
+      end
+    | _ ->
+      Log.warn (fun m -> m "ignoring %a (%a) unmatched state"
                    Domain_name.pp zone Udns_enum.pp_rr_typ typ) ;
       Error Udns_enum.Refused
-    | Some (st, ip, port, name) ->
-      Log.debug (fun m -> m "in %a (name %a) got answer %a"
-                    Domain_name.pp zone Domain_name.pp name
-                    Udns.pp_map query.Udns.answer) ;
-      (* TODO use NotAuth instead of Refused here? *)
-      Rresult.R.of_option
-        ~none:(fun () ->
-            Log.err (fun m -> m "refusing (not authenticated)") ;
-            Error Udns_enum.Refused)
-        keyname >>= fun key_name ->
-      guard (Domain_name.equal name key_name) Udns_enum.Refused >>= fun () ->
-      begin match st, typ with
-        | Requested_axfr (_, id', _), Udns_enum.AXFR when header.Udns.Header.id = id' ->
-          Logs.info (fun m -> m "received AXFR (key %a) for %a: %a"
-                        Domain_name.pp key_name Domain_name.pp zone
-                        Udns.pp_query query) ;
-          (* TODO if incomplete, accumulate rr in state till complete *)
-          (* (a) check completeness of AXFR:  *)
-          (* (b) build vs from query.answer *)
-          (* (c) drop zone from trie *)
-          (* (d) insert vs into trie *)
-          (* first ensure that all entries are in the zone! *)
-          (* TODO check_valid_axfr zone query.Udns_packet.answer >>= fun rrs -> *)
-          (* TODO verify all records are within the zone *)
-          let trie =
-            let trie = Udns_trie.remove_zone zone t.data in
-            Udns_trie.insert_map query.Udns.answer trie
-          in
-          let zones = Domain_name.Map.add zone (Transferred ts, ip, port, name) zones in
-          Ok ({ t with data = trie }, zones, [])
-        | Requested_soa (_, retry, id', _), Udns_enum.SOA when header.Udns.Header.id = id' ->
-          Log.debug (fun m -> m "received SOA after %d retries" retry) ;
-          (* request AXFR now in case of serial is higher! *)
-          begin match Udns_trie.lookup zone Udns.Map.Soa t.data with
-            | Ok (_, cached_soa) ->
-              begin match Domain_name.Map.find zone query.Udns.answer with
-                | None ->
-                  Log.err (fun m -> m "didn't get an answer for %a from %a"
-                              Domain_name.pp zone Ipaddr.V4.pp ip) ;
-                  Error Udns_enum.FormErr
-                | Some rrmap ->
-                  match Udns.Map.(find Soa rrmap) with
-                  | None ->
-                    Log.err (fun m -> m "didn't get a SOA answer for %a from %a"
-                                Domain_name.pp zone Ipaddr.V4.pp ip) ;
-                    Error Udns_enum.FormErr
-                  | Some (_, fresh) ->
-                    (* TODO: > with wraparound in mind *)
-                    if fresh.Udns.Soa.serial > cached_soa.Udns.Soa.serial then
-                      match axfr t `Tcp now ts zone name with
-                      | None ->
-                        Log.warn (fun m -> m "trouble creating axfr for %a (using %a)"
-                                     Domain_name.pp zone Domain_name.pp name) ;
-                        (* TODO: reset state? *)
-                        Ok (t, zones, [])
-                      | Some (st, buf) ->
-                        Log.debug (fun m -> m "requesting AXFR for %a now!" Domain_name.pp zone) ;
-                        let zones = Domain_name.Map.add zone (st, ip, port, name) zones in
-                        Ok (t, zones, [ (`Tcp, ip, port, buf) ])
-                    else begin
-                      Log.info (fun m -> m "received soa (%a) for %a is not newer than cached (%a), moving on"
-                                   Udns.Soa.pp fresh Domain_name.pp zone Udns.Soa.pp cached_soa) ;
-                        let zones = Domain_name.Map.add zone (Transferred ts, ip, port, name) zones in
-                        Ok (t, zones, [])
-                      end
-                  end
-                | Error _ ->
-                  Log.info (fun m -> m "couldn't find soa, requesting AXFR") ;
-                  begin match axfr t `Tcp now ts zone name with
-                    | None -> Log.warn (fun m -> m "trouble building axfr") ; Ok (t, zones, [])
-                    | Some (st, buf) ->
-                      Log.debug (fun m -> m "requesting AXFR for %a now!" Domain_name.pp zone) ;
-                      let zones = Domain_name.Map.add zone (st, ip, port, name) zones in
-                      Ok (t, zones, [ (`Tcp, ip, port, buf) ])
-                  end
-              end
-            | _ ->
-              Log.warn (fun m -> m "ignoring %a (%a) unmatched state"
-                           Domain_name.pp zone Udns_enum.pp_rr_typ typ) ;
-              Error Udns_enum.Refused
-          end
 
 (*
   let handle_update t zones now ts proto keyname u =
@@ -1237,9 +1241,14 @@ module Secondary = struct
       in
         Ok (t', Some answer, out) *)
       assert false
-    | `Axfr _, _ -> assert false
-    | `Update _, false -> (* TODO: answer from primary, need to forward to client *)
+    | `Axfr _, true ->
       Error Udns_enum.FormErr
+    | `Axfr (q, axfr), false ->
+      handle_axfr t zones ts keyname header q axfr >>= fun (t, zones, out) ->
+      Ok ((t, zones), None, out)
+    | `Update _, false -> (* TODO: answer from primary, need to forward to client *)
+      (* don't reply to replies *)
+      Ok ((t, zones), None, [])
     | `Notify n, true ->
       handle_notify t zones now ts ip n >>= fun (zones, out) ->
       let answer =
@@ -1251,15 +1260,18 @@ module Secondary = struct
       Log.err (fun m -> m "ignoring notify response (we don't send notifications)") ;
       Ok ((t, zones), None, [])
 
-  let find_mac zones header = function
+  let find_mac zones header v =
+    let find_in_zones name = match Domain_name.Map.find name zones with
+      | None -> None
+      | Some (Requested_axfr (_, _, mac), _, _, _) -> Some mac
+      | Some (Requested_soa (_, _, _, mac), _, _, _) -> Some mac
+      | _ -> None
+    in
+    match v with
     | `Query q when not header.Udns.Header.query ->
       let (name, _) = q.Udns.question in
-      begin match Domain_name.Map.find name zones with
-        | None -> None
-        | Some (Requested_axfr (_, _id_, mac), _, _, _) -> Some mac
-        | Some (Requested_soa (_, _, _id, mac), _, _, _) -> Some mac
-        | _ -> None
-      end
+      find_in_zones name
+    | `Axfr ((name, _), _) -> find_in_zones name
     | _ -> None
 
   let handle (t, zones) now ts proto ip buf =
