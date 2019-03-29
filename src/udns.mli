@@ -2,29 +2,6 @@
 
 type proto = [ `Tcp | `Udp ]
 
-module Name : sig
-  module IntMap : Map.S with type key = int
-
-  type err =
-    [ `Partial
-    | `BadOffset of int
-    | `BadTag of int
-    | `BadContent of string
-    | `TooLong ]
-
-  val pp_err : err Fmt.t
-
-  type offset_name_map = (Domain_name.t * int) IntMap.t
-
-  type name_offset_map = int Domain_name.Map.t
-
-  val decode : ?hostname:bool -> offset_name_map -> Cstruct.t -> off:int ->
-    (Domain_name.t * offset_name_map * int, err) result
-
-  val encode : ?compress:bool -> Domain_name.t -> name_offset_map -> Cstruct.t ->
-    int -> name_offset_map * int
-end
-
 (* start of authority *)
 module Soa : sig
   type t = {
@@ -352,6 +329,17 @@ end
 
 module Packet : sig
 
+  type err = [
+    | `Invalid of int * string * int
+    | `Invalids of int * string * string
+    | `Leftover of int * string
+    | `Malformed of int * string
+    | `Partial
+    | `Bad_edns_version of int
+  ]
+
+  val pp_err : err Fmt.t
+
   module Header : sig
     module Flags : sig
       type t = [
@@ -382,9 +370,23 @@ module Packet : sig
 
     val pp : t Fmt.t
 
-    val decode : Cstruct.t -> (t, [> `BadOpcode of int | `BadRcode of int | `Partial ]) result
+    val decode : Cstruct.t -> (t, err) result
 
     val encode : Cstruct.t -> t -> unit
+  end
+
+  module Name : sig
+    module IntMap : Map.S with type key = int
+
+    type offset_name_map = (Domain_name.t * int) IntMap.t
+
+    type name_offset_map = int Domain_name.Map.t
+
+    val decode : ?hostname:bool -> offset_name_map -> Cstruct.t -> off:int ->
+      (Domain_name.t * offset_name_map * int, err) result
+
+    val encode : ?compress:bool -> Domain_name.t -> name_offset_map -> Cstruct.t ->
+      int -> name_offset_map * int
   end
 
   module Question : sig
@@ -393,18 +395,8 @@ module Packet : sig
     val pp : t Fmt.t
     val compare : t -> t -> int
 
-    val decode : (Domain_name.t * int) Name.IntMap.t -> Cstruct.t ->
-      Name.IntMap.key ->
-      ((Domain_name.t * Udns_enum.rr_typ) * (Domain_name.t * int) Name.IntMap.t *
-       int,
-       [> `BadClass of Cstruct.uint16
-       | `BadContent of string
-       | `BadOffset of Name.IntMap.key
-       | `BadRRTyp of Cstruct.uint16
-       | `BadTag of Cstruct.uint8
-       | `Partial
-       | `TooLong
-       | `UnsupportedClass of Udns_enum.clas ]) result
+    val decode : Name.offset_name_map -> Cstruct.t -> Name.IntMap.key ->
+      (t * Name.offset_name_map * int, err) result
   end
 
   module Query : sig
@@ -487,44 +479,6 @@ module Packet : sig
   type res = Header.t * t * Edns.t option * (Domain_name.t * Tsig.t * int) option
 
   val pp_res : res Fmt.t
-
-  type err = [
-    | `BadAlgorithm of int
-    | `BadCaaTag
-    | `BadClass of int
-    | `BadContent of string
-    | `BadEdns
-    | `BadKeepalive
-    | `BadOffset of int
-    | `BadOpcode of int
-    | `BadProto of int
-    | `BadRRTyp of int
-    | `BadRcode of int
-    | `BadSshfpAlgorithm of int
-    | `BadSshfpType of int
-    | `BadTTL of int32
-    | `BadTag of int
-    | `BadTlsaCertUsage of int
-    | `BadTlsaMatchingType of int
-    | `BadTlsaSelector of int
-    | `Bad_edns_version of int
-    | `InvalidAlgorithm of Domain_name.t
-    | `InvalidTimestamp of int64
-    | `InvalidZoneCount of int
-    | `InvalidZoneRR of Udns_enum.rr_typ
-    | `Invalid_axfr of string
-    | `LeftOver
-    | `NonZeroRdlen of int
-    | `NonZeroTTL of int32
-    | `None_or_multiple_questions
-    | `Partial
-    | `TooLong
-    | `UnsupportedClass of Udns_enum.clas
-    | `UnsupportedOpcode of Udns_enum.opcode
-    | `UnsupportedRRTyp of Udns_enum.rr_typ
-  ]
-
-  val pp_err : err Fmt.t
 
   val decode : Cstruct.t -> (res, err) result
 
