@@ -1061,14 +1061,22 @@ module Secondary = struct
         Domain_name.Map.filter (fun name _ -> Domain_name.sub ~subdomain:name ~domain:zone)
           axfr.entries
       in
-      let trie =
+      let trie' =
         let trie = Udns_trie.remove_zone zone t.data in
         (* insert SOA explicitly - it's not part of entries (should it be?) *)
         let trie = Udns_trie.insert zone Umap.Soa axfr.Packet.Axfr.soa trie in
         Udns_trie.insert_map entries trie
       in
+      (* check new trie *)
+      (match Udns_trie.check trie' with
+        | Ok () ->
+          Log.info (fun m -> m "zone %a transferred, and life %a"
+                       Domain_name.pp zone Soa.pp axfr.Packet.Axfr.soa)
+        | Error err ->
+          Log.warn (fun m -> m "check on transferred zone %a failed: %a"
+                       Domain_name.pp zone Udns_trie.pp_err err)) ;
       let zones = Domain_name.Map.add zone (Transferred ts, ip, port, name) zones in
-      Ok ({ t with data = trie }, zones, [])
+      Ok ({ t with data = trie' }, zones, [])
     | _ ->
       Log.warn (fun m -> m "ignoring AXFR %a unmatched state" Domain_name.pp zone) ;
       Error Udns_enum.Refused
