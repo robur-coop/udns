@@ -37,17 +37,20 @@ val equal : t -> t -> bool
 val insert_map : Umap.t Domain_name.Map.t -> t -> t
 (** [insert_map m t] inserts all elements of the domain name map [m] into [t]. *)
 
-val insert : Domain_name.t -> 'a Umap.key -> 'a -> t -> t
+val insert : Domain_name.t -> 'a Umap.k -> 'a -> t -> t
 (** [insert n k v t] insert [k, v] under [n] in [t].  Existing entries are replaced. *)
 
 val insertb : Domain_name.t -> Umap.b -> t -> t
 (** [insertb k b t] insert [b] under [k] in [t].  The type is already included in
     [b].  Existing entries are replaced. *)
 
-val remove : Domain_name.t -> Udns_enum.rr_typ -> t -> t
-(** [remove k ty t] removes [k, ty] from [t].  If [ty] is {!Udns_enum.ANY}, all
+val remove_rr : Domain_name.t -> Udns_enum.rr_typ -> t -> t
+(** [remove_rr k ty t] removes [k, ty] from [t].  If [ty] is {!Udns_enum.ANY}, all
     entries of [k] are removed.  Beware, this may lead to a [t] where the
     initially mentioned invariants are violated. *)
+
+val remove : Domain_name.t -> 'a Umap.k -> t -> t
+(** [remove k key t] removes [k, ty] from [t]. *)
 
 val remove_zone : Domain_name.t -> t -> t
 (** [remove_zone name t] remove the zone [name] from [t], retaining subzones

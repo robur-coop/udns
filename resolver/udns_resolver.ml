@@ -108,7 +108,7 @@ let maybe_query ?recursion_desired t ts retry out ip typ name (proto, zone, edns
     let t = { t with queried = QM.add k (await :: QM.find k t.queried) t.queried } in
     `Nothing, t
   else
-    let edns = Some (Edns.edns ())
+    let edns = Some (Edns.create ())
     and proto = `Udp
     in
     (* TODO: is `Udp good here? *)
@@ -506,7 +506,7 @@ let query_root t now proto =
   and id = Randomconv.int16 t.rng
   in
   let packet = `Query (Packet.Query.create q) in
-  let edns = Some (Edns.edns ()) in
+  let edns = Some (Edns.create ()) in
   let el = (now, 0, proto, Domain_name.root, edns, ip, 53, q, id) in
   let t = { t with transit = QM.add q el t.transit ; cache } in
   let cs, _ = Packet.encode ?edns proto (header id) packet in

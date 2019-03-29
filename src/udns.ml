@@ -857,7 +857,7 @@ module Edns = struct
     extensions : extension list ;
   }
 
-  let edns ?(extended_rcode = 0) ?(version = 0) ?(dnssec_ok = false)
+  let create ?(extended_rcode = 0) ?(version = 0) ?(dnssec_ok = false)
       ?(payload_size = 512) ?(extensions = []) () =
     { extended_rcode ; version ; dnssec_ok ; payload_size ; extensions }
 
@@ -866,7 +866,7 @@ module Edns = struct
     | None -> None, None
     | Some opt ->
       let payload_size = opt.payload_size in
-      Some payload_size, Some (edns ~payload_size ())
+      Some payload_size, Some (create ~payload_size ())
 
   let compare_extension a b = match a, b with
     | Nsid a, Nsid b -> Cstruct.compare a b
@@ -1130,24 +1130,62 @@ module Umap = struct
           rr offs (Txt.encode txt) off ttl, succ count)
         txts ((offs, off), 0)
 
-  let combine : type a. a k -> a -> a option -> a option = fun k v old ->
+  let combine_k : type a. a k -> a -> a -> a = fun k v old ->
     match k, v, old with
-    | _, v, None -> Some v
-    | t, v, Some old ->
-      Some (match t, v, old with
-          | Cname, _, cname -> cname
-          | Mx, (_, mxs), (ttl, mxs') -> (ttl, Mx_set.union mxs mxs')
-          | Ns, (_, ns), (ttl, ns') -> (ttl, Domain_name.Set.union ns ns')
-          | Ptr, _, ptr -> ptr
-          | Soa, _, soa -> soa
-          | Txt, (_, txts), (ttl, txts') -> (ttl, Txt_set.union txts txts')
-          | A, (_, ips), (ttl, ips') -> (ttl, Ipv4_set.union ips ips')
-          | Aaaa, (_, ips), (ttl, ips') -> (ttl, Ipv6_set.union ips ips')
-          | Srv, (_, srvs), (ttl, srvs') -> (ttl, Srv_set.union srvs srvs')
-          | Dnskey, (_, keys), (ttl, keys') -> (ttl, Dnskey_set.union keys keys')
-          | Caa, (_, caas), (ttl, caas') -> (ttl, Caa_set.union caas caas')
-          | Tlsa, (_, tlsas), (ttl, tlsas') -> (ttl, Tlsa_set.union tlsas tlsas')
-          | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, Sshfp_set.union sshfps sshfps'))
+    | Cname, _, cname -> cname
+    | Mx, (_, mxs), (ttl, mxs') -> (ttl, Mx_set.union mxs mxs')
+    | Ns, (_, ns), (ttl, ns') -> (ttl, Domain_name.Set.union ns ns')
+    | Ptr, _, ptr -> ptr
+    | Soa, _, soa -> soa
+    | Txt, (_, txts), (ttl, txts') -> (ttl, Txt_set.union txts txts')
+    | A, (_, ips), (ttl, ips') -> (ttl, Ipv4_set.union ips ips')
+    | Aaaa, (_, ips), (ttl, ips') -> (ttl, Ipv6_set.union ips ips')
+    | Srv, (_, srvs), (ttl, srvs') -> (ttl, Srv_set.union srvs srvs')
+    | Dnskey, (_, keys), (ttl, keys') -> (ttl, Dnskey_set.union keys keys')
+    | Caa, (_, caas), (ttl, caas') -> (ttl, Caa_set.union caas caas')
+    | Tlsa, (_, tlsas), (ttl, tlsas') -> (ttl, Tlsa_set.union tlsas tlsas')
+    | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, Sshfp_set.union sshfps sshfps')
+
+  let combine : type a. a k -> a -> a option -> a option = fun k v old ->
+    match v, old with
+    | v, None -> Some v
+    | v, Some old -> Some (combine_k k v old)
+
+let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
+    match k, v, rem with
+    | Cname, _, cname -> None
+    | Mx, (ttl, mxs), (_, rm) ->
+      let s = Mx_set.diff mxs rm in
+      if Mx_set.is_empty s then None else Some (ttl, s)
+    | Ns, (ttl, ns), (_, rm) ->
+      let s = Domain_name.Set.diff ns rm in
+      if Domain_name.Set.is_empty s then None else Some (ttl, s)
+    | Ptr, _, _ -> None
+    | Soa, (ttl, soa), _ -> Some (ttl, soa) (* don't remove my soa *)
+    | Txt, (ttl, txts), (_, rm) ->
+      let s = Txt_set.diff txts rm in
+      if Txt_set.is_empty s then None else Some (ttl, s)
+    | A, (ttl, ips), (_, rm) ->
+      let s = Ipv4_set.diff ips rm in
+      if Ipv4_set.is_empty s then None else Some (ttl, s)
+    | Aaaa, (ttl, ips), (_, rm) ->
+      let s = Ipv6_set.diff ips rm in
+      if Ipv6_set.is_empty s then None else Some (ttl, s)
+    | Srv, (ttl, srvs), (_, rm) ->
+      let s = Srv_set.diff srvs rm in
+      if Srv_set.is_empty s then None else Some (ttl, s)
+    | Dnskey, (ttl, keys), (_, rm) ->
+      let s = Dnskey_set.diff keys rm in
+      if Dnskey_set.is_empty s then None else Some (ttl, s)
+    | Caa, (ttl, caas), (_, rm) ->
+      let s = Caa_set.diff caas rm in
+      if Caa_set.is_empty s then None else Some (ttl, s)
+    | Tlsa, (ttl, tlsas), (_, rm) ->
+      let s = Tlsa_set.diff tlsas rm in
+      if Tlsa_set.is_empty s then None else Some (ttl, s)
+    | Sshfp, (ttl, sshfps), (_, rm) ->
+      let s = Sshfp_set.diff sshfps rm in
+      if Sshfp_set.is_empty s then None else Some (ttl, s)
 
   let text : type a. ?origin:Domain_name.t -> ?default_ttl:int32 ->
     Domain_name.t -> a k -> a -> string = fun ?origin ?default_ttl n t v ->
@@ -2335,7 +2373,7 @@ module Packet = struct
       Header.encode errbuf header ;
       let encode query =
         let off = Query.encode errbuf query in
-      encode_edns header (Some (Edns.edns ())) errbuf off
+      encode_edns header (Some (Edns.create ())) errbuf off
       in
       let off = encode query in
       Some (Cstruct.sub errbuf 0 off, max_reply_udp)

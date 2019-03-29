@@ -370,6 +370,13 @@ let remove_aux k t a =
 
 let remove k ty t =
   let remove sub map =
+    let map' = Umap.remove ty map in
+    N (sub, map')
+  in
+  remove_aux k t remove
+
+let remove_rr k ty t =
+  let remove sub map =
     if ty = Udns_enum.ANY then
       N (sub, Umap.empty)
     else

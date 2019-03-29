@@ -137,12 +137,12 @@ module Trie = struct
                 "lookup for MX foo.com (after insert) is NoData"
                 (Error (`EmptyNonTerminal (n_of_s "foo.com", (4l, soa))))
                 (lookupb (n_of_s "foo.com") Udns_enum.MX t)) ;
-    let t = remove (n_of_s "foo.com") Udns_enum.A t in
+    let t = remove_rr (n_of_s "foo.com") Udns_enum.A t in
     Alcotest.(check (result l_ok e)
                 "lookup for A foo.com (after insert and remove) is NoData"
                 (Error (`EmptyNonTerminal (n_of_s "foo.com", (4l, soa))))
                 (lookupb (n_of_s "foo.com") Udns_enum.A t)) ;
-    let t = remove (n_of_s "foo.com") Udns_enum.ANY t in
+    let t = remove_rr (n_of_s "foo.com") Udns_enum.ANY t in
     Alcotest.(check (result l_ok e)
                 "lookup for SOA foo.com (after remove) is NotAuthoritative"
                 (Error `NotAuthoritative)

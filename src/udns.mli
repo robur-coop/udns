@@ -244,7 +244,7 @@ module Edns : sig
     extensions : extension list ;
   }
 
-  val edns : ?extended_rcode:int -> ?version:int -> ?dnssec_ok:bool ->
+  val create : ?extended_rcode:int -> ?version:int -> ?dnssec_ok:bool ->
     ?payload_size:int -> ?extensions:extension list -> unit -> t
 
   (* once we handle cookies, dnssec, or other extensions, need to adjust *)
@@ -289,6 +289,7 @@ module Umap : sig
     | Sshfp : (int32 * Sshfp_set.t) k
     | Txt : (int32 * Txt_set.t) k
 
+  val equal_k : 'a k -> 'a -> 'b k -> 'b -> bool
 
   include Gmap.S with type 'a key = 'a k
 
@@ -322,6 +323,9 @@ module Umap : sig
   (** [text ~origin ~default_ttl domain-name binding] is the zone file format of [binding] using
       [domain-name]. *)
 
+  val subtract_k : 'a k -> 'a -> 'a -> 'a option
+
+  val combine_k : 'a k -> 'a -> 'a -> 'a
   val combine : 'a k -> 'a -> 'a option -> 'a option
 
   val text : ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> 'a k -> 'a -> string
