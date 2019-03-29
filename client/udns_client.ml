@@ -4,7 +4,7 @@ type 'key query_state =
   { protocol : Udns.proto ;
     key: 'key ;
     header : Packet.Header.t ;
-    question : Udns.Question.t ; (* we only handle one *)
+    question : Packet.Question.t ; (* we only handle one *)
   } constraint 'key = 'a Umap.key
 
 let make_query protocol hostname
@@ -56,7 +56,7 @@ let parse_response (type requested)
           query = false; _ },
          `Query resp, _edns (* what is flags? *), _tsig)
     when hdr_id = state.header.id
-      && Udns.Question.compare resp.question state.question = 0
+      && Packet.Question.compare resp.question state.question = 0
     ->
     let rec follow_cname counter q_name =
       if counter <= 0 then Error (`Msg "CNAME recursion too deep")
@@ -66,7 +66,7 @@ let parse_response (type requested)
             R.error_msgf "Can't find relevant map in response:@ \
                           %a in [%a]"
               Domain_name.pp q_name
-              Packet.pp_data resp.answer
+              Name_map.pp resp.answer
           ) >>= fun relevant_map ->
         begin match Umap.find state.key relevant_map with
           | Some response -> Ok response
@@ -84,7 +84,7 @@ let parse_response (type requested)
       "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a  opt:%a tsig:%B@,@]"
       Packet.Header.pp h
       h.id state.header.id
-      (Udns.Question.compare q.question state.question = 0)
+      (Packet.Question.compare q.question state.question = 0)
       Packet.Query.pp q
       (Fmt.option Udns.Edns.pp) edns
       (match tsig with None -> false | Some _ -> true)

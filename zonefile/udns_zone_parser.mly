@@ -49,7 +49,7 @@ let parse_uint32 s =
 let parse_ipv6 s =
   Ipaddr.V6.of_string_exn s
 
-open Udns.Umap
+open Udns
 %}
 
 %token EOF
@@ -83,7 +83,7 @@ open Udns.Umap
 %token <string> CLASS_HS
 
 %start zfile
-%type <Udns.Packet.data> zfile
+%type <Udns.Name_map.t> zfile
 
 %%
 
@@ -103,11 +103,11 @@ origin: SORIGIN s domain { state.origin <- $3 }
 ttl: STTL s int32 { state.ttl <- $3 }
 
 rrline:
-   owner s int32 s rrclass s rr { state.zone <- add_entry $1 (with_ttl $7 $3) state.zone }
- | owner s rrclass s int32 s rr { state.zone <- add_entry $1 (with_ttl $7 $5) state.zone  }
- | owner s rrclass s rr { state.zone <- add_entry $1 (with_ttl $5 state.ttl) state.zone }
- | owner s int32 s rr { state.zone <- add_entry $1 (with_ttl $5 $3) state.zone }
- | owner s rr { state.zone <- add_entry $1 (with_ttl $3 state.ttl) state.zone }
+   owner s int32 s rrclass s rr { state.zone <- Name_map.add $1 (Umap.with_ttl $7 $3) state.zone }
+ | owner s rrclass s int32 s rr { state.zone <- Name_map.add $1 (Umap.with_ttl $7 $5) state.zone  }
+ | owner s rrclass s rr { state.zone <- Name_map.add $1 (Umap.with_ttl $5 state.ttl) state.zone }
+ | owner s int32 s rr { state.zone <- Name_map.add $1 (Umap.with_ttl $5 $3) state.zone }
+ | owner s rr { state.zone <- Name_map.add $1 (Umap.with_ttl $3 state.ttl) state.zone }
 
 rrclass:
    CLASS_IN {}
@@ -117,19 +117,18 @@ rrclass:
 
 rr:
      /* RFC 1035 */
- | TYPE_A s ipv4 { B (A, (0l, Ipv4_set.singleton $3)) }
+ | TYPE_A s ipv4 { B (A, (0l, Umap.Ipv4_set.singleton $3)) }
  | TYPE_NS s domain { B (Ns, (0l, Domain_name.Set.singleton $3)) }
  | TYPE_CNAME s domain { B (Cname, (0l, $3)) }
  | TYPE_SOA s domain s domain s int32 s int32 s int32 s int32 s int32
-     { B (Soa, { Udns.Soa.nameserver = $3 ; hostmaster = $5 ;
-                 serial = $7 ; refresh = $9 ; retry = $11 ; expiry = $13 ;
-                 minimum = $15 }) }
+     { B (Soa, { Soa.nameserver = $3 ; hostmaster = $5 ; serial = $7 ;
+                 refresh = $9 ; retry = $11 ; expiry = $13 ; minimum = $15 }) }
  | TYPE_PTR s domain { B (Ptr, (0l, $3)) }
- | TYPE_MX s int16 s domain { B (Mx, (0l, Mx_set.singleton { Udns.Mx.preference = $3 ; mail_exchange = $5 })) }
- | TYPE_TXT s charstrings { B (Txt, (0l, Txt_set.of_list $3)) }
+ | TYPE_MX s int16 s domain { B (Mx, (0l, Umap.Mx_set.singleton { Mx.preference = $3 ; mail_exchange = $5 })) }
+ | TYPE_TXT s charstrings { B (Txt, (0l, Umap.Txt_set.of_list $3)) }
      /* RFC 2782 */
  | TYPE_SRV s int16 s int16 s int16 s domain
-     { B (Srv, (0l, Srv_set.singleton { Udns.Srv.priority = $3 ; weight = $5 ; port = $7 ; target = $9 })) }
+     { B (Srv, (0l, Umap.Srv_set.singleton { Srv.priority = $3 ; weight = $5 ; port = $7 ; target = $9 })) }
      /* RFC 3596 */
  | TYPE_TLSA s int8 s int8 s int8 s hex
      { match
@@ -138,8 +137,8 @@ rr:
          Udns_enum.int_to_tlsa_matching_type $7
        with
        | Some tlsa_cert_usage, Some tlsa_selector, Some tlsa_matching_type ->
-          let tlsa = { Udns.Tlsa.tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data = $9 } in
-          B (Tlsa, (0l, Tlsa_set.singleton tlsa ))
+          let tlsa = { Tlsa.tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data = $9 } in
+          B (Tlsa, (0l, Umap.Tlsa_set.singleton tlsa ))
        | _ -> raise Parsing.Parse_error
      }
  | TYPE_SSHFP s int8 s int8 s hex
@@ -148,24 +147,24 @@ rr:
          Udns_enum.int_to_sshfp_type $5
        with
        | Some sshfp_algorithm, Some sshfp_type ->
-          let sshfp = { Udns.Sshfp.sshfp_algorithm ; sshfp_type ; sshfp_fingerprint = $7 } in
-          B (Sshfp, (0l, Sshfp_set.singleton sshfp))
+          let sshfp = { Sshfp.sshfp_algorithm ; sshfp_type ; sshfp_fingerprint = $7 } in
+          B (Sshfp, (0l, Umap.Sshfp_set.singleton sshfp))
        | _ -> raise Parsing.Parse_error
      }
- | TYPE_AAAA s ipv6 { B (Aaaa, (0l, Ipv6_set.singleton $3)) }
+ | TYPE_AAAA s ipv6 { B (Aaaa, (0l, Umap.Ipv6_set.singleton $3)) }
  | TYPE_DNSKEY s int16 s int16 s int16 s charstring
      { if not ($5 = 3) then
            parse_error ("DNSKEY protocol is not 3, but " ^ string_of_int $5) ;
        match Udns_enum.int_to_dnskey $7 with
        | None -> parse_error ("DNSKEY algorithm not supported " ^ string_of_int $7)
        | Some x ->
-          let dnskey = { Udns.Dnskey.flags = $3 ; algorithm = x ; key = Cstruct.of_string $9 } in
-          B (Dnskey, (0l, Dnskey_set.singleton dnskey))
+          let dnskey = { Dnskey.flags = $3 ; algorithm = x ; key = Cstruct.of_string $9 } in
+          B (Dnskey, (0l, Umap.Dnskey_set.singleton dnskey))
      }
  | TYPE_CAA s int16 s charstring s charstrings
      { let critical = if $3 = 0x80 then true else false in
-       let caa = { Udns.Caa.critical ; tag = $5 ; value = $7 } in
-       B (Caa, (0l, Caa_set.singleton caa)) }
+       let caa = { Caa.critical ; tag = $5 ; value = $7 } in
+       B (Caa, (0l, Umap.Caa_set.singleton caa)) }
  | CHARSTRING s { parse_error ("TYPE " ^ $1 ^ " not supported") }
 
 single_hex: charstring

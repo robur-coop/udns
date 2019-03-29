@@ -32,7 +32,7 @@ val follow_cname : t -> int64 -> Udns_enum.rr_typ -> Domain_name.t -> Umap.b ->
   | `ServFail of Umap.t Domain_name.Map.t * t
   ]
 
-val answer : t -> int64 -> Question.t -> int ->
+val answer : t -> int64 -> Packet.Question.t -> int ->
   [ `Query of Domain_name.t * t
   | `Packet of Packet.Header.t * Packet.t * t ]
 
@@ -48,7 +48,7 @@ val find_ns : t -> (int -> Cstruct.t) -> int64 -> Domain_name.Set.t -> Domain_na
 
 val resolve : t -> rng:(int -> Cstruct.t) ->  int64 -> Domain_name.t -> Udns_enum.rr_typ -> (Domain_name.t * Domain_name.t * Udns_enum.rr_typ * Ipaddr.V4.t * t, string) result
 
-val handle_query : t -> rng:(int -> Cstruct.t) -> int64 -> Question.t -> int ->
+val handle_query : t -> rng:(int -> Cstruct.t) -> int64 -> Packet.Question.t -> int ->
   [ `Answer of Packet.Header.t * Packet.t
   | `Nothing
   | `Query of Domain_name.t * Domain_name.t * Udns_enum.rr_typ * Ipaddr.V4.t ] * t

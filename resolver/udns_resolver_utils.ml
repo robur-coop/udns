@@ -241,7 +241,7 @@ let noerror_stub (name, typ) dns =
 (* stub vs recursive: maybe sufficient to look into *)
 let scrub ?(mode = `Recursive) zone q hdr dns =
   Logs.debug (fun m -> m "scrubbing (bailiwick %a) q %a rcode %a"
-                 Domain_name.pp zone Question.pp q
+                 Domain_name.pp zone Packet.Question.pp q
                  Udns_enum.pp_rcode hdr.Packet.Header.rcode) ;
   match mode, hdr.rcode with
   (*  | `Recursive, Udns_enum.NoError -> Ok (noerror zone q hdr dns) *)

@@ -20,12 +20,12 @@
 
 (* State variables for the parser & lexer *)
 type parserstate = {
-  mutable paren : int;
-  mutable lineno : int;
-  mutable origin : Domain_name.t;
-  mutable ttl : int32;
-  mutable owner : Domain_name.t;
-  mutable zone : Udns.Packet.data ;
+  mutable paren : int ;
+  mutable lineno : int ;
+  mutable origin : Domain_name.t ;
+  mutable ttl : int32 ;
+  mutable owner : Domain_name.t ;
+  mutable zone : Udns.Name_map.t ;
 }
 
 let state = {

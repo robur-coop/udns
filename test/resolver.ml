@@ -28,19 +28,19 @@ let follow_res =
       | `ServFail of Umap.t Domain_name.Map.t * Udns_resolver_cache.t
       ]
       let pp ppf = function
-        | `Cycle (rrs, _) -> Fmt.pf ppf "cycle %a" Packet.pp_data rrs
-        | `NoData ((rrs, soa), _) -> Fmt.pf ppf "nodata %a, soa %a" Packet.pp_data rrs Packet.pp_data soa
-        | `NoDom ((rrs, soa), _) -> Fmt.pf ppf "nodom %a, soa %a" Packet.pp_data rrs Packet.pp_data soa
-        | `NoError (rrs, _) -> Fmt.pf ppf "noerror %a" Packet.pp_data rrs
+        | `Cycle (rrs, _) -> Fmt.pf ppf "cycle %a" Name_map.pp rrs
+        | `NoData ((rrs, soa), _) -> Fmt.pf ppf "nodata %a, soa %a" Name_map.pp rrs Name_map.pp soa
+        | `NoDom ((rrs, soa), _) -> Fmt.pf ppf "nodom %a, soa %a" Name_map.pp rrs Name_map.pp soa
+        | `NoError (rrs, _) -> Fmt.pf ppf "noerror %a" Name_map.pp rrs
         | `Query (name, _) -> Fmt.pf ppf "query %a" Domain_name.pp name
-        | `ServFail (soa, _) -> Fmt.pf ppf "servfail %a" Packet.pp_data soa
+        | `ServFail (soa, _) -> Fmt.pf ppf "servfail %a" Name_map.pp soa
       let equal a b = match a, b with
-        | `Cycle (rrs, _), `Cycle (rrs', _) -> Packet.equal_data rrs rrs'
-        | `NoData ((rrs, soa), _), `NoData ((rrs', soa'), _) -> Packet.equal_data rrs rrs' && Packet.equal_data soa soa'
-        | `NoDom ((rrs, soa), _), `NoDom ((rrs', soa'), _) -> Packet.equal_data rrs rrs' && Packet.equal_data soa soa'
-        | `NoError (rrs, _), `NoError (rrs', _) -> Packet.equal_data rrs rrs'
+        | `Cycle (rrs, _), `Cycle (rrs', _) -> Name_map.equal rrs rrs'
+        | `NoData ((rrs, soa), _), `NoData ((rrs', soa'), _) -> Name_map.equal rrs rrs' && Name_map.equal soa soa'
+        | `NoDom ((rrs, soa), _), `NoDom ((rrs', soa'), _) -> Name_map.equal rrs rrs' && Name_map.equal soa soa'
+        | `NoError (rrs, _), `NoError (rrs', _) -> Name_map.equal rrs rrs'
         | `Query (name, _), `Query (name', _) -> Domain_name.equal name name'
-        | `ServFail (soa, _), `ServFail (soa', _) -> Packet.equal_data soa soa'
+        | `ServFail (soa, _), `ServFail (soa', _) -> Name_map.equal soa soa'
         | _, _ -> false
     end in
     (module M: Alcotest.TESTABLE with type t = M.t)

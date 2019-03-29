@@ -399,7 +399,7 @@ let follow_cname t ts typ name b =
           `Query (alias, t)
         | Ok (NoErr ans, t) ->
           Logs.debug (fun m -> m "follow_cname: noerr, follow again") ;
-          follow t (Umap.add_entry alias ans acc) alias ans
+          follow t (Name_map.add alias ans acc) alias ans
         | Ok (NoDom (ttl, soa) as res, t) ->
           Logs.debug (fun m -> m "follow_cname: nodom") ;
           `NoDom ((acc, to_map res), t)
@@ -412,9 +412,9 @@ let follow_cname t ts typ name b =
           Logs.debug (fun m -> m "follow_cname: servfail") ;
           `ServFail (to_map res, t)
       end
-    | _ -> `NoError (Umap.add_entry name b acc, t)
+    | _ -> `NoError (Name_map.add name b acc, t)
   in
-  let initial = Umap.add_entry name b Domain_name.Map.empty in
+  let initial = Name_map.add name b Domain_name.Map.empty in
   follow t initial name b
 
 (*

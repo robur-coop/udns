@@ -333,41 +333,24 @@ module Umap : sig
   val get_ttl : b -> int32
   val with_ttl : b -> int32 -> b
 
-  val add_entry : Domain_name.t -> b -> t Domain_name.Map.t -> t Domain_name.Map.t
-
-  val find_entry : t Domain_name.Map.t -> Domain_name.t -> 'a k -> 'a option
-
-  val remove_sub : t Domain_name.Map.t -> t Domain_name.Map.t -> t Domain_name.Map.t
-
 end
 
-module Question : sig
-  type t = Domain_name.t * Udns_enum.rr_typ
+module Name_map : sig
+
+  type t = Umap.t Domain_name.Map.t
+
+  val equal : t -> t -> bool
 
   val pp : t Fmt.t
-  val compare : t -> t -> int
 
-  val decode : (Domain_name.t * int) Name.IntMap.t -> Cstruct.t ->
-    Name.IntMap.key ->
-    ((Domain_name.t * Udns_enum.rr_typ) * (Domain_name.t * int) Name.IntMap.t *
-     int,
-     [> `BadClass of Cstruct.uint16
-     | `BadContent of string
-     | `BadOffset of Name.IntMap.key
-     | `BadRRTyp of Cstruct.uint16
-     | `BadTag of Cstruct.uint8
-     | `Partial
-     | `TooLong
-     | `UnsupportedClass of Udns_enum.clas ]) result
+  val add : Domain_name.t -> Umap.b -> t -> t
+
+  val find : Domain_name.t -> 'a Umap.k -> t -> 'a option
+
+  val remove_sub : t -> t -> t
 end
 
 module Packet : sig
-
-  type data = Umap.t Domain_name.Map.t
-
-  val equal_data : data -> data -> bool
-
-  val pp_data : data Fmt.t
 
   module Header : sig
     module Flags : sig
@@ -404,16 +387,36 @@ module Packet : sig
     val encode : Cstruct.t -> t -> unit
   end
 
+  module Question : sig
+    type t = Domain_name.t * Udns_enum.rr_typ
+
+    val pp : t Fmt.t
+    val compare : t -> t -> int
+
+    val decode : (Domain_name.t * int) Name.IntMap.t -> Cstruct.t ->
+      Name.IntMap.key ->
+      ((Domain_name.t * Udns_enum.rr_typ) * (Domain_name.t * int) Name.IntMap.t *
+       int,
+       [> `BadClass of Cstruct.uint16
+       | `BadContent of string
+       | `BadOffset of Name.IntMap.key
+       | `BadRRTyp of Cstruct.uint16
+       | `BadTag of Cstruct.uint8
+       | `Partial
+       | `TooLong
+       | `UnsupportedClass of Udns_enum.clas ]) result
+  end
+
   module Query : sig
 
     type t = {
       question : Question.t ;
-      answer : data ;
-      authority : data ;
-      additional : data ;
+      answer : Name_map.t ;
+      authority : Name_map.t ;
+      additional : Name_map.t ;
     }
 
-    val create : ?answer:data -> ?authority:data -> ?additional:data -> Question.t -> t
+    val create : ?answer:Name_map.t -> ?authority:Name_map.t -> ?additional:Name_map.t -> Question.t -> t
 
     val pp : t Fmt.t
 
@@ -424,7 +427,7 @@ module Packet : sig
 
     type t = {
       soa : Soa.t ;
-      entries : data ;
+      entries : Name_map.t ;
     }
 
     val pp : t Fmt.t
@@ -457,12 +460,12 @@ module Packet : sig
       zone : Question.t ;
       prereq : prereq list Domain_name.Map.t ;
       update : update list Domain_name.Map.t ;
-      addition : data ;
+      addition : Name_map.t ;
     }
 
     val create : ?prereq:prereq list Domain_name.Map.t ->
       ?update:update list Domain_name.Map.t ->
-      ?addition:data -> Question.t -> t
+      ?addition:Name_map.t -> Question.t -> t
 
     val pp : t Fmt.t
 

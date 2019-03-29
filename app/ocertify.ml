@@ -58,7 +58,7 @@ let query_certificate sock public_key fqdn =
   | Ok (_, `Query q, _, _) ->
     (* TODO verify id! *)
     (* collect TLSA pems *)
-    Logs.debug (fun m -> m "answer is %a" Packet.pp_data q.Packet.Query.answer) ;
+    Logs.debug (fun m -> m "answer is %a" Name_map.pp q.Packet.Query.answer) ;
     begin match Domain_name.Map.find fqdn q.Packet.Query.answer with
       | None ->
         Logs.err (fun m -> m "no resource records found for %a" Domain_name.pp fqdn) ;

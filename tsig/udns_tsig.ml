@@ -48,7 +48,7 @@ let sign ?mac ?max_size name tsig ~key buf =
     match add_tsig ?max_size name tsig buf with
     | Some out -> Some (out, mac)
     | None ->
-      match Question.decode Name.IntMap.empty buf 12 with
+      match Packet.Question.decode Name.IntMap.empty buf 12 with
       | Error e ->
         Logs.err
           (fun m -> m "dns_tsig sign: truncated, couldn't reparse question %a:@.%a"
@@ -66,7 +66,9 @@ let sign ?mac ?max_size name tsig ~key buf =
         match add_tsig name tsig new_buf with
         | None ->
           Logs.err (fun m -> m "dns_tsig sign: query %a with tsig %a too big %a:@.%a"
-                       Question.pp q Tsig.pp tsig Fmt.(option ~none:(unit "none") int) max_size Cstruct.hexdump_pp new_buf) ;
+                       Packet.Question.pp q Tsig.pp tsig
+                       Fmt.(option ~none:(unit "none") int) max_size
+                       Cstruct.hexdump_pp new_buf) ;
           None
         | Some out -> Some (out, mac)
 

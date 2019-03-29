@@ -267,7 +267,7 @@ let find_glue trie typ name names =
   in
   let insert_rr map typ name =
     match Udns_trie.lookupb name typ trie with
-    | Ok (v, _) -> Umap.add_entry name v map
+    | Ok (v, _) -> Name_map.add name v map
     | _ -> map
   in
   Domain_name.Set.fold (fun name map ->
@@ -300,7 +300,7 @@ let lookup trie hdr (name, typ) =
   | Ok (an, (au, ttl, ns)) ->
     let answer = Domain_name.Map.singleton name an in
     let authority =
-      Umap.remove_sub
+      Name_map.remove_sub
         (Domain_name.Map.singleton au Umap.(singleton Ns (ttl, ns)))
         answer
     in
@@ -308,8 +308,8 @@ let lookup trie hdr (name, typ) =
       let names =
         Umap.(fold (fun b s -> Domain_name.Set.union (names_b b) s) an ns)
       in
-      Umap.remove_sub
-        (Umap.remove_sub (find_glue trie typ name names) answer)
+      Name_map.remove_sub
+        (Name_map.remove_sub (find_glue trie typ name names) answer)
         authority
     in
     Ok (hdr, `Query { query with Packet.Query.answer ; authority ; additional })
@@ -318,7 +318,7 @@ let lookup trie hdr (name, typ) =
       Domain_name.Set.fold (fun name map ->
           (* TODO aaaa records! *)
           match Udns_trie.lookup_ignore name Udns_enum.A trie with
-          | Ok (Umap.(B (A, _) as v)) -> Umap.add_entry name v map
+          | Ok (Umap.(B (A, _) as v)) -> Name_map.add name v map
           | _ -> map)
         ns Domain_name.Map.empty
     in
@@ -354,12 +354,12 @@ let axfr t proto key ((zone, _) as question) =
   (if Authentication.authorise t.auth proto key zone `Key_management then begin
       Log.info (fun m -> m "key-management key %a authorised for AXFR %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
-                   Question.pp question) ;
+                   Packet.Question.pp question) ;
       Ok (Authentication.keys t.auth)
     end else if Authentication.authorise t.auth proto key zone `Transfer then begin
       Log.info (fun m -> m "transfer key %a authorised for AXFR %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
-                   Question.pp question) ;
+                   Packet.Question.pp question) ;
       Ok t.data
     end else
      Error Udns_enum.NotAuth) >>= fun trie ->
@@ -370,7 +370,7 @@ let lookup t proto key hdr q =
     if Authentication.authorise t.auth proto key (fst q) `Key_management then begin
       Log.info (fun m -> m "key-management key %a authorised for lookup %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
-                   Question.pp q) ;
+                   Packet.Question.pp q) ;
       Authentication.keys t.auth
     end else
       t.data
@@ -1090,11 +1090,11 @@ module Secondary = struct
       (* request AXFR now in case of serial is higher! *)
       begin match
           Udns_trie.lookup zone Umap.Soa t.data,
-          Umap.find_entry query.Packet.Query.answer zone Soa
+          Name_map.find zone Soa query.Packet.Query.answer
         with
         | _, None ->
           Log.err (fun m -> m "didn't receive SOA for %a from %a (answer %a)"
-                      Domain_name.pp zone Ipaddr.V4.pp ip Packet.pp_data query.Packet.Query.answer) ;
+                      Domain_name.pp zone Ipaddr.V4.pp ip Name_map.pp query.Packet.Query.answer) ;
           Error Udns_enum.FormErr
         | Ok cached_soa, Some fresh ->
           (* TODO: > with wraparound in mind *)

@@ -183,8 +183,9 @@ let collect_entries name sub map =
   | None -> Error `NotAuthoritative
   | Some soa ->
     let entries = collect_rrs name sub map in
-    let map = List.fold_left (fun acc (name, b) ->
-        Umap.add_entry name b acc) Domain_name.Map.empty entries
+    let map =
+      List.fold_left (fun acc (name, b) -> Name_map.add name b acc)
+        Domain_name.Map.empty entries
     in
     Ok (soa, map)
 
