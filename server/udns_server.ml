@@ -13,19 +13,20 @@ let guard p err = if p then Ok () else Error err
 
 type proto = [ `Tcp | `Udp ]
 
-let authoritative = Header.FS.singleton `Authoritative
+let authoritative = Packet.Header.FS.singleton `Authoritative
 
 let s_header h =
-  let flags = Header.(FS.union h.flags authoritative) in
-  let flags = Header.FS.(remove `Authentic_data (remove `Recursion_available flags)) in
-  { h with Header.query = false ; flags }
+  let open Packet.Header in
+  let flags = FS.union h.flags authoritative in
+  let flags = FS.remove `Authentic_data (FS.remove `Recursion_available flags) in
+  { h with query = false ; flags }
 
 let err header v rcode =
   let header =
     let hdr = s_header header in
-    let flags = hdr.Header.flags in
-    let flags = if rcode = Udns_enum.NotAuth then Header.FS.remove `Authoritative flags else flags in
-    { hdr with Header.flags }
+    let flags = hdr.Packet.Header.flags in
+    let flags = if rcode = Udns_enum.NotAuth then Packet.Header.FS.remove `Authoritative flags else flags in
+    { hdr with flags }
   in
   Packet.error header v rcode
 
@@ -189,21 +190,22 @@ module Authentication = struct
 
   let handle_update keys us =
     Domain_name.Map.fold (fun name v (keys, actions) ->
-        match v with
-        | Packet.Update.Remove_all
-        | Packet.Update.Remove Udns_enum.DNSKEY ->
-          let keys = remove_key keys name in
-          keys, `Removed_key name :: actions
-        | Packet.Update.Remove_single Umap.(B (Dnskey, _)) ->
-          let keys = remove_key keys name in
-          keys, `Removed_key name :: actions
-        | Packet.Update.Add Umap.(B (Dnskey, (_, fresh))) ->
-          let keys = add_keys keys name fresh in
-          keys, `Added_key name :: actions
-        | u ->
-          Log.warn (fun m -> m "only Dnskey, not sure what you intended %a"
-                       Packet.Update.pp_update u) ;
-          keys, actions)
+        List.fold_left (fun (keys, actions) -> function
+            | Packet.Update.Remove_all
+            | Packet.Update.Remove Udns_enum.DNSKEY ->
+              let keys = remove_key keys name in
+              keys, `Removed_key name :: actions
+            | Packet.Update.Remove_single Umap.(B (Dnskey, _)) ->
+              let keys = remove_key keys name in
+              keys, `Removed_key name :: actions
+            | Packet.Update.Add Umap.(B (Dnskey, (_, fresh))) ->
+              let keys = add_keys keys name fresh in
+              keys, `Added_key name :: actions
+            | u ->
+              Log.warn (fun m -> m "only Dnskey, not sure what you intended %a"
+                           Packet.Update.pp_update u) ;
+              keys, actions)
+          (keys, actions) v)
       us (keys, [])
 
   let tsig_auth _ _ keyname op zone =
@@ -225,8 +227,8 @@ type t = {
   data : Udns_trie.t ;
   auth : Authentication.t ;
   rng : int -> Cstruct.t ;
-  tsig_verify : Udns.tsig_verify ;
-  tsig_sign : Udns.tsig_sign ;
+  tsig_verify : Tsig_op.verify ;
+  tsig_sign : Tsig_op.sign ;
 }
 
 let text name t =
@@ -325,7 +327,7 @@ let lookup trie hdr (name, typ) =
         ns Domain_name.Map.empty
     in
     let hdr =
-      let flags = Header.FS.remove `Authoritative hdr.Header.flags in
+      let flags = Packet.Header.FS.remove `Authoritative hdr.flags in
       { hdr with flags }
     in
     let authority = Domain_name.Map.singleton name Umap.(singleton Ns (ttl, ns)) in
@@ -333,7 +335,7 @@ let lookup trie hdr (name, typ) =
   | Error (`EmptyNonTerminal (zname, soa)) ->
     Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Umap.(singleton Soa soa) })
   | Error (`NotFound (zname, soa)) ->
-    let hdr = { hdr with Header.rcode = Udns_enum.NXDomain } in
+    let hdr = { hdr with rcode = Udns_enum.NXDomain } in
     Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Umap.(singleton Soa soa) })
   | Error `NotAuthoritative -> Error Udns_enum.NotAuth
 
@@ -544,7 +546,7 @@ let notify t l now zone soa =
   let one ip port =
     let id = Randomconv.int ~bound:(1 lsl 16 - 1) t.rng in
     let header = {
-      Header.id ; query = true ; operation = Udns_enum.Notify ; rcode = Udns_enum.NoError ;
+      Packet.Header.id ; query = true ; operation = Udns_enum.Notify ; rcode = Udns_enum.NoError ;
       flags = authoritative }
     in
     (now, 0, ip, port, header, notify)
@@ -555,15 +557,20 @@ let in_zone zone name = Domain_name.sub ~subdomain:name ~domain:zone
 
 let update_data trie zone u =
   let in_zone = in_zone zone in
-  Domain_name.Map.fold (fun name prereq acc ->
+  Domain_name.Map.fold (fun name prereqs acc ->
       acc >>= fun () ->
       guard (in_zone name) Udns_enum.NotZone >>= fun () ->
-      handle_rr_prereq trie name prereq)
+      List.fold_left (fun acc prereq ->
+          acc >>= fun () ->
+          handle_rr_prereq trie name prereq)
+        (Ok ()) prereqs)
     u.Packet.Update.prereq (Ok ()) >>= fun () ->
-  Domain_name.Map.fold (fun name update acc ->
+  Domain_name.Map.fold (fun name updates acc ->
       acc >>= fun trie ->
       guard (in_zone name) Udns_enum.NotZone >>| fun () ->
-      handle_rr_update trie name update)
+      List.fold_left (fun trie update ->
+          handle_rr_update trie name update)
+        trie updates)
     u.Packet.Update.update (Ok trie) >>= fun trie' ->
   (match Udns_trie.check trie' with
    | Ok () -> Ok ()
@@ -653,7 +660,7 @@ module Primary = struct
   type s =
     t *
     (Domain_name.t * Ipaddr.V4.t * int) list *
-    (int64 * int * Ipaddr.V4.t * int * Header.t * Packet.Query.t) list
+    (int64 * int * Ipaddr.V4.t * int * Packet.Header.t * Packet.Query.t) list
 
   let server (t, _, _) = t
 
@@ -683,7 +690,7 @@ module Primary = struct
     | _ -> Error ()
 
   let handle_frame (t, l, ns) ts ip port proto key header v =
-    match v, header.Header.query with
+    match v, header.Packet.Header.query with
     | `Query q, true ->
       handle_query t proto key header q >>= fun answer ->
       (* if there was a (transfer-key) signed SOA, and tcp, we add to notification list! *)
@@ -719,26 +726,25 @@ module Primary = struct
     | `Notify _, false ->
       let notifications =
         List.filter (fun (_, _, ip', _, hdr', _) ->
-            not (Ipaddr.V4.compare ip ip' = 0 && header.Header.id = hdr'.Header.id))
+            not (Ipaddr.V4.compare ip ip' = 0 && header.id = hdr'.Packet.Header.id))
           ns
       in
       Ok ((t, l, notifications), None, [], None)
-    | _, false ->
-      (* this happens when the other side is a tinydns and we're sending notify *)
-      Log.err (fun m -> m "ignoring unsolicited answer") ;
-      Ok ((t, l, ns), None, [], None)
     | `Notify n, true ->
-      Log.warn (fun m -> m "unsolicited notify request") ;
+      Log.warn (fun m -> m "unsolicited notify request (replying anyways)") ;
       let reply =
         let n = Packet.Query.create n.Packet.Query.question in
         s_header header, `Notify n
       in
       Ok ((t, l, ns), Some reply, [], Some `Notify)
+    | p, false ->
+      Log.err (fun m -> m "ignoring unsolicited answer %a" Packet.pp p) ;
+      Ok ((t, l, ns), None, [], None)
 
   let handle (t, l, ns) now ts proto ip port buf =
     match
       safe_decode buf >>= fun (header, v, opt, tsig) ->
-      guard (not (Header.FS.mem `Truncation header.Header.flags)) Udns_enum.FormErr >>= fun () ->
+      guard (not (Packet.Header.FS.mem `Truncation header.flags)) Udns_enum.FormErr >>= fun () ->
       Ok (header, v, opt, tsig)
     with
     | Error rcode -> (t, l, ns), raw_server_error buf rcode, [], None
@@ -790,7 +796,7 @@ module Primary = struct
           if Int64.add ts retransmit.(count) < now then
             (if count = max then begin
                 Log.warn (fun m -> m "retransmitting to %a:%d the last time %a %a"
-                             Ipaddr.V4.pp ip port Header.pp hdr
+                             Ipaddr.V4.pp ip port Packet.Header.pp hdr
                              Packet.Query.pp q) ;
                 ns
               end else
@@ -889,8 +895,8 @@ module Secondary = struct
 
   let header rng () =
     let id = Randomconv.int ~bound:(1 lsl 16 - 1) rng in
-    id, { Header.id ; query = true ; operation = Udns_enum.Query ;
-          rcode = Udns_enum.NoError ; flags = Header.FS.empty }
+    id, { Packet.Header.id ; query = true ; operation = Udns_enum.Query ;
+          rcode = Udns_enum.NoError ; flags = Packet.Header.FS.empty }
 
   let axfr t proto now ts q_name name =
     let id, header = header t.rng ()
@@ -1026,7 +1032,7 @@ module Secondary = struct
       Error Udns_enum.Refused
     | Some (st, ip, port, name) ->
       (* TODO use NotAuth instead of Refused here? *)
-      guard (match id st with None -> true | Some id' -> header.Header.id = id')
+      guard (match id st with None -> true | Some id' -> header.Packet.Header.id = id')
         Udns_enum.Refused >>= fun () ->
       guard (authorise name keyname) Udns_enum.Refused >>| fun () ->
       Log.debug (fun m -> m "authorized access to zone %a (with key %a)"
@@ -1163,7 +1169,7 @@ module Secondary = struct
     Ok ((t, zones), outs)
 
   let handle_frame (t, zones) now ts ip proto keyname header v =
-    match v, header.Header.query with
+    match v, header.Packet.Header.query with
     | `Query q, true ->
       handle_query t proto keyname header q >>= fun answer ->
       Ok ((t, zones), Some answer, [])
@@ -1182,8 +1188,9 @@ module Secondary = struct
     | `Axfr (q, axfr), false ->
       handle_axfr t zones ts keyname header q axfr >>= fun (t, zones, out) ->
       Ok ((t, zones), None, out)
-    | `Update _, false -> (* TODO: answer from primary, need to forward to client *)
-      (* don't reply to replies *)
+    | `Update update, false ->
+      Log.warn (fun m -> m "ignoring update reply (we'll never send updates out) %a"
+                   Packet.Update.pp update) ;
       Ok ((t, zones), None, [])
     | `Notify n, true ->
       handle_notify t zones now ts ip n >>= fun (zones, out) ->
@@ -1204,7 +1211,7 @@ module Secondary = struct
       | _ -> None
     in
     match v with
-    | `Query q when not header.Header.query ->
+    | `Query q when not header.Packet.Header.query ->
       let (name, _) = q.Packet.Query.question in
       find_in_zones name
     | `Axfr ((name, _), _) -> find_in_zones name
@@ -1213,7 +1220,7 @@ module Secondary = struct
   let handle (t, zones) now ts proto ip buf =
     match
       safe_decode buf >>= fun (header, v, opt, tsig) ->
-      guard (not (Header.FS.mem `Truncation header.Header.flags)) Udns_enum.FormErr >>= fun () ->
+      guard (not (Packet.Header.FS.mem `Truncation header.flags)) Udns_enum.FormErr >>= fun () ->
       Ok (header, v, opt, tsig)
     with
     | Error rcode -> ((t, zones), raw_server_error buf rcode, [])

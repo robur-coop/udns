@@ -832,7 +832,7 @@ module Packet = struct
           rcode ; flags = Header.FS.empty }
       and update = Domain_name.Map.singleton
           (n_of_s "www.example.com")
-          (Packet.Update.Remove_single Umap.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))))
+          [ Packet.Update.Remove_single Umap.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))) ]
       and zone = n_of_s "example.com", Udns_enum.SOA
       in
       header, { Packet.Update.zone ; prereq = Domain_name.Map.empty ;
@@ -852,7 +852,7 @@ module Packet = struct
           rcode ; flags = Header.FS.empty }
       and prereq =
         Domain_name.Map.singleton (n_of_s "www.example.com")
-          (Packet.Update.Exists_data Umap.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))))
+          [ Packet.Update.Exists_data Umap.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost)))]
       and zone = (n_of_s "example.com", Udns_enum.SOA)
       in
       header, Packet.Update.create ~prereq zone

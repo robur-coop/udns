@@ -12,7 +12,6 @@ type t = N of t M.t * Umap.t
 
 let empty = N (M.empty, Umap.empty)
 
-(*BISECT-IGNORE-BEGIN*)
 let bindings t =
   let rec go pre (N (sub, e)) =
     let subs = M.bindings sub in
@@ -26,7 +25,6 @@ let bindings t =
 let pp ppf t =
   Fmt.(list ~sep:(unit ",@ ") (pair ~sep:(unit ":@,") Domain_name.pp Umap.pp)) ppf
     (bindings t)
-(*BISECT-IGNORE-END*)
 
 let rec equal (N (sub, map)) (N (sub', map')) =
   Umap.equal Umap.equal_b map map' && M.equal equal sub sub'
@@ -400,7 +398,6 @@ let remove_zone name t =
   in
   remove_aux name t remove
 
-(*BISECT-IGNORE-BEGIN*)
 let pp_err ppf = function
   | `Missing_soa name -> Fmt.pf ppf "missing soa for %a" Domain_name.pp name
   | `Cname_other name -> Fmt.pf ppf "%a contains a cname record, and also other entries" Domain_name.pp name
@@ -418,4 +415,3 @@ let pp_e ppf = function
     Fmt.pf ppf "empty non terminal %a TTL %lu SOA %a" Domain_name.pp name ttl Soa.pp soa
   | `NotAuthoritative -> Fmt.string ppf "not authoritative"
   | `NotFound (name, (ttl, soa)) -> Fmt.pf ppf "not found %a TTL %lu soa %a" Domain_name.pp name ttl Soa.pp soa
-(*BISECT-IGNORE-END*)

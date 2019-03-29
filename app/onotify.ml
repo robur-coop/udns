@@ -14,7 +14,7 @@ let notify zone serial key now =
     Packet.Query.create ~answer question
   and header =
     let hdr = Udns_cli.dns_header (Random.int 0xFFFF) in
-    { hdr with Header.operation = Udns_enum.Notify ; flags = Header.FS.singleton `Authoritative }
+    { hdr with operation = Udns_enum.Notify ; flags = Packet.Header.FS.singleton `Authoritative }
   in
   let v = `Notify notify in
   match key with

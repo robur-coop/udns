@@ -1519,140 +1519,6 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
     text ?origin ?default_ttl name key v
 end
 
-module Header = struct
-  module Flags = struct
-    type t = [
-      | `Authoritative
-      | `Truncation
-      | `Recursion_desired
-      | `Recursion_available
-      | `Authentic_data
-      | `Checking_disabled
-    ]
-
-    let all = [
-      `Authoritative ; `Truncation ; `Recursion_desired ;
-      `Recursion_available ; `Authentic_data ; `Checking_disabled
-    ]
-
-    let compare a b = match a, b with
-      | `Authoritative, `Authoritative -> 0
-      | `Authoritative, _ -> 1 | _, `Authoritative -> -1
-      | `Truncation, `Truncation -> 0
-      | `Truncation, _ -> 1 | _, `Truncation -> -1
-      | `Recursion_desired, `Recursion_desired -> 0
-      | `Recursion_desired, _ -> 1 | _, `Recursion_desired -> -1
-      | `Recursion_available, `Recursion_available -> 0
-      | `Recursion_available, _ -> 1 | _, `Recursion_available -> -1
-      | `Authentic_data, `Authentic_data -> 0
-      | `Authentic_data, _ -> 1 | _, `Authentic_data -> -1
-      | `Checking_disabled, `Checking_disabled -> 0
-      (* | `Checking_disabled, _ -> 1 | _, `Checking_disabled -> -1 *)
-
-    let pp ppf = function
-      | `Authoritative -> Fmt.string ppf "authoritative"
-      | `Truncation -> Fmt.string ppf "truncation"
-      | `Recursion_desired -> Fmt.string ppf "recursion desired"
-      | `Recursion_available -> Fmt.string ppf "recursion available"
-      | `Authentic_data -> Fmt.string ppf "authentic data"
-      | `Checking_disabled -> Fmt.string ppf "checking disabled"
-
-    let pp_short ppf = function
-      | `Authoritative -> Fmt.string ppf "AA"
-      | `Truncation -> Fmt.string ppf "TC"
-      | `Recursion_desired -> Fmt.string ppf "RD"
-      | `Recursion_available -> Fmt.string ppf "RA"
-      | `Authentic_data -> Fmt.string ppf "AD"
-      | `Checking_disabled -> Fmt.string ppf "CD"
-
-    let bit = function
-      | `Authoritative -> 5
-      | `Truncation -> 6
-      | `Recursion_desired -> 7
-      | `Recursion_available -> 8
-      | `Authentic_data -> 10
-      | `Checking_disabled -> 11
-
-    let number f = 1 lsl (15 - bit f)
-  end
-
-  module FS = Set.Make(Flags)
-
-  type t = {
-    id : int ;
-    query : bool ;
-    operation : Udns_enum.opcode ;
-    rcode : Udns_enum.rcode ;
-    flags : FS.t
-  }
-
-  let compare a b =
-    andThen (int_compare a.id b.id)
-      (andThen (compare a.query b.query)
-         (andThen (int_compare (Udns_enum.opcode_to_int a.operation) (Udns_enum.opcode_to_int b.operation))
-            (andThen (int_compare (Udns_enum.rcode_to_int a.rcode) (Udns_enum.rcode_to_int b.rcode))
-               (FS.compare a.flags b.flags))))
-
-  let len = 12
-
-  (* header is:
-     0  QR - 0 for query, 1 for response
-     1-4   operation
-     5  AA Authoritative Answer [RFC1035]                             \
-     6  TC Truncated Response   [RFC1035]                             |
-     7  RD Recursion Desired    [RFC1035]                             |
-     8  RA Recursion Available  [RFC1035]                             |-> flags
-     9     Reserved                                                   |
-     10 AD Authentic Data       [RFC4035][RFC6840][RFC Errata 4924]   |
-     11 CD Checking Disabled    [RFC4035][RFC6840][RFC Errata 4927]   /
-     12-15 rcode *)
-
-  let decode_flags hdr =
-    List.fold_left (fun flags flag ->
-        if Flags.number flag land hdr > 0 then
-          FS.add flag flags
-        else
-          flags)
-      FS.empty Flags.all
-
-  let decode buf =
-    let open Rresult.R.Infix in
-    (* we only access the first 4 bytes, but anything <12 is a bad DNS frame *)
-    guard (Cstruct.len buf >= len) `Partial >>= fun () ->
-    let hdr = Cstruct.BE.get_uint16 buf 2 in
-    let op = (hdr land 0x7800) lsr 11
-    and rc = hdr land 0x000F
-    in
-    match Udns_enum.int_to_opcode op, Udns_enum.int_to_rcode rc with
-    | None, _ -> Error (`BadOpcode op)
-    | _, None -> Error (`BadRcode rc)
-    | Some operation, Some rcode ->
-      let id = Cstruct.BE.get_uint16 buf 0
-      and query = hdr lsr 15 = 0
-      and flags = decode_flags hdr
-      in
-      Ok { id ; query ; operation ; rcode ; flags }
-
-  let encode_flags hdr =
-    FS.fold (fun f acc -> acc + Flags.number f) hdr.flags 0
-
-  let encode buf hdr =
-    let query = if hdr.query then 0x0000 else 0x8000 in
-    let flags = encode_flags hdr in
-    let op = (Udns_enum.opcode_to_int hdr.operation) lsl 11 in
-    let rcode = (Udns_enum.rcode_to_int hdr.rcode) land 0x000F in
-    let header = query lor flags lor op lor rcode in
-    Cstruct.BE.set_uint16 buf 0 hdr.id ;
-    Cstruct.BE.set_uint16 buf 2 header
-
-  let pp ppf hdr =
-    Fmt.pf ppf "%04X (%s) operation %a rcode @[%a@] flags: @[%a@]"
-      hdr.id (if hdr.query then "query" else "response")
-      Udns_enum.pp_opcode hdr.operation
-      Udns_enum.pp_rcode hdr.rcode
-      Fmt.(list ~sep:(unit ", ") Flags.pp) (FS.elements hdr.flags)
-end
-
 let decode_ntc names buf off =
   let open Rresult.R.Infix in
   Name.decode ~hostname:false names buf ~off >>= fun (name, names, off) ->
@@ -1699,6 +1565,138 @@ end
 
 module Packet = struct
 
+  module Header = struct
+    module Flags = struct
+      type t = [
+        | `Authoritative
+        | `Truncation
+        | `Recursion_desired
+        | `Recursion_available
+        | `Authentic_data
+        | `Checking_disabled
+      ]
+
+      let all = [
+        `Authoritative ; `Truncation ; `Recursion_desired ;
+        `Recursion_available ; `Authentic_data ; `Checking_disabled
+      ]
+
+      let compare a b = match a, b with
+        | `Authoritative, `Authoritative -> 0
+        | `Authoritative, _ -> 1 | _, `Authoritative -> -1
+        | `Truncation, `Truncation -> 0
+        | `Truncation, _ -> 1 | _, `Truncation -> -1
+        | `Recursion_desired, `Recursion_desired -> 0
+        | `Recursion_desired, _ -> 1 | _, `Recursion_desired -> -1
+        | `Recursion_available, `Recursion_available -> 0
+        | `Recursion_available, _ -> 1 | _, `Recursion_available -> -1
+        | `Authentic_data, `Authentic_data -> 0
+        | `Authentic_data, _ -> 1 | _, `Authentic_data -> -1
+        | `Checking_disabled, `Checking_disabled -> 0
+      (* | `Checking_disabled, _ -> 1 | _, `Checking_disabled -> -1 *)
+
+      let pp ppf = function
+        | `Authoritative -> Fmt.string ppf "authoritative"
+        | `Truncation -> Fmt.string ppf "truncation"
+        | `Recursion_desired -> Fmt.string ppf "recursion desired"
+        | `Recursion_available -> Fmt.string ppf "recursion available"
+        | `Authentic_data -> Fmt.string ppf "authentic data"
+        | `Checking_disabled -> Fmt.string ppf "checking disabled"
+
+      let pp_short ppf = function
+        | `Authoritative -> Fmt.string ppf "AA"
+        | `Truncation -> Fmt.string ppf "TC"
+        | `Recursion_desired -> Fmt.string ppf "RD"
+        | `Recursion_available -> Fmt.string ppf "RA"
+        | `Authentic_data -> Fmt.string ppf "AD"
+        | `Checking_disabled -> Fmt.string ppf "CD"
+
+      let bit = function
+        | `Authoritative -> 5
+        | `Truncation -> 6
+        | `Recursion_desired -> 7
+        | `Recursion_available -> 8
+        | `Authentic_data -> 10
+        | `Checking_disabled -> 11
+
+      let number f = 1 lsl (15 - bit f)
+    end
+
+    module FS = Set.Make(Flags)
+
+    type t = {
+      id : int ;
+      query : bool ;
+      operation : Udns_enum.opcode ;
+      rcode : Udns_enum.rcode ;
+      flags : FS.t
+    }
+
+    let compare a b =
+      andThen (int_compare a.id b.id)
+        (andThen (compare a.query b.query)
+           (andThen (int_compare (Udns_enum.opcode_to_int a.operation) (Udns_enum.opcode_to_int b.operation))
+              (andThen (int_compare (Udns_enum.rcode_to_int a.rcode) (Udns_enum.rcode_to_int b.rcode))
+                 (FS.compare a.flags b.flags))))
+
+    let len = 12
+
+    (* header is:
+       0  QR - 0 for query, 1 for response
+       1-4   operation
+       5  AA Authoritative Answer [RFC1035]                             \
+       6  TC Truncated Response   [RFC1035]                             |
+       7  RD Recursion Desired    [RFC1035]                             |
+       8  RA Recursion Available  [RFC1035]                             |-> flags
+       9     Reserved                                                   |
+       10 AD Authentic Data       [RFC4035][RFC6840][RFC Errata 4924]   |
+       11 CD Checking Disabled    [RFC4035][RFC6840][RFC Errata 4927]   /
+       12-15 rcode *)
+
+    let decode_flags hdr =
+      List.fold_left (fun flags flag ->
+          if Flags.number flag land hdr > 0 then FS.add flag flags else flags)
+        FS.empty Flags.all
+
+    let decode buf =
+      let open Rresult.R.Infix in
+      (* we only access the first 4 bytes, but anything <12 is a bad DNS frame *)
+      guard (Cstruct.len buf >= len) `Partial >>= fun () ->
+      let hdr = Cstruct.BE.get_uint16 buf 2 in
+      let op = (hdr land 0x7800) lsr 11
+      and rc = hdr land 0x000F
+      in
+      match Udns_enum.int_to_opcode op, Udns_enum.int_to_rcode rc with
+      | None, _ -> Error (`BadOpcode op)
+      | _, None -> Error (`BadRcode rc)
+      | Some operation, Some rcode ->
+        let id = Cstruct.BE.get_uint16 buf 0
+        and query = hdr lsr 15 = 0
+        and flags = decode_flags hdr
+        in
+        Ok { id ; query ; operation ; rcode ; flags }
+
+    let encode_flags hdr =
+      FS.fold (fun f acc -> acc + Flags.number f) hdr.flags 0
+
+    let encode buf hdr =
+      let query = if hdr.query then 0x0000 else 0x8000 in
+      let flags = encode_flags hdr in
+      let op = (Udns_enum.opcode_to_int hdr.operation) lsl 11 in
+      let rcode = (Udns_enum.rcode_to_int hdr.rcode) land 0x000F in
+      let header = query lor flags lor op lor rcode in
+      Cstruct.BE.set_uint16 buf 0 hdr.id ;
+      Cstruct.BE.set_uint16 buf 2 header
+
+    let pp ppf hdr =
+      Fmt.pf ppf "%04X (%s) operation %a rcode @[%a@] flags: @[%a@]"
+        hdr.id (if hdr.query then "query" else "response")
+        Udns_enum.pp_opcode hdr.operation
+        Udns_enum.pp_rcode hdr.rcode
+        Fmt.(list ~sep:(unit ", ") Flags.pp) (FS.elements hdr.flags)
+  end
+
+
   type data = Umap.t Domain_name.Map.t
 
   let equal_data a b =
@@ -1716,6 +1714,7 @@ module Packet = struct
           rrmap acc)
       map ((offs, off), 0)
 
+  
   let decode_rr names buf off =
     let open Rresult.R.Infix in
     decode_ntc names buf off >>= fun ((name, typ, clas), names, off) ->
@@ -2095,8 +2094,8 @@ module Packet = struct
 
     type t = {
       zone : Question.t ;
-      prereq : prereq Domain_name.Map.t ;
-      update : update Domain_name.Map.t ;
+      prereq : prereq list Domain_name.Map.t ;
+      update : update list Domain_name.Map.t ;
       addition : data ;
     }
 
@@ -2105,16 +2104,26 @@ module Packet = struct
       { zone ; prereq ; update ; addition }
 
     let equal t t' =
+      let eq_list f a b =
+        List.length a = List.length b &&
+        List.fold_left2 (fun acc a b -> acc && f a b) true a b
+      in
       Question.compare t.zone t'.zone = 0 &&
-      Domain_name.Map.equal equal_prereq t.prereq t'.prereq &&
-      Domain_name.Map.equal equal_update t.update t'.update &&
+      Domain_name.Map.equal (eq_list equal_prereq) t.prereq t'.prereq &&
+      Domain_name.Map.equal (eq_list equal_update) t.update t'.update &&
       equal_data t.addition t'.addition
 
     let pp ppf t =
       Fmt.pf ppf "%a@ %a@ %a@ %a"
         Question.pp t.zone
-        Fmt.(list ~sep:(unit ";@ ") (pair ~sep:(unit ":") Domain_name.pp pp_prereq)) (Domain_name.Map.bindings t.prereq)
-        Fmt.(list ~sep:(unit ";@ ") (pair ~sep:(unit ":") Domain_name.pp pp_update)) (Domain_name.Map.bindings t.update)
+        Fmt.(list ~sep:(unit ";@ ")
+               (pair ~sep:(unit ":") Domain_name.pp
+                  (list ~sep:(unit ", ") pp_prereq)))
+        (Domain_name.Map.bindings t.prereq)
+        Fmt.(list ~sep:(unit ";@ ")
+               (pair ~sep:(unit ":") Domain_name.pp
+                  (list ~sep:(unit ", ") pp_update)))
+        (Domain_name.Map.bindings t.update)
         pp_data t.addition
 
     let decode header zone buf names off =
@@ -2123,16 +2132,24 @@ module Packet = struct
       and upcount = Cstruct.BE.get_uint16 buf 8
       and adcount = Cstruct.BE.get_uint16 buf 10
       in
+      let add_to_list name a map =
+        let base = match Domain_name.Map.find name map with
+          | None -> [ ]
+          | Some x -> x
+        in
+        Domain_name.Map.add name (base@[a]) map
+      in
       guard (snd zone = Udns_enum.SOA) (`InvalidZoneRR (snd zone)) >>= fun () ->
-      decode_n Domain_name.Map.add decode_prereq names buf off Domain_name.Map.empty prcount >>= fun (namess, off, prereq) ->
-      decode_n Domain_name.Map.add decode_update names buf off Domain_name.Map.empty upcount >>= fun (ns, off, update) ->
+      decode_n add_to_list decode_prereq names buf off Domain_name.Map.empty prcount >>= fun (namess, off, prereq) ->
+      decode_n add_to_list decode_update names buf off Domain_name.Map.empty upcount >>= fun (ns, off, update) ->
       decode_n_additional names buf off Domain_name.Map.empty None None adcount >>= fun (off, addition, edns, tsig) ->
       guard (Cstruct.len buf = off) `LeftOver >>= fun () ->
       Ok ({ zone ; prereq ; update ; addition }, edns, tsig)
 
     let encode_map map f offs buf off =
       Domain_name.Map.fold (fun name v ((offs, off), count) ->
-          f offs buf off count name v)
+          List.fold_left (fun ((offs, off), count) p ->
+              f offs buf off count name p) ((offs, off), count) v)
         map ((offs, off), 0)
 
     let encode buf t =
@@ -2381,9 +2398,12 @@ module Packet = struct
       None
 end
 
-type tsig_verify = ?mac:Cstruct.t -> Ptime.t -> Packet.t -> Header.t ->
-  Domain_name.t -> key:Dnskey.t option -> Tsig.t -> Cstruct.t ->
-  (Tsig.t * Cstruct.t * Dnskey.t, Cstruct.t option) result
+module Tsig_op = struct
+  type verify = ?mac:Cstruct.t -> Ptime.t -> Packet.t -> Packet.Header.t ->
+    Domain_name.t -> key:Dnskey.t option -> Tsig.t -> Cstruct.t ->
+    (Tsig.t * Cstruct.t * Dnskey.t, Cstruct.t option) result
 
-type tsig_sign = ?mac:Cstruct.t -> ?max_size:int -> Domain_name.t -> Tsig.t ->
-  key:Dnskey.t -> Cstruct.t -> (Cstruct.t * Cstruct.t) option
+  type sign = ?mac:Cstruct.t -> ?max_size:int -> Domain_name.t -> Tsig.t ->
+    key:Dnskey.t -> Cstruct.t -> (Cstruct.t * Cstruct.t) option
+end
+

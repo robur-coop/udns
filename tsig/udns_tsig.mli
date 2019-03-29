@@ -9,13 +9,13 @@ val compute_tsig : Domain_name.t -> Tsig.t -> key:Cstruct.t ->
 (** [compute_tsig name tsig ~key buffer] computes the mac over [buffer]
     and [tsig], using the provided [key] and [name]. *)
 
-val sign : Udns.tsig_sign
+val sign : Tsig_op.sign
 (** [sign] is the signature function. *)
 
-val verify : Udns.tsig_verify
+val verify : Tsig_op.verify
 (** [verify] is the verify function. *)
 
-val encode_and_sign : ?proto:proto -> Header.t ->
+val encode_and_sign : ?proto:proto -> Packet.Header.t ->
   Packet.t -> Ptime.t -> Udns.Dnskey.t -> Domain_name.t ->
   (Cstruct.t * Cstruct.t, string) result
 (** [encode_and_sign ~proto hdr v now dnskey name] signs and encodes the DNS
@@ -23,7 +23,7 @@ val encode_and_sign : ?proto:proto -> Header.t ->
 
 val decode_and_verify : Ptime.t -> Dnskey.t -> Domain_name.t ->
   ?mac:Cstruct.t -> Cstruct.t ->
-  (Header.t * Packet.t * Edns.t option * Tsig.t * Cstruct.t, string) result
+  (Packet.Header.t * Packet.t * Edns.t option * Tsig.t * Cstruct.t, string) result
 (** [decode_and_verify now dnskey name ~mac buffer] decodes and verifies the
    given buffer using the key material, resulting in a DNS packet and the mac,
    or a failure. *)

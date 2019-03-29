@@ -341,45 +341,6 @@ module Umap : sig
 
 end
 
-module Header : sig
-  module Flags : sig
-    type t = [
-      | `Authoritative
-      | `Truncation
-      | `Recursion_desired
-      | `Recursion_available
-      | `Authentic_data
-      | `Checking_disabled
-    ]
-
-    val all : t list
-
-    val compare : t -> t -> int
-
-    val pp : t Fmt.t
-
-    val pp_short : t Fmt.t
-  end
-
-  module FS : Set.S with type elt = Flags.t
-
-  type t = {
-    id : int ;
-    query : bool ;
-    operation : Udns_enum.opcode ;
-    rcode : Udns_enum.rcode ;
-    flags : FS.t
-  }
-
-  val compare : t -> t -> int
-
-  val pp : t Fmt.t
-
-  val decode : Cstruct.t -> (t, [> `BadOpcode of int | `BadRcode of int | `Partial ]) result
-
-  val encode : Cstruct.t -> t -> unit
-end
-
 module Question : sig
   type t = Domain_name.t * Udns_enum.rr_typ
 
@@ -407,6 +368,41 @@ module Packet : sig
   val equal_data : data -> data -> bool
 
   val pp_data : data Fmt.t
+
+  module Header : sig
+    module Flags : sig
+      type t = [
+        | `Authoritative
+        | `Truncation
+        | `Recursion_desired
+        | `Recursion_available
+        | `Authentic_data
+        | `Checking_disabled
+      ]
+
+      val compare : t -> t -> int
+      val pp : t Fmt.t
+      val pp_short : t Fmt.t
+    end
+
+    module FS : Set.S with type elt = Flags.t
+
+    type t = {
+      id : int ;
+      query : bool ;
+      operation : Udns_enum.opcode ;
+      rcode : Udns_enum.rcode ;
+      flags : FS.t
+    }
+
+    val compare : t -> t -> int
+
+    val pp : t Fmt.t
+
+    val decode : Cstruct.t -> (t, [> `BadOpcode of int | `BadRcode of int | `Partial ]) result
+
+    val encode : Cstruct.t -> t -> unit
+  end
 
   module Query : sig
 
@@ -459,13 +455,13 @@ module Packet : sig
 
     type t = {
       zone : Question.t ;
-      prereq : prereq Domain_name.Map.t ;
-      update : update Domain_name.Map.t ;
+      prereq : prereq list Domain_name.Map.t ;
+      update : update list Domain_name.Map.t ;
       addition : data ;
     }
 
-    val create : ?prereq:prereq Domain_name.Map.t ->
-      ?update:update Domain_name.Map.t ->
+    val create : ?prereq:prereq list Domain_name.Map.t ->
+      ?update:update list Domain_name.Map.t ->
       ?addition:data -> Question.t -> t
 
     val pp : t Fmt.t
@@ -537,9 +533,11 @@ module Packet : sig
   val error : Header.t -> t -> Udns_enum.rcode -> (Cstruct.t * int) option
 end
 
-type tsig_verify = ?mac:Cstruct.t -> Ptime.t -> Packet.t -> Header.t ->
-  Domain_name.t -> key:Dnskey.t option -> Tsig.t -> Cstruct.t ->
-  (Tsig.t * Cstruct.t * Dnskey.t, Cstruct.t option) result
+module Tsig_op : sig
+  type verify = ?mac:Cstruct.t -> Ptime.t -> Packet.t -> Packet.Header.t ->
+    Domain_name.t -> key:Dnskey.t option -> Tsig.t -> Cstruct.t ->
+    (Tsig.t * Cstruct.t * Dnskey.t, Cstruct.t option) result
 
-type tsig_sign = ?mac:Cstruct.t -> ?max_size:int -> Domain_name.t -> Tsig.t ->
-  key:Dnskey.t -> Cstruct.t -> (Cstruct.t * Cstruct.t) option
+  type sign = ?mac:Cstruct.t -> ?max_size:int -> Domain_name.t -> Tsig.t ->
+    key:Dnskey.t -> Cstruct.t -> (Cstruct.t * Cstruct.t) option
+end

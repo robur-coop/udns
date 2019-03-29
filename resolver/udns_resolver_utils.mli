@@ -3,7 +3,7 @@
 open Udns
 
 val scrub : ?mode:[ `Recursive | `Stub ] -> Domain_name.t ->
-  Question.t -> Header.t -> Packet.Query.t ->
+  Question.t -> Packet.Header.t -> Packet.Query.t ->
   ((Udns_enum.rr_typ * Domain_name.t * Udns_resolver_entry.rank * Udns_resolver_entry.res) list,
    Udns_enum.rcode) result
 

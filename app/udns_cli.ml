@@ -1,8 +1,9 @@
 (* (c) 2018 Hannes Mehnert, all rights reserved *)
+open Udns
 
 let dns_header id =
-  { Udns.Header.id ; query = true ; operation = Udns_enum.Query ; rcode = Udns_enum.NoError ;
-    flags = Udns.Header.FS.empty }
+  { Packet.Header.id ; query = true ; operation = Udns_enum.Query ;
+    rcode = Udns_enum.NoError ; flags = Packet.Header.FS.empty }
 
 let setup_log style_renderer level =
   Fmt_tty.setup_std_outputs ?style_renderer ();

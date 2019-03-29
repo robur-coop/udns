@@ -187,7 +187,7 @@ let nxdomain (name, _typ) hdr dns =
   in
   let soa = find_soa name dns in
   (* since NXDomain have CNAME semantics, we store them as CNAME *)
-  let rank = if Header.FS.mem `Authoritative hdr.Header.flags then AuthoritativeAnswer else NonAuthoritativeAnswer in
+  let rank = if Packet.Header.FS.mem `Authoritative hdr.Packet.Header.flags then AuthoritativeAnswer else NonAuthoritativeAnswer in
   (* we conclude NXDomain, there are 3 cases we care about:
      no soa in authority and no cname answer -> inject an invalid_soa (avoid loops)
      a matching soa, no cname -> NoDom q_name
@@ -236,7 +236,7 @@ let noerror_stub (name, typ) dns =
 let scrub ?(mode = `Recursive) zone q hdr dns =
   Logs.debug (fun m -> m "scrubbing (bailiwick %a) q %a rcode %a"
                  Domain_name.pp zone Question.pp q
-                 Udns_enum.pp_rcode hdr.Header.rcode) ;
+                 Udns_enum.pp_rcode hdr.Packet.Header.rcode) ;
   match mode, hdr.rcode with
   (*  | `Recursive, Udns_enum.NoError -> Ok (noerror zone q hdr dns) *)
   | `Stub, Udns_enum.NoError -> Ok (noerror_stub q dns)

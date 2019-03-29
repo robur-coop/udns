@@ -3,7 +3,7 @@ open Udns
 type 'key query_state =
   { protocol : Udns.proto ;
     key: 'key ;
-    header : Udns.Header.t ;
+    header : Packet.Header.t ;
     question : Udns.Question.t ; (* we only handle one *)
   } constraint 'key = 'a Umap.key
 
@@ -15,9 +15,9 @@ let make_query protocol hostname
   let question = (hostname, Umap.k_to_rr_typ record_type) in
   let query : Packet.Query.t = Packet.Query.create question in
   let header = {
-    Udns.Header.id = Random.int 0xffff ; (* TODO *)
+    Packet.Header.id = Random.int 0xffff ; (* TODO *)
     query = true ; operation = Udns_enum.Query; rcode = Udns_enum.NoError ;
-    flags = Udns.Header.FS.singleton `Recursion_desired }
+    flags = Packet.Header.FS.singleton `Recursion_desired }
   in
   (*let max_size, edns = Udns_packet.size_edns None None proto query in*)
   let cs , _ =
@@ -52,7 +52,7 @@ let parse_response (type requested)
       end
   end >>= fun buf ->
   match Packet.decode buf with
-  | Ok ({Header.rcode = NoError ; operation = Query ; id = hdr_id;
+  | Ok ({Packet.Header.rcode = NoError ; operation = Query ; id = hdr_id;
           query = false; _ },
          `Query resp, _edns (* what is flags? *), _tsig)
     when hdr_id = state.header.id
@@ -82,7 +82,7 @@ let parse_response (type requested)
   | Ok (h, `Query q, edns, tsig) ->
     R.error_msgf
       "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a  opt:%a tsig:%B@,@]"
-      Udns.Header.pp h
+      Packet.Header.pp h
       h.id state.header.id
       (Udns.Question.compare q.question state.question = 0)
       Packet.Query.pp q

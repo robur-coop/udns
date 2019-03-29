@@ -69,29 +69,30 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
 
   let dns_header () =
     let id = Randomconv.int16 R.generate in
-    { Udns.Header.id ; query = true ; operation = Udns_enum.Query ;
-      rcode = Udns_enum.NoError ; flags = Udns.Header.FS.empty }
+    { Packet.Header.id ; query = true ; operation = Udns_enum.Query ;
+      rcode = Udns_enum.NoError ; flags = Packet.Header.FS.empty }
 
-  (*
   let nsupdate_csr flow hostname keyname zone dnskey csr =
     let tlsa =
-      { Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
+      { Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
         tlsa_selector = Udns_enum.Tlsa_selector_private ;
         tlsa_matching_type = Udns_enum.Tlsa_no_hash ;
         tlsa_data = X509.Encoding.cs_of_signing_request csr ;
       }
     in
     let nsupdate =
-      let zone = { Udns_types.q_name = zone ; q_type = Udns_enum.SOA }
-      and update = [
-        Udns_packet.Remove (hostname, Udns_enum.TLSA) ;
-        Udns_packet.Add ({ Udns_packet.name = hostname ; ttl = 600l ; rdata = Udns_packet.TLSA tlsa })
-      ]
+      let zone = (zone, Udns_enum.SOA)
+      and update =
+        Domain_name.Map.singleton hostname
+          [
+            Packet.Update.Remove Udns_enum.TLSA ;
+            Packet.Update.Add Umap.(B (Tlsa, (600l, Tlsa_set.singleton tlsa)))
+          ]
       in
-      { Udns_packet.zone ; prereq = [] ; update ; addition = [] }
+      Packet.Update.create ~update zone
     and header =
       let hdr = dns_header () in
-      { hdr with Udns_packet.operation = Udns_enum.Update }
+      { hdr with operation = Udns_enum.Update }
     in
     let now = Ptime.v (P.now_d_ps ()) in
     match Udns_tsig.encode_and_sign ~proto:`Tcp header (`Update nsupdate) now dnskey keyname with
@@ -105,7 +106,6 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
           match Udns_tsig.decode_and_verify now dnskey keyname ~mac data with
           | Error e -> Lwt.return_error ("nsupdate reply " ^ e)
           | Ok _ -> Lwt.return_ok ()
-*)
 
   let query_certificate flow public_key name =
     let good_tlsa tlsa =
@@ -137,8 +137,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
       | Ok data ->
         match Packet.decode data with
         | Ok (header', `Query q, _, _)
-          when not header'.Header.query
-            && header'.Header.id = header.Header.id ->
+          when not header'.query && header'.id = header.id ->
           (* collect TLSA pems *)
           let tlsa =
             match Domain_name.Map.find name q.Packet.Query.answer with
@@ -196,7 +195,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
       Lwt.return certificate
     | None ->
       Log.info (fun m -> m "no certificate in DNS, need to transmit the CSR") ;
-      (*nsupdate_csr flow hostname keyname zone dnskey csr >>= function
+      nsupdate_csr flow hostname keyname zone dnskey csr >>= function
       | Error msg ->
         Log.err (fun m -> m "failed to nsupdate TLSA %s" msg) ;
         Lwt.fail_with "nsupdate issue"
@@ -211,8 +210,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
             TIME.sleep_ns (Duration.of_sec 1) >>= fun () ->
             wait_for_cert ()
         in
-        wait_for_cert ()*)
-      assert false
+        wait_for_cert ()
 
   let retrieve_certificate ?(ca = `Staging) stack ~dns_key ~hostname ?(additional_hostnames = []) ?key_seed dns port =
     let keyname, zone, dnskey =

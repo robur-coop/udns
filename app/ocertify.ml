@@ -80,26 +80,28 @@ let query_certificate sock public_key fqdn =
   | Error e ->
     Logs.err (fun m -> m "error %a while decoding answer" Packet.pp_err e) ;
     None
-(*
+
 let nsupdate_csr sock now hostname keyname zone dnskey csr =
   let tlsa =
-    { Udns.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
+    { Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
       tlsa_selector = Udns_enum.Tlsa_selector_private ;
       tlsa_matching_type = Udns_enum.Tlsa_no_hash ;
       tlsa_data = X509.Encoding.cs_of_signing_request csr ;
     }
   in
   let nsupdate =
-    let zone = { Udns_types.q_name = zone ; q_type = Udns_enum.SOA }
-    and update = [
-      Udns_packet.Remove (hostname, Udns_enum.TLSA) ;
-      Udns_packet.Add ({ Udns_packet.name = hostname ; ttl = 600l ; rdata = Udns_packet.TLSA tlsa })
-    ]
+    let zone = (zone, Udns_enum.SOA)
+    and update =
+      Domain_name.Map.singleton hostname
+        [
+          Packet.Update.Remove Udns_enum.TLSA ;
+          Packet.Update.Add (Umap.B (Tlsa, (3600l, Umap.Tlsa_set.singleton tlsa)))
+        ]
     in
-    { Udns_packet.zone ; prereq = [] ; update ; addition = [] }
+    Packet.Update.create ~update zone
   and header =
     let hdr = dns_header () in
-    { hdr with Udns_packet.operation = Udns_enum.Update }
+    { hdr with operation = Udns_enum.Update }
   in
   match
     Udns_tsig.encode_and_sign ~proto:`Tcp header (`Update nsupdate) now dnskey keyname >>= fun (data, mac) ->
@@ -109,7 +111,7 @@ let nsupdate_csr sock now hostname keyname zone dnskey csr =
   with
   | Error x -> Error (`Msg x)
   | Ok _ -> Ok ()
-            *)
+
 let jump server_ip port (keyname, zone, dnskey) hostname csr key seed bits cert force =
   Nocrypto_entropy_unix.initialize () ;
   let fn suffix = function

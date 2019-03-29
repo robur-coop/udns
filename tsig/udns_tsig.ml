@@ -93,7 +93,7 @@ let verify ?mac now v header name ~key tsig tbs =
   with
   | Ok x -> Ok x
   | Error e ->
-    let header = { header with Header.query = not header.Header.query } in
+    let header = { header with Packet.Header.query = not header.Packet.Header.query } in
     let or_err f err = match f err with None -> Some err | Some x -> Some x in
     match Packet.error header v Udns_enum.NotAuth, e with
     | None, _ -> Error None

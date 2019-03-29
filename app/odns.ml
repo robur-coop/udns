@@ -92,7 +92,7 @@ let do_txt nameserver domains _ =
                       Domain_name.pp domain msg))
 
 
-let do_any _nameserver _domains _ = assert false
+let do_any _nameserver _domains _ = assert false (* TODO *)
 
 
 let do_dkim nameserver (selector:string) domains _ =

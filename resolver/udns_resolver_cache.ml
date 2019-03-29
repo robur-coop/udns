@@ -432,8 +432,8 @@ let answer t ts (name, typ) id =
   let packet t add rcode answer authority =
     (* TODO why is this RA + RD in here? should not be for recursive algorithm
          also, there should be authoritative... *)
-    let flags = Header.FS.(add `Recursion_desired (singleton `Recursion_available)) in
-    let header = { Header.id ; query = false ; operation = Udns_enum.Query ;
+    let flags = Packet.Header.FS.(add `Recursion_desired (singleton `Recursion_available)) in
+    let header = { Packet.Header.id ; query = false ; operation = Udns_enum.Query ;
                    rcode ; flags }
     (* XXX: we should look for a fixpoint here ;) *)
     (*    and additional, t = if add then additionals t ts answer else [], t *)
