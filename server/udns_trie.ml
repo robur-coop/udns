@@ -34,8 +34,8 @@ open Rresult.R.Infix
 let guard p err = if p then Ok () else Error err
 
 let ent name map =
-  let ttl, soa = Umap.(get Soa map) in
-  `EmptyNonTerminal (name, (ttl, soa))
+  let soa = Umap.(get Soa map) in
+  `EmptyNonTerminal (name, soa)
 let to_ns name map =
   let ttl, ns =
     match Umap.(find Ns map) with
@@ -60,8 +60,8 @@ let lookup_res zone ty m =
          but there's a SOA for localhost (to handle it authoritatively) *)
       (* TODO should we check that the label-node map is empty?
          well, if we have a proper authoritative zone, there'll be a NS *)
-      let ttl, soa = Umap.get Umap.Soa zmap in
-      Error (`NotFound (z, (ttl, soa)))
+      let soa = Umap.get Umap.Soa zmap in
+      Error (`NotFound (z, soa))
     | None -> Error (ent z zmap)
     | Some cname -> Ok (cname, to_ns z zmap)
 
@@ -86,8 +86,8 @@ let lookup_aux name t =
               Error (`Delegation (name, (ttl, ns)))
             | None -> Error `NotAuthoritative
             | Some (`Soa (name, map)) ->
-              let ttl, soa = Umap.(get Soa map) in
-              Error (`NotFound (name, (ttl, soa)))
+              let soa = Umap.(get Soa map) in
+              Error (`NotFound (name, soa))
           end
         | x -> go (succ idx) zone x
   in
@@ -105,7 +105,7 @@ let lookup name key t =
     | Some v -> Ok v
     | None -> match Umap.(find Soa map) with
       | None -> Error `NotAuthoritative
-      | Some (ttl, soa) -> Error (`NotFound (name, (ttl, soa)))
+      | Some soa -> Error (`NotFound (name, soa))
 
 let lookup_any name t =
   match lookup_aux name t with
@@ -173,10 +173,10 @@ let collect_entries name sub map =
     match Umap.(find Soa map) with
     | Some v -> Some v
     | None when Domain_name.(equal root name) ->
-      Some (0l, { Soa.nameserver = Domain_name.root ;
-                  hostmaster = Domain_name.root ;
-                  serial = 0l ; refresh = 0l ; retry = 0l ;
-                  expiry = 0l ; minimum = 0l })
+      Some { Soa.nameserver = Domain_name.root ;
+             hostmaster = Domain_name.root ;
+             serial = 0l ; refresh = 0l ; retry = 0l ;
+             expiry = 0l ; minimum = 0l }
     | None -> None
   in
   match ttlsoa with
@@ -263,9 +263,8 @@ let check trie =
               mxs (Ok ())
         | B (Ptr, (ttl, name)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v)) else Ok ()
-        | B (Soa, (ttl, soa)) ->
-          if ttl < 0l then Error (`Bad_ttl (name, v))
-          else begin match find Ns map with
+        | B (Soa, soa) ->
+          begin match find Ns map with
             | Some (_, names) ->
               if Domain_name.Set.mem soa.nameserver names then
                 Ok ()
@@ -278,14 +277,11 @@ let check trie =
           else if Txt_set.is_empty txts then
             Error (`Empty (name, Udns_enum.TXT))
           else if
-            Txt_set.exists (function
-                | [] -> true
-                | xs -> List.exists (fun s -> String.length s = 0) xs)
-              txts
+            Txt_set.exists (fun s -> String.length s > 0) txts
           then
-            Error (`Empty (name, Udns_enum.TXT))
-          else
             Ok ()
+          else
+            Error (`Empty (name, Udns_enum.TXT))
         | B (A, (ttl, a)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Ipv4_set.is_empty a then
@@ -411,7 +407,7 @@ let pp_e ppf = function
   | `Delegation (name, (ttl, ns)) ->
     Fmt.pf ppf "delegation %a to TTL %lu %a" Domain_name.pp name ttl
       Fmt.(list ~sep:(unit ",@,") Domain_name.pp) (Domain_name.Set.elements ns)
-  | `EmptyNonTerminal (name, (ttl, soa)) ->
-    Fmt.pf ppf "empty non terminal %a TTL %lu SOA %a" Domain_name.pp name ttl Soa.pp soa
+  | `EmptyNonTerminal (name, soa) ->
+    Fmt.pf ppf "empty non terminal %a SOA %a" Domain_name.pp name Soa.pp soa
   | `NotAuthoritative -> Fmt.string ppf "not authoritative"
-  | `NotFound (name, (ttl, soa)) -> Fmt.pf ppf "not found %a TTL %lu soa %a" Domain_name.pp name ttl Soa.pp soa
+  | `NotFound (name, soa) -> Fmt.pf ppf "not found %a soa %a" Domain_name.pp name Soa.pp soa

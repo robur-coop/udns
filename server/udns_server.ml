@@ -126,21 +126,16 @@ module Authentication = struct
     Domain_name.of_array (Array.sub arr 0 zidx)
 
   let soa name =
-    let soa = { Soa.nameserver = name ; hostmaster = name ;
-                serial = 0l ; refresh = 16384l ; retry = 2048l ;
-                expiry = 1048576l ; minimum = 300l }
-    in
-    (300l, soa)
+    { Soa.nameserver = name ; hostmaster = name ;
+      serial = 0l ; refresh = 16384l ; retry = 2048l ;
+      expiry = 1048576l ; minimum = 300l }
 
   let add_keys trie name keys' =
     let zone = zone name in
     let soa =
       match Udns_trie.lookup zone Umap.Soa trie with
-      | Ok (ttl, soa) ->
-        let soa' = { soa with Soa.serial = Int32.succ soa.Soa.serial } in
-        (ttl, soa')
-      | Error _ ->
-        soa name
+      | Ok soa -> { soa with Soa.serial = Int32.succ soa.Soa.serial }
+      | Error _ -> soa name
     in
     let keys = match Udns_trie.lookup name Umap.Dnskey trie with
       | Error _ -> keys'
@@ -240,9 +235,10 @@ let text name t =
       Log.err (fun m -> m "couldn't find SOA when serialising zone for %a: %a"
                   Domain_name.pp name Udns_trie.pp_e e) ;
       None, None
-    | Ok (ttl, _) ->
+    | Ok soa ->
       Buffer.add_string buf
         ("$ORIGIN " ^ Domain_name.to_string ~trailing:true name ^ "\n") ;
+      let ttl = soa.minimum in
       Buffer.add_string buf
         ("$TTL " ^ Int32.to_string ttl ^ "\n") ;
       Some name, Some ttl
@@ -539,7 +535,7 @@ let notify t l now zone soa =
   let notify =
     let question = Packet.Query.create (zone, Udns_enum.SOA) in
     let answer =
-      Domain_name.Map.singleton zone Umap.(singleton Soa (0l, soa))
+      Domain_name.Map.singleton zone Umap.(singleton Soa soa)
     in
     { question with answer }
   in
@@ -578,11 +574,10 @@ let update_data trie zone u =
      Log.err (fun m -> m "check after update returned %a" Udns_trie.pp_err e) ;
      Error Udns_enum.FormErr) >>= fun () ->
   match Udns_trie.lookup zone Soa trie, Udns_trie.lookup zone Soa trie' with
-  | Ok (_, oldsoa), Ok (_, soa) when Soa.newer ~old:oldsoa soa ->
-    Ok (trie', Some soa)
-  | _, Ok (ttl, soa) ->
+  | Ok oldsoa, Ok soa when Soa.newer ~old:oldsoa soa -> Ok (trie', Some soa)
+  | _, Ok soa ->
     let soa = { soa with Soa.serial = Int32.succ soa.Soa.serial } in
-    let trie'' = Udns_trie.insert zone Soa (ttl, soa) trie' in
+    let trie'' = Udns_trie.insert zone Soa soa trie' in
     Ok (trie'', Some soa)
   | _, _ -> Ok (trie', None)
 
@@ -672,7 +667,7 @@ module Primary = struct
     let keys = Authentication.of_keys keys in
     let t = create data (keys, a) rng tsig_verify tsig_sign in
     let notifications =
-      let f name (_, soa) acc =
+      let f name soa acc =
         Log.debug (fun m -> m "soa found for %a" Domain_name.pp name) ;
         acc @ notify t [] 0L name soa
       in
@@ -937,7 +932,7 @@ module Secondary = struct
           in
 
           match Udns_trie.lookup zone Umap.Soa t.data, st with
-          | Ok (_, soa), Transferred ts ->
+          | Ok soa, Transferred ts ->
             (* TODO: integer overflows (Int64.add) *)
             let r = Duration.of_sec (Int32.to_int soa.Soa.refresh) in
             maybe_out
@@ -945,7 +940,7 @@ module Secondary = struct
                  query_soa t `Tcp p_now now zone name
                else
                  None)
-          | Ok (_, soa), Requested_soa (ts, _, retry, _) ->
+          | Ok soa, Requested_soa (ts, _, retry, _) ->
             let expiry = Duration.of_sec (Int32.to_int soa.Soa.expiry) in
             if Int64.add ts expiry < now then begin
               Log.warn (fun m -> m "expiry expired, dropping zone %a"
@@ -1051,8 +1046,8 @@ module Secondary = struct
        | Error _ ->
          Log.info (fun m -> m "no soa for %a, maybe first axfr" Domain_name.pp zone) ;
          Ok ()
-       | Ok (_, soa) ->
-         let fresh = snd axfr.Packet.Axfr.soa in
+       | Ok soa ->
+         let fresh = axfr.Packet.Axfr.soa in
          if Soa.newer ~old:soa fresh then
            Ok ()
          else begin
@@ -1093,7 +1088,7 @@ module Secondary = struct
           Log.err (fun m -> m "didn't receive SOA for %a from %a (answer %a)"
                       Domain_name.pp zone Ipaddr.V4.pp ip Packet.pp_data query.Packet.Query.answer) ;
           Error Udns_enum.FormErr
-        | Ok (_, cached_soa), Some (_, fresh) ->
+        | Ok cached_soa, Some fresh ->
           (* TODO: > with wraparound in mind *)
           if Soa.newer ~old:cached_soa fresh then
             match axfr t `Tcp now ts zone name with

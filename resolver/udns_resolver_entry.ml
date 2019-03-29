@@ -75,9 +75,9 @@ let to_map =
   in
   function
   | NoErr _ -> assert false
-  | NoData (name, soa) -> doit name soa
-  | NoDom (name, soa) -> doit name soa
-  | ServFail (name, soa) -> doit name soa
+  | NoData (name, (_, soa)) -> doit name soa
+  | NoDom (name, (_, soa)) -> doit name soa
+  | ServFail (name, (_, soa)) -> doit name soa
 
 let pp_res ppf = function
   | NoErr rr -> Fmt.pf ppf "NoError %a" Umap.pp_b rr

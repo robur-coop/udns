@@ -2,6 +2,8 @@
 open Udns
 open Astring
 
+open Packet
+
 let of_hex s =
   let hexchar = function
     | 'a' .. 'f' as x -> int_of_char x - 0x57
@@ -460,7 +462,7 @@ module Packet = struct
                      answer = Domain_name.Map.empty ;
                      authority =
                        Domain_name.Map.singleton (n_of_s "150.138.in-addr.arpa")
-                         Umap.(singleton Soa (0x2a30l, soa)) ;
+                         Umap.(singleton Soa soa) ;
                      additional = Domain_name.Map.empty}))
                 (decode data))
 
@@ -505,7 +507,7 @@ module Packet = struct
                      question = (n_of_s "news.bbc.net.uk", Udns_enum.NS) ;
                      authority =
                        Domain_name.Map.singleton (n_of_s "bbc.net.uk")
-                         Umap.(singleton Soa (0x0E10l, soa)) ;
+                         Umap.(singleton Soa soa) ;
                      answer = Domain_name.Map.empty ;
                      additional = Domain_name.Map.empty }))
                 (decode data))
@@ -568,7 +570,7 @@ module Packet = struct
                   expiry = 0x127500l ; minimum = 0x012cl }
       in
       Domain_name.Map.singleton (Domain_name.of_string_exn "riseup.net")
-        Umap.(singleton Soa (300l, soa))
+        Umap.(singleton Soa soa)
     and additional = Domain_name.Map.empty
 (*      let opt = Udns_packet.opt ~payload_size:4096 () in
         [ { name = Domain_name.root ; ttl = 0l ; rdata = OPTS opt } ] *)

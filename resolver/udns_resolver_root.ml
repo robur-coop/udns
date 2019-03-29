@@ -76,6 +76,6 @@ let reserved_zones =
                 serial = 0l ; refresh = 300l ; retry = 300l ;
                 expiry = 300l ; minimum = 300l }
     in
-    Umap.(B (Soa, (300l, soa)))
+    Umap.(B (Soa, soa))
   in
   Domain_name.Set.fold (fun n acc -> (n, inv n) :: acc) reserved_zone_records []

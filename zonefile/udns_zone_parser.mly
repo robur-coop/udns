@@ -121,12 +121,12 @@ rr:
  | TYPE_NS s domain { B (Ns, (0l, Domain_name.Set.singleton $3)) }
  | TYPE_CNAME s domain { B (Cname, (0l, $3)) }
  | TYPE_SOA s domain s domain s int32 s int32 s int32 s int32 s int32
-     { B (Soa, (0l, { Udns.Soa.nameserver = $3 ; hostmaster = $5 ;
-                      serial = $7 ; refresh = $9 ; retry = $11 ; expiry = $13 ;
-                      minimum = $15 })) }
+     { B (Soa, { Udns.Soa.nameserver = $3 ; hostmaster = $5 ;
+                 serial = $7 ; refresh = $9 ; retry = $11 ; expiry = $13 ;
+                 minimum = $15 }) }
  | TYPE_PTR s domain { B (Ptr, (0l, $3)) }
  | TYPE_MX s int16 s domain { B (Mx, (0l, Mx_set.singleton { Udns.Mx.preference = $3 ; mail_exchange = $5 })) }
- | TYPE_TXT s charstrings { B (Txt, (0l, Txt_set.singleton $3)) }
+ | TYPE_TXT s charstrings { B (Txt, (0l, Txt_set.of_list $3)) }
      /* RFC 2782 */
  | TYPE_SRV s int16 s int16 s int16 s domain
      { B (Srv, (0l, Srv_set.singleton { Udns.Srv.priority = $3 ; weight = $5 ; port = $7 ; target = $9 })) }

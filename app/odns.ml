@@ -84,8 +84,7 @@ let do_txt nameserver domains _ =
     (fun domain -> function
        | Ok (ttl, txtset) ->
          Udns.Umap.Txt_set.iter (fun txtrr ->
-             Logs.app (fun m -> m "%ld: @[<v>%a@]" ttl
-                          Fmt.(list ~sep:(unit "\n") string) txtrr)
+             Logs.app (fun m -> m "%ld: @[<v>%s@]" ttl txtrr)
            ) txtset
        | Error (`Msg msg) ->
          Logs.err (fun m -> m "Failed to lookup %a: %s\n%!"
@@ -105,7 +104,7 @@ let do_dkim nameserver (selector:string) domains _ =
     (fun domain -> function
        | Ok (_ttl, txtset) ->
          Udns.Umap.Txt_set.iter (fun txt ->
-             Logs.app (fun m -> m "%a" Fmt.(list ~sep:(unit"")string)txt)
+             Logs.app (fun m -> m "%s" txt)
            ) txtset
        | Error (`Msg msg) ->
          Logs.err (fun m -> m "Failed to lookup %a: %s\n%!"

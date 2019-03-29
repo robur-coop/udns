@@ -11,17 +11,17 @@ module Trie = struct
     let module M = struct
       type t =
         [ `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
-        | `EmptyNonTerminal of Domain_name.t * (int32 * Soa.t)
+        | `EmptyNonTerminal of Domain_name.t * Soa.t
         | `NotAuthoritative
-        | `NotFound of Domain_name.t * (int32 * Soa.t) ]
+        | `NotFound of Domain_name.t * Soa.t ]
       let pp = Udns_trie.pp_e
       let equal a b = match a, b with
         | `Delegation (na, (ttl, n)), `Delegation (na', (ttl', n')) ->
           Domain_name.equal na na' && ttl = ttl' && Domain_name.Set.equal n n'
-        | `EmptyNonTerminal (nam, (ttl, soa)), `EmptyNonTerminal (nam', (ttl', soa')) ->
-          Domain_name.equal nam nam' && ttl = ttl' && Soa.compare soa soa' = 0
-        | `NotFound (nam, (ttl, soa)), `NotFound (nam', (ttl', soa')) ->
-          Domain_name.equal nam nam' && ttl = ttl' && Soa.compare soa soa' = 0
+        | `EmptyNonTerminal (nam, soa), `EmptyNonTerminal (nam', soa') ->
+          Domain_name.equal nam nam' && Soa.compare soa soa' = 0
+        | `NotFound (nam, soa), `NotFound (nam', soa') ->
+          Domain_name.equal nam nam' && Soa.compare soa soa' = 0
         | `NotAuthoritative, `NotAuthoritative -> true
         | _ -> false
     end in
@@ -52,7 +52,7 @@ module Trie = struct
 
   let ins_zone name soa ttl ns t =
     insert name Umap.Ns (ttl, ns)
-      (insert name Umap.Soa (soa.Soa.minimum, soa) t)
+      (insert name Umap.Soa soa t)
 
   let simple () =
     Alcotest.(check (result l_ok e)
@@ -65,10 +65,10 @@ module Trie = struct
     } in
     let t = ins_zone Domain_name.root soa 6l (sn (n_of_s "a")) empty in
     Alcotest.(check (result l_ok e) "lookup for .com is NoDomain"
-                (Error (`NotFound (Domain_name.root, (4l, soa))))
+                (Error (`NotFound (Domain_name.root, soa)))
                 (lookupb (n_of_s "com") Udns_enum.A t)) ;
     Alcotest.(check (result l_ok e) "lookup for SOA . is SOA"
-                (Ok (Umap.B (Umap.Soa, (4l, soa)),
+                (Ok (Umap.B (Umap.Soa, soa),
                      (Domain_name.root, 6l, sn (n_of_s "a"))))
                 (lookupb Domain_name.root Udns_enum.SOA t)) ;
     let a_record = (23l, Umap.Ipv4_set.singleton (ip "1.4.5.2")) in
@@ -78,10 +78,10 @@ module Trie = struct
                      (Domain_name.root, 6l, sn (n_of_s "a"))))
                 (lookupb (n_of_s "foo.com") Udns_enum.A t)) ;
     Alcotest.(check (result l_ok e) "lookup for SOA com is ENT"
-                (Error (`EmptyNonTerminal (Domain_name.root, (4l, soa))))
+                (Error (`EmptyNonTerminal (Domain_name.root, soa)))
                 (lookupb (n_of_s "com") Udns_enum.SOA t)) ;
     Alcotest.(check (result l_ok e) "lookup for SOA foo.com is NoDomain"
-                (Error (`EmptyNonTerminal (Domain_name.root, (4l, soa))))
+                (Error (`EmptyNonTerminal (Domain_name.root, soa)))
                 (lookupb (n_of_s "foo.com") Udns_enum.SOA t))
 
   let basic () =
@@ -98,7 +98,7 @@ module Trie = struct
                 (lookupb (n_of_s "bar.com") Udns_enum.SOA t)) ;
     Alcotest.(check (result l_ok e)
                 "lookup for SOA foo.com (after insert) is good"
-                (Ok (Umap.B (Umap.Soa, (4l, soa)),
+                (Ok (Umap.B (Umap.Soa, soa),
                      (n_of_s "foo.com", 10l, sn (n_of_s "ns1.foo.com"))))
                 (lookupb (n_of_s "foo.com") Udns_enum.SOA t)) ;
     Alcotest.(check (result l_ok e)
@@ -108,25 +108,25 @@ module Trie = struct
                 (lookupb (n_of_s "foo.com") Udns_enum.NS t)) ;
     Alcotest.(check (result l_ok e)
                 "lookup for AAAA foo.com (after insert) is NoData"
-                (Error (`EmptyNonTerminal (n_of_s "foo.com", (4l, soa))))
+                (Error (`EmptyNonTerminal (n_of_s "foo.com", soa)))
                 (lookupb (n_of_s "foo.com") Udns_enum.AAAA t)) ;
     Alcotest.(check (result l_ok e)
                 "lookup for A foo.com (after insert) is NoData"
-                (Error (`EmptyNonTerminal (n_of_s "foo.com", (4l, soa))))
+                (Error (`EmptyNonTerminal (n_of_s "foo.com", soa)))
                 (lookupb (n_of_s "foo.com") Udns_enum.A t)) ;
     Alcotest.(check (result l_ok e)
                 "lookup for MX foo.com (after insert) is NoData"
-                (Error (`EmptyNonTerminal (n_of_s "foo.com", (4l, soa))))
+                (Error (`EmptyNonTerminal (n_of_s "foo.com", soa)))
                 (lookupb (n_of_s "foo.com") Udns_enum.MX t)) ;
     Alcotest.(check (result l_ok e)
                 "lookup for MX bar.foo.com (after insert) is NoDomain"
-                (Error (`NotFound (n_of_s "foo.com", (4l, soa))))
+                (Error (`NotFound (n_of_s "foo.com", soa)))
                 (lookupb (n_of_s "bar.foo.com") Udns_enum.MX t)) ;
     let a_record = (12l, Umap.Ipv4_set.singleton (ip "1.2.3.4")) in
     let t = insert (n_of_s "foo.com") Umap.A a_record t in
     Alcotest.(check (result l_ok e)
                 "lookup for AAAA foo.com (after insert) is NoData"
-                (Error (`EmptyNonTerminal (n_of_s "foo.com", (4l, soa))))
+                (Error (`EmptyNonTerminal (n_of_s "foo.com", soa)))
                 (lookupb (n_of_s "foo.com") Udns_enum.AAAA t)) ;
     Alcotest.(check (result l_ok e)
                 "lookup for A foo.com (after insert) is Found"
@@ -135,12 +135,12 @@ module Trie = struct
                 (lookupb (n_of_s "foo.com") Udns_enum.A t)) ;
     Alcotest.(check (result l_ok e)
                 "lookup for MX foo.com (after insert) is NoData"
-                (Error (`EmptyNonTerminal (n_of_s "foo.com", (4l, soa))))
+                (Error (`EmptyNonTerminal (n_of_s "foo.com", soa)))
                 (lookupb (n_of_s "foo.com") Udns_enum.MX t)) ;
     let t = remove_rr (n_of_s "foo.com") Udns_enum.A t in
     Alcotest.(check (result l_ok e)
                 "lookup for A foo.com (after insert and remove) is NoData"
-                (Error (`EmptyNonTerminal (n_of_s "foo.com", (4l, soa))))
+                (Error (`EmptyNonTerminal (n_of_s "foo.com", soa)))
                 (lookupb (n_of_s "foo.com") Udns_enum.A t)) ;
     let t = remove_rr (n_of_s "foo.com") Udns_enum.ANY t in
     Alcotest.(check (result l_ok e)
@@ -175,7 +175,7 @@ module Trie = struct
     in
     Alcotest.(check (result l_ok e)
                 "lookup for SOA foo.com (after insert) is good"
-                (Ok (Umap.B (Umap.Soa, (4l, soa)),
+                (Ok (Umap.B (Umap.Soa, soa),
                      (n_of_s "foo.com", 10l, sn (n_of_s "ns1.foo.com"))))
                 (lookupb (n_of_s "foo.com") Udns_enum.SOA t)) ;
     Alcotest.(check (result l_ok e)
@@ -238,7 +238,7 @@ module Trie = struct
                 (r_fst (lookupb (n_of_s "foo.com") Udns_enum.NS t'))) ;
     let t' = remove_zone (n_of_s "bar.foo.com") t in
     Alcotest.(check (result b_ok e) "lookup for NS bar.foo.com is not authoritative"
-                (Error (`NotFound (n_of_s "foo.com", (4l, soa))))
+                (Error (`NotFound (n_of_s "foo.com", soa)))
                 (r_fst (lookupb (n_of_s "bar.foo.com") Udns_enum.NS t'))) ;
     Alcotest.(check (result b_ok e) "lookup for NS foo.com is good"
                 (Ok (Umap.B (Umap.Ns, (10l, sn (n_of_s "ns1.foo.com")))))

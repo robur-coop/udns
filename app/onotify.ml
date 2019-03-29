@@ -9,7 +9,7 @@ let notify zone serial key now =
       let soa = { Soa.nameserver = zone ; hostmaster = zone ; serial ;
                   refresh = 0l; retry = 0l ; expiry = 0l ; minimum = 0l }
       in
-      Domain_name.Map.singleton zone (Umap.singleton Umap.Soa (0l, soa))
+      Domain_name.Map.singleton zone (Umap.singleton Umap.Soa soa)
     in
     Packet.Query.create ~answer question
   and header =

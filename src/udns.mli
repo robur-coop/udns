@@ -174,7 +174,7 @@ end
 
 (* Text record *)
 module Txt : sig
-  type t = string list
+  type t = string
 
   val pp : t Fmt.t
 
@@ -275,7 +275,7 @@ module Umap : sig
   module Sshfp_set : Set.S with type elt = Sshfp.t
 
   type _ k =
-    | Soa : (int32 * Soa.t) k
+    | Soa : Soa.t k
     | Ns : (int32 * Domain_name.Set.t) k
     | Mx : (int32 * Mx_set.t) k
     | Cname : (int32 * Domain_name.t) k
@@ -423,7 +423,7 @@ module Packet : sig
   module Axfr : sig
 
     type t = {
-      soa : (int32 * Soa.t) ;
+      soa : Soa.t ;
       entries : data ;
     }
 

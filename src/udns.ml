@@ -526,15 +526,11 @@ end
 
 (* Text record *)
 module Txt = struct
-  type t = string list
+  type t = string
 
-  let pp ppf txt = Fmt.pf ppf "TXT %a" Fmt.(list ~sep:(unit ";@ ") string) txt
+  let pp ppf txt = Fmt.pf ppf "TXT %s" txt
 
-  let compare a a' =
-    andThen (compare (List.length a) (List.length a'))
-      (List.fold_left2
-         (fun r a b -> match r with 0 -> String.compare a b | x -> x)
-         0 a a')
+  let compare = String.compare
 
   let decode names buf ~off ~len =
     let decode_character_str buf off =
@@ -553,15 +549,11 @@ module Txt = struct
     let txts = more [] 0 in
     Ok (txts, names, off + len)
 
-  let encode txts offs buf off =
-    let encode_character_str buf off s =
-      let len = String.length s in
-      Cstruct.set_uint8 buf off len ;
-      Cstruct.blit_from_string s 0 buf (succ off) len ;
-      off + len + 1
-    in
-    let off = List.fold_left (encode_character_str buf) off txts in
-    offs, off
+  let encode txt offs buf off =
+    let len = String.length txt in
+    Cstruct.set_uint8 buf off len ;
+    Cstruct.blit_from_string txt 0 buf (succ off) len ;
+    offs, off + len + 1
 end
 
 module Tsig = struct
@@ -753,6 +745,7 @@ module Tsig = struct
         let a = Int64.(to_int (logand 0xffffL secs)) in
         Cstruct.BE.set_uint16 buf off a
 
+  (* TODO unused -- why? *)
   let encode t offs buf off =
     let algo = algorithm_to_name t.algorithm in
     let offs, off = Name.encode ~compress:false algo offs buf off in
@@ -1022,7 +1015,7 @@ module Umap = struct
   module Sshfp_set = Set.Make(Sshfp)
 
   type _ k =
-    | Soa : (int32 * Soa.t) k
+    | Soa : Soa.t k
     | Ns : (int32 * Domain_name.Set.t) k
     | Mx : (int32 * Mx_set.t) k
     | Cname : (int32 * Domain_name.t) k
@@ -1042,7 +1035,7 @@ module Umap = struct
     | Mx, (_, mxs), Mx, (_, mxs') -> Mx_set.equal mxs mxs'
     | Ns, (_, ns), Ns, (_, ns') -> Domain_name.Set.equal ns ns'
     | Ptr, (_, name), Ptr, (_, name') -> Domain_name.equal name name'
-    | Soa, (_, soa), Soa, (_, soa') -> Soa.compare soa soa' = 0
+    | Soa, soa, Soa, soa' -> Soa.compare soa soa' = 0
     | Txt, (_, txts), Txt, (_, txts') -> Txt_set.equal txts txts'
     | A, (_, aas), A, (_, aas') -> Ipv4_set.equal aas aas'
     | Aaaa, (_, aaaas), Aaaa, (_, aaaas') -> Ipv6_set.equal aaaas aaaas'
@@ -1084,7 +1077,7 @@ module Umap = struct
       (offs'', rdata_end)
     in
     match k, v with
-    | Soa, (ttl, soa) -> rr offs (Soa.encode soa) off ttl, 1
+    | Soa, soa -> rr offs (Soa.encode soa) off soa.minimum, 1
     | Ns, (ttl, ns) ->
       Domain_name.Set.fold (fun name ((offs, off), count) ->
           rr offs (Ns.encode name) off ttl, succ count)
@@ -1153,7 +1146,7 @@ module Umap = struct
 
 let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
     match k, v, rem with
-    | Cname, _, cname -> None
+    | Cname, _, _ -> None
     | Mx, (ttl, mxs), (_, rm) ->
       let s = Mx_set.diff mxs rm in
       if Mx_set.is_empty s then None else Some (ttl, s)
@@ -1161,7 +1154,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
       let s = Domain_name.Set.diff ns rm in
       if Domain_name.Set.is_empty s then None else Some (ttl, s)
     | Ptr, _, _ -> None
-    | Soa, (ttl, soa), _ -> Some (ttl, soa) (* don't remove my soa *)
+    | Soa, soa, _ -> Some soa (* don't remove my soa *)
     | Txt, (ttl, txts), (_, rm) ->
       let s = Txt_set.diff txts rm in
       if Txt_set.is_empty s then None else Some (ttl, s)
@@ -1233,16 +1226,16 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
           ns []
       | Ptr, (ttl, ptr) ->
         [ Fmt.strf "%s\t%aPTR\t%s" str_name ttl_fmt (ttl_opt ttl) (name ptr) ]
-      | Soa, (ttl, soa) ->
+      | Soa, soa ->
         [ Fmt.strf "%s\t%aSOA\t%s\t%s\t%lu\t%lu\t%lu\t%lu\t%lu" str_name
-            ttl_fmt (ttl_opt ttl)
+            ttl_fmt (ttl_opt soa.minimum)
             (name soa.nameserver)
             (name soa.hostmaster)
             soa.serial soa.refresh soa.retry
             soa.expiry soa.minimum ]
       | Txt, (ttl, txts) ->
         Txt_set.fold (fun txt acc ->
-            Fmt.strf "%s\t%aTXT\t%s" str_name ttl_fmt (ttl_opt ttl) (String.concat "" txt) :: acc)
+            Fmt.strf "%s\t%aTXT\t%s" str_name ttl_fmt (ttl_opt ttl) txt :: acc)
           txts []
       | A, (ttl, a) ->
         Ipv4_set.fold (fun ip acc ->
@@ -1323,7 +1316,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
         Fmt.pf ppf "ttl %lu %a" ttl
           Fmt.(list ~sep:(unit ";@,") Ns.pp) (Domain_name.Set.elements names)
       | Ptr, (ttl, name) -> Fmt.pf ppf "ttl %lu %a" ttl Ptr.pp name
-      | Soa, (ttl, soa) -> Fmt.pf ppf "ttl %lu %a" ttl Soa.pp soa
+      | Soa, soa -> Fmt.pf ppf "%a" Soa.pp soa
       | Txt, (ttl, txts) ->
         Fmt.pf ppf "ttl %lu %a" ttl
           Fmt.(list ~sep:(unit ";@,") Txt.pp) (Txt_set.elements txts)
@@ -1358,7 +1351,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
     | Mx, (ttl, _) -> ttl
     | Ns, (ttl, _) -> ttl
     | Ptr, (ttl, _) -> ttl
-    | Soa, (ttl, _) -> ttl
+    | Soa, soa -> soa.minimum
     | Txt, (ttl, _) -> ttl
     | A, (ttl, _) -> ttl
     | Aaaa, (ttl, _) -> ttl
@@ -1374,7 +1367,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
     | Mx, (_, mxs) -> B (k, (ttl, mxs))
     | Ns, (_, ns) -> B (k, (ttl, ns))
     | Ptr, (_, ptr) -> B (k, (ttl, ptr))
-    | Soa, (_, soa) -> B (k, (ttl, soa))
+    | Soa, soa -> B (k, soa)
     | Txt, (_, txts) -> B (k, (ttl, txts))
     | A, (_, ips) -> B (k, (ttl, ips))
     | Aaaa, (_, ips) -> B (k, (ttl, ips))
@@ -1449,7 +1442,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
     (match typ with
      | Udns_enum.SOA ->
        Soa.decode names buf ~off:rdata_start ~len >>| fun (soa, names, off) ->
-       (B (Soa, (ttl, soa)), names, off)
+       (B (Soa, soa), names, off)
      | Udns_enum.NS ->
        Ns.decode names buf ~off:rdata_start ~len >>| fun (ns, names, off) ->
        (B (Ns, (ttl, Domain_name.Set.singleton ns)), names, off)
@@ -1485,7 +1478,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
        (B (Sshfp, (ttl, Sshfp_set.singleton sshfp)), names, off)
      | Udns_enum.TXT ->
        Txt.decode names buf ~off:rdata_start ~len >>| fun (txt, names, off) ->
-       (B (Txt, (ttl, Txt_set.singleton txt)), names, off)
+       (B (Txt, (ttl, Txt_set.of_list txt)), names, off)
      | other -> Error (`UnsupportedRRTyp other)) >>= fun (b, names, rdata_end) ->
     guard (len = rdata_end - rdata_start) `LeftOver >>| fun () ->
     (b, names, rdata_end)
@@ -1879,16 +1872,16 @@ module Packet = struct
   module Axfr = struct
 
     type t = {
-      soa : (int32 * Soa.t) ;
+      soa : Soa.t ;
       entries : data ;
     }
 
     let equal a b =
-      Soa.compare (snd a.soa) (snd b.soa) = 0 &&
+      Soa.compare a.soa b.soa = 0 &&
       equal_data a.entries b.entries
 
     let pp ppf axfr =
-      Fmt.pf ppf "soa %a data %a" Soa.pp (snd axfr.soa) pp_data axfr.entries
+      Fmt.pf ppf "soa %a data %a" Soa.pp axfr.soa pp_data axfr.entries
 
     let decode hdr question buf names off =
       let open Rresult.R.Infix in
@@ -1912,23 +1905,23 @@ module Packet = struct
          decode_rr names buf off >>= fun (name, B (k, v), names, off) ->
          (* TODO: verify name == zname in question, also all RR sub of zname *)
          match k, v with
-         | Soa, (ttl, soa) ->
+         | Soa, soa ->
            decode_n Umap.add_entry decode_rr names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
            decode_rr names buf off >>= fun (name', B (k', v'), names, off) ->
            begin
              match k', v' with
-             | Soa, (_ttl', soa') ->
+             | Soa, soa' ->
                (* TODO: verify that answer does not contain a SOA!? *)
                guard (Domain_name.equal name name')
                  (`Invalid_axfr "AXFR SOA RRs do not use the same name") >>= fun () ->
                guard (Soa.compare soa soa' = 0)
                  (`Invalid_axfr "AXFR SOA RRs are not equal") >>| fun () ->
-               Some { soa = (ttl, soa) ; entries = answer }, names, off
+               Some { soa ; entries = answer }, names, off
              | _ -> Error (`Invalid_axfr "AXFR last RR in answer must be SOA")
            end
          | _ -> Error (`Invalid_axfr "AXFR first RR in answer must be SOA")
        end) >>= fun (axfr, names, off) ->
-      decode_n_additional names buf off empty None None adcount >>= fun (off, add, edns, tsig) ->
+      decode_n_additional names buf off empty None None adcount >>= fun (off, _add, edns, tsig) ->
       (if Cstruct.len buf > off then
          let n = Cstruct.len buf - off in
          Logs.warn (fun m -> m "received %d extra bytes %a"
@@ -2126,7 +2119,7 @@ module Packet = struct
         (Domain_name.Map.bindings t.update)
         pp_data t.addition
 
-    let decode header zone buf names off =
+    let decode _header zone buf names off =
       let open Rresult.R.Infix in
       let prcount = Cstruct.BE.get_uint16 buf 6
       and upcount = Cstruct.BE.get_uint16 buf 8
@@ -2140,8 +2133,8 @@ module Packet = struct
         Domain_name.Map.add name (base@[a]) map
       in
       guard (snd zone = Udns_enum.SOA) (`InvalidZoneRR (snd zone)) >>= fun () ->
-      decode_n add_to_list decode_prereq names buf off Domain_name.Map.empty prcount >>= fun (namess, off, prereq) ->
-      decode_n add_to_list decode_update names buf off Domain_name.Map.empty upcount >>= fun (ns, off, update) ->
+      decode_n add_to_list decode_prereq names buf off Domain_name.Map.empty prcount >>= fun (names, off, prereq) ->
+      decode_n add_to_list decode_update names buf off Domain_name.Map.empty upcount >>= fun (names, off, update) ->
       decode_n_additional names buf off Domain_name.Map.empty None None adcount >>= fun (off, addition, edns, tsig) ->
       guard (Cstruct.len buf = off) `LeftOver >>= fun () ->
       Ok ({ zone ; prereq ; update ; addition }, edns, tsig)
