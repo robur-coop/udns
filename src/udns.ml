@@ -1139,7 +1139,7 @@ module Umap = struct
     | Tlsa, (_, tlsas), (ttl, tlsas') -> (ttl, Tlsa_set.union tlsas tlsas')
     | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, Sshfp_set.union sshfps sshfps')
 
-  let combine : type a. a k -> a -> a option -> a option = fun k v old ->
+  let combine_opt : type a. a k -> a -> a option -> a option = fun k v old ->
     match v, old with
     | v, None -> Some v
     | v, Some old -> Some (combine_k k v old)
@@ -1488,7 +1488,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
       | None -> empty
       | Some map -> map
     in
-    let m' = update k (combine k v) m in
+    let m' = update k (combine_opt k v) m in
     Domain_name.Map.add name m' dmap
 
   let find_entry : type a . t Domain_name.Map.t -> Domain_name.t -> a k -> a option =
@@ -1707,7 +1707,6 @@ module Packet = struct
           rrmap acc)
       map ((offs, off), 0)
 
-  
   let decode_rr names buf off =
     let open Rresult.R.Infix in
     decode_ntc names buf off >>= fun ((name, typ, clas), names, off) ->
@@ -1715,22 +1714,26 @@ module Packet = struct
     Umap.decode names buf off typ >>| fun (b, names, off) ->
     (name, b, names, off)
 
-  let rec decode_n add f names buf off acc = function
-    | 0 -> Ok (names, off, acc)
+  let rec decode_n_aux add f names buf off acc = function
+    | 0 -> acc, Ok (names, off)
     | n -> match f names buf off with
       | Ok (name, b, names, off') ->
         let acc' = add name b acc in
-        decode_n add f names buf off' acc' (pred n)
-      | Error e -> Error e
+        decode_n_aux add f names buf off' acc' (pred n)
+      | Error e -> acc, Error e
 
-  let rec decode_n_partial names buf off acc = function
-    | 0 -> Ok (`Full (names, off, acc))
-    | n -> match decode_rr names buf off with
-      | Ok (name, b, names, off') ->
-        let acc' = Umap.add_entry name b acc in
-        decode_n_partial names buf off' acc' (pred n)
-      | Error `Partial -> Ok (`Partial acc)
-      | Error e -> Error e
+  let decode_n add f names buf off acc c =
+    let acc, r = decode_n_aux add f names buf off acc c in
+    match r with
+    | Ok (names, off) -> Ok (names, off, acc)
+    | Error e -> Error e
+
+  let decode_n_partial add f names buf off acc c =
+    let acc, r = decode_n_aux add f names buf off acc c in
+    match r with
+    | Ok (names, off) -> Ok (`Full (names, off, acc))
+    | Error `Partial -> Ok (`Partial acc)
+    | Error e -> Error e
 
   let decode_one_additional map edns ~tsig names buf off =
     let open Rresult.R.Infix in
@@ -1749,20 +1752,25 @@ module Packet = struct
       Umap.decode names buf off' typ >>| fun (b, names, off') ->
       (Umap.add_entry name b map, edns, None), names, off'
 
-  let rec decode_n_additional names buf off map edns tsig = function
-    | 0 -> Ok (off, map, edns, tsig)
+  let rec decode_n_additional_aux names buf off map edns tsig = function
+    | 0 -> (map, edns, tsig), Ok off
     | n -> match decode_one_additional map edns ~tsig:(n = 1) names buf off with
-      | Error e -> Error e
+      | Error e -> (map, edns, tsig), Error e
       | Ok ((map, edns, tsig), names, off') ->
-        decode_n_additional names buf off' map edns tsig (pred n)
+        decode_n_additional_aux names buf off' map edns tsig (pred n)
 
-  let rec decode_n_additional_partial names buf off map edns tsig = function
-    | 0 -> Ok (`Full (off, map, edns, tsig))
-    | n -> match decode_one_additional map edns ~tsig:(n = 1) names buf off with
-      | Error `Partial -> Ok (`Partial (map, edns, tsig))
-      | Error e -> Error e
-      | Ok ((map, edns, tsig), names, off') ->
-        decode_n_additional_partial names buf off' map edns tsig (pred n)
+  let decode_n_additional names buf off map edns tsig c =
+    let (map, edns, tsig), r = decode_n_additional_aux names buf off map edns tsig c in
+    match r with
+    | Ok off -> Ok (off, map, edns, tsig)
+    | Error e -> Error e
+
+  let decode_n_additional_partial names buf off map edns tsig c =
+    let (map, edns, tsig), r = decode_n_additional_aux names buf off map edns tsig c in
+    match r with
+    | Ok off -> Ok (`Full (off, map, edns, tsig))
+    | Error `Partial -> Ok (`Partial (map, edns, tsig))
+    | Error e -> Error e
 
   let decode_question buf =
     let open Rresult.R.Infix in
@@ -1804,12 +1812,12 @@ module Packet = struct
       in
       let empty = Domain_name.Map.empty in
       let query = create question in
-      decode_n_partial names buf off empty ancount >>= function
+      decode_n_partial Umap.add_entry decode_rr names buf off empty ancount >>= function
       | `Partial answer ->
         guard truncated `Partial >>| fun () -> { query with answer }, None, None
       | `Full (names, off, answer) ->
         let query = { query with answer } in
-        decode_n_partial names buf off empty aucount >>= function
+        decode_n_partial Umap.add_entry decode_rr names buf off empty aucount >>= function
         | `Partial authority ->
           guard truncated `Partial >>| fun () -> { query with authority }, None, None
         | `Full (names, off, authority) ->
@@ -2126,11 +2134,8 @@ module Packet = struct
       and adcount = Cstruct.BE.get_uint16 buf 10
       in
       let add_to_list name a map =
-        let base = match Domain_name.Map.find name map with
-          | None -> [ ]
-          | Some x -> x
-        in
-        Domain_name.Map.add name (base@[a]) map
+        let base = match Domain_name.Map.find name map with None -> [] | Some x -> x in
+        Domain_name.Map.add name (base @ [a]) map
       in
       guard (snd zone = Udns_enum.SOA) (`InvalidZoneRR (snd zone)) >>= fun () ->
       decode_n add_to_list decode_prereq names buf off Domain_name.Map.empty prcount >>= fun (names, off, prereq) ->

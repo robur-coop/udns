@@ -326,7 +326,7 @@ module Umap : sig
   val subtract_k : 'a k -> 'a -> 'a -> 'a option
 
   val combine_k : 'a k -> 'a -> 'a -> 'a
-  val combine : 'a k -> 'a -> 'a option -> 'a option
+  val combine_opt : 'a k -> 'a -> 'a option -> 'a option
 
   val text : ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> 'a k -> 'a -> string
 
