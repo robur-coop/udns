@@ -259,7 +259,7 @@ module Edns : sig
 end
 
 (* resource record map *)
-module Umap : sig
+module Rr_map : sig
 (** A map whose key are DNS resource record types and their values are the time
    to live and the resource record. This module uses a GADT to express the
    binding between record type and resource record. *)
@@ -335,17 +335,17 @@ module Umap : sig
 
 end
 
-module Name_map : sig
+module Name_rr_map : sig
 
-  type t = Umap.t Domain_name.Map.t
+  type t = Rr_map.t Domain_name.Map.t
 
   val equal : t -> t -> bool
 
   val pp : t Fmt.t
 
-  val add : Domain_name.t -> Umap.b -> t -> t
+  val add : Domain_name.t -> Rr_map.b -> t -> t
 
-  val find : Domain_name.t -> 'a Umap.k -> t -> 'a option
+  val find : Domain_name.t -> 'a Rr_map.k -> t -> 'a option
 
   val remove_sub : t -> t -> t
 end
@@ -411,12 +411,13 @@ module Packet : sig
 
     type t = {
       question : Question.t ;
-      answer : Name_map.t ;
-      authority : Name_map.t ;
-      additional : Name_map.t ;
+      answer : Name_rr_map.t ;
+      authority : Name_rr_map.t ;
+      additional : Name_rr_map.t ;
     }
 
-    val create : ?answer:Name_map.t -> ?authority:Name_map.t -> ?additional:Name_map.t -> Question.t -> t
+    val create : ?answer:Name_rr_map.t -> ?authority:Name_rr_map.t ->
+      ?additional:Name_rr_map.t -> Question.t -> t
 
     val pp : t Fmt.t
 
@@ -427,7 +428,7 @@ module Packet : sig
 
     type t = {
       soa : Soa.t ;
-      entries : Name_map.t ;
+      entries : Name_rr_map.t ;
     }
 
     val pp : t Fmt.t
@@ -439,7 +440,7 @@ module Packet : sig
 
     type prereq =
       | Exists of Udns_enum.rr_typ
-      | Exists_data of Umap.b
+      | Exists_data of Rr_map.b
       | Not_exists of Udns_enum.rr_typ
       | Name_inuse
       | Not_name_inuse
@@ -450,8 +451,8 @@ module Packet : sig
     type update =
       | Remove of Udns_enum.rr_typ
       | Remove_all
-      | Remove_single of Umap.b
-      | Add of Umap.b
+      | Remove_single of Rr_map.b
+      | Add of Rr_map.b
 
     val pp_update : update Fmt.t
     val equal_update : update -> update -> bool
@@ -460,12 +461,12 @@ module Packet : sig
       zone : Question.t ;
       prereq : prereq list Domain_name.Map.t ;
       update : update list Domain_name.Map.t ;
-      addition : Name_map.t ;
+      addition : Name_rr_map.t ;
     }
 
     val create : ?prereq:prereq list Domain_name.Map.t ->
       ?update:update list Domain_name.Map.t ->
-      ?addition:Name_map.t -> Question.t -> t
+      ?addition:Name_rr_map.t -> Question.t -> t
 
     val pp : t Fmt.t
 

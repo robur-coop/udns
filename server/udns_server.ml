@@ -103,7 +103,7 @@ module Authentication = struct
         (name, ip, port) :: acc
       | Some (_, _, None), `S -> acc
     in
-    Udns_trie.folde tx Umap.Dnskey trie accumulate []
+    Udns_trie.folde tx Rr_map.Dnskey trie accumulate []
 
   let secondaries t zone = find_ns `S t zone
 
@@ -133,31 +133,31 @@ module Authentication = struct
   let add_keys trie name keys' =
     let zone = zone name in
     let soa =
-      match Udns_trie.lookup zone Umap.Soa trie with
+      match Udns_trie.lookup zone Rr_map.Soa trie with
       | Ok soa -> { soa with Soa.serial = Int32.succ soa.Soa.serial }
       | Error _ -> soa name
     in
-    let keys = match Udns_trie.lookup name Umap.Dnskey trie with
+    let keys = match Udns_trie.lookup name Rr_map.Dnskey trie with
       | Error _ -> keys'
       | Ok (_, keys) ->
         Log.warn (fun m -> m "replacing unexpected Dnskeys (name %a, have %a, got %a)"
                      Domain_name.pp name
                      Fmt.(list ~sep:(unit ",") Dnskey.pp)
-                     (Umap.Dnskey_set.elements keys)
+                     (Rr_map.Dnskey_set.elements keys)
                      Fmt.(list ~sep:(unit ";") Dnskey.pp)
-                     (Umap.Dnskey_set.elements keys) ) ;
+                     (Rr_map.Dnskey_set.elements keys) ) ;
         keys'
     in
-    let trie' = Udns_trie.insert zone Umap.Soa soa trie in
-    Udns_trie.insert name Umap.Dnskey (0l, keys) trie'
+    let trie' = Udns_trie.insert zone Rr_map.Soa soa trie in
+    Udns_trie.insert name Rr_map.Dnskey (0l, keys) trie'
 
   let of_keys keys =
     List.fold_left (fun trie (name, key) ->
-        add_keys trie name (Umap.Dnskey_set.singleton key))
+        add_keys trie name (Rr_map.Dnskey_set.singleton key))
       Udns_trie.empty keys
 
   let remove_key trie name =
-    let trie' = Udns_trie.remove name Umap.Dnskey trie in
+    let trie' = Udns_trie.remove name Rr_map.Dnskey trie in
     let zone = zone name in
     match Udns_trie.entries zone trie' with
     | Ok (_soa, x) when Domain_name.Map.is_empty x -> Udns_trie.remove_zone zone trie'
@@ -168,13 +168,13 @@ module Authentication = struct
       trie'
 
   let find_key t name =
-    match Udns_trie.lookup name Umap.Dnskey (fst t) with
+    match Udns_trie.lookup name Rr_map.Dnskey (fst t) with
     | Ok (_, keys) ->
-      if Umap.Dnskey_set.cardinal keys = 1 then
-        Some (Umap.Dnskey_set.choose keys)
+      if Rr_map.Dnskey_set.cardinal keys = 1 then
+        Some (Rr_map.Dnskey_set.choose keys)
       else begin
         Log.warn (fun m -> m "found multiple (%d) keys for %a"
-                     (Umap.Dnskey_set.cardinal keys)
+                     (Rr_map.Dnskey_set.cardinal keys)
                      Domain_name.pp name) ;
         None
       end
@@ -190,10 +190,10 @@ module Authentication = struct
             | Packet.Update.Remove Udns_enum.DNSKEY ->
               let keys = remove_key keys name in
               keys, `Removed_key name :: actions
-            | Packet.Update.Remove_single Umap.(B (Dnskey, _)) ->
+            | Packet.Update.Remove_single Rr_map.(B (Dnskey, _)) ->
               let keys = remove_key keys name in
               keys, `Removed_key name :: actions
-            | Packet.Update.Add Umap.(B (Dnskey, (_, fresh))) ->
+            | Packet.Update.Add Rr_map.(B (Dnskey, (_, fresh))) ->
               let keys = add_keys keys name fresh in
               keys, `Added_key name :: actions
             | u ->
@@ -230,7 +230,7 @@ let text name t =
   let buf = Buffer.create 1024 in
   (* first, find the start of authority (if any) *)
   let origin, default_ttl =
-    match Udns_trie.lookup name Umap.Soa t.data with
+    match Udns_trie.lookup name Rr_map.Soa t.data with
     | Error e ->
       Log.err (fun m -> m "couldn't find SOA when serialising zone for %a: %a"
                   Domain_name.pp name Udns_trie.pp_e e) ;
@@ -247,7 +247,7 @@ let text name t =
     (Fmt.to_to_string Udns_trie.pp_e)
     (Udns_trie.fold name t.data
        (fun name v () ->
-          Buffer.add_string buf (Umap.text_b ?origin ?default_ttl name v) ;
+          Buffer.add_string buf (Rr_map.text_b ?origin ?default_ttl name v) ;
           Buffer.add_char buf '\n')
        ()) >>| fun () ->
   Buffer.contents buf
@@ -267,7 +267,7 @@ let find_glue trie typ name names =
   in
   let insert_rr map typ name =
     match Udns_trie.lookupb name typ trie with
-    | Ok (v, _) -> Name_map.add name v map
+    | Ok (v, _) -> Name_rr_map.add name v map
     | _ -> map
   in
   Domain_name.Set.fold (fun name map ->
@@ -293,23 +293,23 @@ let lookup trie hdr (name, typ) =
   let r = match typ with
     | Udns_enum.ANY -> Udns_trie.lookup_any name trie
     | _ -> match Udns_trie.lookupb name typ trie with
-      | Ok (B (k, v), au) -> Ok (Umap.singleton k v, au)
+      | Ok (B (k, v), au) -> Ok (Rr_map.singleton k v, au)
       | Error e -> Error e
   in
   match r with
   | Ok (an, (au, ttl, ns)) ->
     let answer = Domain_name.Map.singleton name an in
     let authority =
-      Name_map.remove_sub
-        (Domain_name.Map.singleton au Umap.(singleton Ns (ttl, ns)))
+      Name_rr_map.remove_sub
+        (Domain_name.Map.singleton au Rr_map.(singleton Ns (ttl, ns)))
         answer
     in
     let additional =
       let names =
-        Umap.(fold (fun b s -> Domain_name.Set.union (names_b b) s) an ns)
+        Rr_map.(fold (fun b s -> Domain_name.Set.union (names_b b) s) an ns)
       in
-      Name_map.remove_sub
-        (Name_map.remove_sub (find_glue trie typ name names) answer)
+      Name_rr_map.remove_sub
+        (Name_rr_map.remove_sub (find_glue trie typ name names) answer)
         authority
     in
     Ok (hdr, `Query { query with Packet.Query.answer ; authority ; additional })
@@ -318,7 +318,7 @@ let lookup trie hdr (name, typ) =
       Domain_name.Set.fold (fun name map ->
           (* TODO aaaa records! *)
           match Udns_trie.lookup_ignore name Udns_enum.A trie with
-          | Ok (Umap.(B (A, _) as v)) -> Name_map.add name v map
+          | Ok (Rr_map.(B (A, _) as v)) -> Name_rr_map.add name v map
           | _ -> map)
         ns Domain_name.Map.empty
     in
@@ -326,13 +326,13 @@ let lookup trie hdr (name, typ) =
       let flags = Packet.Header.FS.remove `Authoritative hdr.flags in
       { hdr with flags }
     in
-    let authority = Domain_name.Map.singleton name Umap.(singleton Ns (ttl, ns)) in
+    let authority = Domain_name.Map.singleton name Rr_map.(singleton Ns (ttl, ns)) in
     Ok (hdr, `Query { query with authority ; additional })
   | Error (`EmptyNonTerminal (zname, soa)) ->
-    Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Umap.(singleton Soa soa) })
+    Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Rr_map.(singleton Soa soa) })
   | Error (`NotFound (zname, soa)) ->
     let hdr = { hdr with rcode = Udns_enum.NXDomain } in
-    Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Umap.(singleton Soa soa) })
+    Ok (hdr, `Query { query with authority = Domain_name.Map.singleton zname Rr_map.(singleton Soa soa) })
   | Error `NotAuthoritative -> Error Udns_enum.NotAuth
 
 let axfr trie proto ((zone, _) as question) =
@@ -438,9 +438,9 @@ let handle_rr_prereq trie name = function
       | Error (`EmptyNonTerminal _ | `NotFound _) -> Ok ()
       | _ -> Error Udns_enum.YXRRSet
     end
-  | Packet.Update.Exists_data Umap.(B (k, v)) ->
+  | Packet.Update.Exists_data Rr_map.(B (k, v)) ->
     match Udns_trie.lookup name k trie with
-    | Ok v' when Umap.equal_k k v k v' -> Ok ()
+    | Ok v' when Rr_map.equal_k k v k v' -> Ok ()
     | _ -> Error Udns_enum.NXRRSet
 
 (* RFC 2136 Section 2.5 + 3.4.2 *)
@@ -458,31 +458,31 @@ let handle_rr_update trie name = function
       | _ -> Udns_trie.remove_rr name typ trie
     end
   | Packet.Update.Remove_all -> Udns_trie.remove_rr name Udns_enum.ANY trie
-  | Packet.Update.Remove_single Umap.(B (k, rem) as b) ->
+  | Packet.Update.Remove_single Rr_map.(B (k, rem) as b) ->
     begin match Udns_trie.lookup name k trie with
       | Error e ->
         Log.warn (fun m -> m "error %a while looking up %a %a for removal"
-                     Udns_trie.pp_e e Domain_name.pp name Umap.pp_b b) ;
+                     Udns_trie.pp_e e Domain_name.pp name Rr_map.pp_b b) ;
         trie
       | Ok v ->
-        match Umap.subtract_k k v rem with
+        match Rr_map.subtract_k k v rem with
         | None ->
           Log.info (fun m -> m "removed single %a entry %a (stored %a) none leftover"
-                       Domain_name.pp name Umap.pp_b b Umap.pp_b Umap.(B (k, v)));
+                       Domain_name.pp name Rr_map.pp_b b Rr_map.pp_b Rr_map.(B (k, v)));
           Udns_trie.remove name k trie
         | Some v' ->
           Log.info (fun m -> m "removed single %a entry %a (stored %a), now %a"
-                       Domain_name.pp name Umap.pp_b b Umap.pp_b Umap.(B (k, v))
-                       Umap.pp_b Umap.(B (k, v')) );
+                       Domain_name.pp name Rr_map.pp_b b Rr_map.pp_b Rr_map.(B (k, v))
+                       Rr_map.pp_b Rr_map.(B (k, v')) );
           Udns_trie.insert name k v' trie
     end
-  | Packet.Update.Add Umap.(B (k, add) as b) ->
+  | Packet.Update.Add Rr_map.(B (k, add) as b) ->
     begin match Udns_trie.lookup name k trie with
       | Ok old ->
-        let newval = Umap.combine_k k add old in
+        let newval = Rr_map.combine_k k add old in
         Logs.info (fun m -> m "added %a: %a (stored %a), now %a"
-                      Domain_name.pp name Umap.pp_b b Umap.pp_b (Umap.B (k, old))
-                      Umap.pp_b (Umap.B (k, newval))) ;
+                      Domain_name.pp name Rr_map.pp_b b Rr_map.pp_b (Rr_map.B (k, old))
+                      Rr_map.pp_b (Rr_map.B (k, newval))) ;
         Udns_trie.insert name k newval trie
       | Error _ ->
         (* here we allow arbitrary, even out-of-zone updates.  this is
@@ -490,7 +490,7 @@ let handle_rr_update trie name = function
            add . 300 NS resolver ; add resolver . 300 A 141.1.1.1 would
            otherwise fail (no SOA for . / delegation for resolver) *)
         Logs.info (fun m -> m "inserting %a (stored nothing), now %a"
-                      Domain_name.pp name Umap.pp_b b) ;
+                      Domain_name.pp name Rr_map.pp_b b) ;
         Udns_trie.insert name k add trie
     end
 
@@ -500,14 +500,14 @@ let notify t l now zone soa =
      2. the IP addresses of secondary servers which have transfer keys
      3. the TCP connections requesting (signed) SOA in l *)
   let ips =
-    match Udns_trie.lookup zone Umap.Ns t.data with
+    match Udns_trie.lookup zone Rr_map.Ns t.data with
     | Ok (_, ns) ->
       let secondaries = Domain_name.Set.remove soa.Soa.nameserver ns in
       (* TODO AAAA records *)
       Domain_name.Set.fold (fun ns acc ->
-          let ips = match Udns_trie.lookup ns Umap.A t.data with
+          let ips = match Udns_trie.lookup ns Rr_map.A t.data with
             | Ok (_, ips) ->
-              Umap.Ipv4_set.fold (fun ip acc -> IPM.add ip 53 acc) ips IPM.empty
+              Rr_map.Ipv4_set.fold (fun ip acc -> IPM.add ip 53 acc) ips IPM.empty
             | _ ->
               Log.err (fun m -> m "lookup for A %a returned nothing as well"
                           Domain_name.pp ns) ;
@@ -535,7 +535,7 @@ let notify t l now zone soa =
   let notify =
     let question = Packet.Query.create (zone, Udns_enum.SOA) in
     let answer =
-      Domain_name.Map.singleton zone Umap.(singleton Soa soa)
+      Domain_name.Map.singleton zone Rr_map.(singleton Soa soa)
     in
     { question with answer }
   in
@@ -671,7 +671,7 @@ module Primary = struct
         Log.debug (fun m -> m "soa found for %a" Domain_name.pp name) ;
         acc @ notify t [] 0L name soa
       in
-      match Udns_trie.folde Domain_name.root Umap.Soa data f [] with
+      match Udns_trie.folde Domain_name.root Rr_map.Soa data f [] with
       | Ok ns -> ns
       | Error e ->
         Logs.warn (fun m -> m "error %a while collecting zones" Udns_trie.pp_e e) ;
@@ -865,7 +865,7 @@ module Secondary = struct
           Logs.warn (fun m -> m "error %a while looking up keys for %a" Udns_trie.pp_e e Domain_name.pp name) ;
           zones
       in
-      match Udns_trie.folde Domain_name.root Umap.Soa keys f Domain_name.Map.empty with
+      match Udns_trie.folde Domain_name.root Rr_map.Soa keys f Domain_name.Map.empty with
       | Ok zones -> zones
       | Error e ->
         Log.warn (fun m -> m "error %a while collecting zones" Udns_trie.pp_e e) ;
@@ -931,7 +931,7 @@ module Secondary = struct
             ((t, Domain_name.Map.add zone (st, ip, port, name) zones), out)
           in
 
-          match Udns_trie.lookup zone Umap.Soa t.data, st with
+          match Udns_trie.lookup zone Rr_map.Soa t.data, st with
           | Ok soa, Transferred ts ->
             (* TODO: integer overflows (Int64.add) *)
             let r = Duration.of_sec (Int32.to_int soa.Soa.refresh) in
@@ -1064,7 +1064,7 @@ module Secondary = struct
       let trie' =
         let trie = Udns_trie.remove_zone zone t.data in
         (* insert SOA explicitly - it's not part of entries (should it be?) *)
-        let trie = Udns_trie.insert zone Umap.Soa axfr.Packet.Axfr.soa trie in
+        let trie = Udns_trie.insert zone Rr_map.Soa axfr.Packet.Axfr.soa trie in
         Udns_trie.insert_map entries trie
       in
       (* check new trie *)
@@ -1089,12 +1089,12 @@ module Secondary = struct
       Log.debug (fun m -> m "received SOA after %d retries" retry) ;
       (* request AXFR now in case of serial is higher! *)
       begin match
-          Udns_trie.lookup zone Umap.Soa t.data,
-          Name_map.find zone Soa query.Packet.Query.answer
+          Udns_trie.lookup zone Rr_map.Soa t.data,
+          Name_rr_map.find zone Soa query.Packet.Query.answer
         with
         | _, None ->
           Log.err (fun m -> m "didn't receive SOA for %a from %a (answer %a)"
-                      Domain_name.pp zone Ipaddr.V4.pp ip Name_map.pp query.Packet.Query.answer) ;
+                      Domain_name.pp zone Ipaddr.V4.pp ip Name_rr_map.pp query.Packet.Query.answer) ;
           Error Udns_enum.FormErr
         | Ok cached_soa, Some fresh ->
           (* TODO: > with wraparound in mind *)

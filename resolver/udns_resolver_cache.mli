@@ -23,13 +23,13 @@ val cached : t -> int64 -> Udns_enum.rr_typ -> Domain_name.t ->
 val maybe_insert : Udns_enum.rr_typ -> Domain_name.t -> int64 -> Udns_resolver_entry.rank ->
   Udns_resolver_entry.res -> t -> t
 
-val follow_cname : t -> int64 -> Udns_enum.rr_typ -> Domain_name.t -> Umap.b ->
-  [ `NoError of Umap.t Domain_name.Map.t * t
-  | `Cycle of Umap.t Domain_name.Map.t * t
+val follow_cname : t -> int64 -> Udns_enum.rr_typ -> Domain_name.t -> Rr_map.b ->
+  [ `NoError of Rr_map.t Domain_name.Map.t * t
+  | `Cycle of Rr_map.t Domain_name.Map.t * t
   | `Query of Domain_name.t * t
-  | `NoDom of (Umap.t Domain_name.Map.t * Umap.t Domain_name.Map.t) * t
-  | `NoData of (Umap.t Domain_name.Map.t * Umap.t Domain_name.Map.t) * t
-  | `ServFail of Umap.t Domain_name.Map.t * t
+  | `NoDom of (Rr_map.t Domain_name.Map.t * Rr_map.t Domain_name.Map.t) * t
+  | `NoData of (Rr_map.t Domain_name.Map.t * Rr_map.t Domain_name.Map.t) * t
+  | `ServFail of Rr_map.t Domain_name.Map.t * t
   ]
 
 val answer : t -> int64 -> Packet.Question.t -> int ->
@@ -39,7 +39,7 @@ val answer : t -> int64 -> Packet.Question.t -> int ->
 val resolve_ns : t -> int64 -> Domain_name.t ->
   ([ `NeedA of Domain_name.t
    | `NeedCname of Domain_name.t
-   | `HaveIPS of Umap.Ipv4_set.t
+   | `HaveIPS of Rr_map.Ipv4_set.t
    | `NoDom
    | `No ] * t)
 

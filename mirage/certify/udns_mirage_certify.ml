@@ -86,7 +86,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
         Domain_name.Map.singleton hostname
           [
             Packet.Update.Remove Udns_enum.TLSA ;
-            Packet.Update.Add Umap.(B (Tlsa, (600l, Tlsa_set.singleton tlsa)))
+            Packet.Update.Add Rr_map.(B (Tlsa, (600l, Tlsa_set.singleton tlsa)))
           ]
       in
       Packet.Update.create ~update zone
@@ -143,14 +143,14 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
             match Domain_name.Map.find name q.Packet.Query.answer with
             | None -> None
             | Some rrmap ->
-              match Umap.(find Tlsa rrmap) with
+              match Rr_map.(find Tlsa rrmap) with
               | None -> None
               | Some (_, tlsas) ->
-                Umap.Tlsa_set.fold (fun tlsa acc ->
+                Rr_map.Tlsa_set.fold (fun tlsa acc ->
                     match parse tlsa, acc with
                     | None, acc -> acc
                     | Some tlsa, _ -> Some tlsa)
-                  Umap.Tlsa_set.(filter good_tlsa tlsas)
+                  Rr_map.Tlsa_set.(filter good_tlsa tlsas)
                   None
           in
           Lwt.return tlsa

@@ -9,7 +9,7 @@ let update zone hostname ip_address keyname dnskey now =
       Domain_name.Map.singleton hostname
         [
           Packet.Update.Remove Udns_enum.A ;
-          Packet.Update.Add Umap.(B (A, (60l, Ipv4_set.singleton ip_address)))
+          Packet.Update.Add Rr_map.(B (A, (60l, Ipv4_set.singleton ip_address)))
         ]
     in
     Packet.Update.create ~update zone

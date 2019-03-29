@@ -5,14 +5,14 @@ type 'key query_state =
     key: 'key ;
     header : Packet.Header.t ;
     question : Packet.Question.t ; (* we only handle one *)
-  } constraint 'key = 'a Umap.key
+  } constraint 'key = 'a Rr_map.key
 
 let make_query protocol hostname
     : 'xy  ->
       Cstruct.t * 'xy query_state =
   (* SRV records: Service + Protocol are case-insensitive, see RFC2728 pg2. *)
   fun record_type ->
-  let question = (hostname, Umap.k_to_rr_typ record_type) in
+  let question = (hostname, Rr_map.k_to_rr_typ record_type) in
   let query : Packet.Query.t = Packet.Query.create question in
   let header = {
     Packet.Header.id = Random.int 0xffff ; (* TODO *)
@@ -32,7 +32,7 @@ let make_query protocol hostname
   end, { protocol ; header; question ; key = record_type }
 
 let parse_response (type requested)
-  : requested Umap.k query_state -> Cstruct.t ->
+  : requested Rr_map.k query_state -> Cstruct.t ->
     (requested, [< `Partial | `Msg of string]) result =
   fun state buf ->
   let open Rresult in
@@ -66,12 +66,12 @@ let parse_response (type requested)
             R.error_msgf "Can't find relevant map in response:@ \
                           %a in [%a]"
               Domain_name.pp q_name
-              Name_map.pp resp.answer
+              Name_rr_map.pp resp.answer
           ) >>= fun relevant_map ->
-        begin match Umap.find state.key relevant_map with
+        begin match Rr_map.find state.key relevant_map with
           | Some response -> Ok response
           | None ->
-            begin match Umap.(find Cname relevant_map) with
+            begin match Rr_map.(find Cname relevant_map) with
               | None -> Error (`Msg "Invalid DNS response")
               | Some (_ttl, redirected_host) ->
                 follow_cname (pred counter) redirected_host

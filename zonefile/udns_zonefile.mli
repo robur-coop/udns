@@ -16,5 +16,5 @@
  *
  *)
 
-val load : string list -> string -> (Udns.Name_map.t, string) result
+val load : string list -> string -> (Udns.Name_rr_map.t, string) result
 (** Load a domain's zone from a string. *)

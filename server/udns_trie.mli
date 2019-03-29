@@ -34,13 +34,13 @@ val equal : t -> t -> bool
 
 (** {2 Operations to modify the trie} *)
 
-val insert_map : Umap.t Domain_name.Map.t -> t -> t
+val insert_map : Rr_map.t Domain_name.Map.t -> t -> t
 (** [insert_map m t] inserts all elements of the domain name map [m] into [t]. *)
 
-val insert : Domain_name.t -> 'a Umap.k -> 'a -> t -> t
+val insert : Domain_name.t -> 'a Rr_map.k -> 'a -> t -> t
 (** [insert n k v t] insert [k, v] under [n] in [t].  Existing entries are replaced. *)
 
-val insertb : Domain_name.t -> Umap.b -> t -> t
+val insertb : Domain_name.t -> Rr_map.b -> t -> t
 (** [insertb k b t] insert [b] under [k] in [t].  The type is already included in
     [b].  Existing entries are replaced. *)
 
@@ -49,7 +49,7 @@ val remove_rr : Domain_name.t -> Udns_enum.rr_typ -> t -> t
     entries of [k] are removed.  Beware, this may lead to a [t] where the
     initially mentioned invariants are violated. *)
 
-val remove : Domain_name.t -> 'a Umap.k -> t -> t
+val remove : Domain_name.t -> 'a Rr_map.k -> t -> t
 (** [remove k key t] removes [k, ty] from [t]. *)
 
 val remove_zone : Domain_name.t -> t -> t
@@ -62,7 +62,7 @@ val remove_zone : Domain_name.t -> t -> t
 type err = [ `Missing_soa of Domain_name.t
            | `Cname_other of Domain_name.t
            | `Any_not_allowed of Domain_name.t
-           | `Bad_ttl of Domain_name.t * Umap.b
+           | `Bad_ttl of Domain_name.t * Rr_map.b
            | `Empty of Domain_name.t * Udns_enum.rr_typ
            | `Missing_address of Domain_name.t
            | `Soa_not_ns of Domain_name.t ]
@@ -83,7 +83,7 @@ val pp_e : [< `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
 
 
 val lookupb : Domain_name.t -> Udns_enum.rr_typ -> t ->
-  (Umap.b * (Domain_name.t * int32 * Domain_name.Set.t),
+  (Rr_map.b * (Domain_name.t * int32 * Domain_name.Set.t),
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
    | `EmptyNonTerminal of Domain_name.t * Soa.t
    | `NotAuthoritative
@@ -91,7 +91,7 @@ val lookupb : Domain_name.t -> Udns_enum.rr_typ -> t ->
 (** [lookupb k ty t] finds [k, ty] in [t], which may lead to an error.  The
     authority information is returned as well. *)
 
-val lookup : Domain_name.t -> 'a Umap.key -> t ->
+val lookup : Domain_name.t -> 'a Rr_map.key -> t ->
   ('a,
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
    | `EmptyNonTerminal of Domain_name.t * Soa.t
@@ -100,30 +100,30 @@ val lookup : Domain_name.t -> 'a Umap.key -> t ->
 (** [lookup k ty t] finds [k, ty] in [t], which may lead to an error. *)
 
 val lookup_any : Domain_name.t -> t ->
-  (Umap.t * (Domain_name.t * int32 * Domain_name.Set.t),
+  (Rr_map.t * (Domain_name.t * int32 * Domain_name.Set.t),
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
    | `NotAuthoritative
    | `NotFound of Domain_name.t * Soa.t ]) result
 
 val lookup_ignore : Domain_name.t -> Udns_enum.rr_typ -> t ->
-  (Umap.b, unit) result
+  (Rr_map.b, unit) result
 (** [lookup_ignore k ty t] finds a [k, ty] in [t], which may lead to an error.
     It ignores potential DNS invariants, e.g. that there is no surrounding zone. *)
 
 val entries : Domain_name.t -> t ->
-  (Udns.Soa.t * Umap.t Domain_name.Map.t,
+  (Udns.Soa.t * Rr_map.t Domain_name.Map.t,
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
    | `NotAuthoritative
    | `NotFound of Domain_name.t * Soa.t ]) result
 (** [entries name t] returns either the SOA and all entries for the requested
     [name], or an error. *)
 
-val fold : Domain_name.t -> t -> (Domain_name.t -> Umap.b -> 'a -> 'a) -> 'a ->
+val fold : Domain_name.t -> t -> (Domain_name.t -> Rr_map.b -> 'a -> 'a) -> 'a ->
   ('a, [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
        | `NotAuthoritative
        | `NotFound of Domain_name.t * Soa.t ]) result
 
-val folde : Domain_name.t -> 'a Umap.key -> t ->
+val folde : Domain_name.t -> 'a Rr_map.key -> t ->
   (Domain_name.t -> 'a -> 'b -> 'b) -> 'b ->
   ('b, [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
        | `NotAuthoritative

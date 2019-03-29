@@ -395,13 +395,13 @@ let handle_delegation t ts proto sender sport header v opt delegation =
           | `Query qdelegation ->
             let data = qdelegation.Packet.Query.additional in
             let ips = Domain_name.Map.fold (fun n rrmap ips ->
-                Logs.debug (fun m -> m "%a maybe in %a" Domain_name.pp n Umap.pp rrmap) ;
-                match Umap.(find A rrmap) with
+                Logs.debug (fun m -> m "%a maybe in %a" Domain_name.pp n Rr_map.pp rrmap) ;
+                match Rr_map.(find A rrmap) with
                 | None -> ips
-                | Some (_, ips') -> Umap.Ipv4_set.union ips ips')
-                data Umap.Ipv4_set.empty
+                | Some (_, ips') -> Rr_map.Ipv4_set.union ips ips')
+                data Rr_map.Ipv4_set.empty
             in
-            begin match pick t.rng (Umap.Ipv4_set.elements ips) with
+            begin match pick t.rng (Rr_map.Ipv4_set.elements ips) with
               | None ->
                 Logs.err (fun m -> m "something is wrong, delegation but no IP");
                 t, [], []

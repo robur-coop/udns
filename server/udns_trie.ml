@@ -8,9 +8,9 @@ module O = struct
 end
 module M = Map.Make(O)
 
-type t = N of t M.t * Umap.t
+type t = N of t M.t * Rr_map.t
 
-let empty = N (M.empty, Umap.empty)
+let empty = N (M.empty, Rr_map.empty)
 
 let bindings t =
   let rec go pre (N (sub, e)) =
@@ -23,22 +23,22 @@ let bindings t =
   go Domain_name.root t
 
 let pp ppf t =
-  Fmt.(list ~sep:(unit ",@ ") (pair ~sep:(unit ":@,") Domain_name.pp Umap.pp)) ppf
+  Fmt.(list ~sep:(unit ",@ ") (pair ~sep:(unit ":@,") Domain_name.pp Rr_map.pp)) ppf
     (bindings t)
 
 let rec equal (N (sub, map)) (N (sub', map')) =
-  Umap.equal Umap.equal_b map map' && M.equal equal sub sub'
+  Rr_map.equal Rr_map.equal_b map map' && M.equal equal sub sub'
 
 open Rresult.R.Infix
 
 let guard p err = if p then Ok () else Error err
 
 let ent name map =
-  let soa = Umap.(get Soa map) in
+  let soa = Rr_map.(get Soa map) in
   `EmptyNonTerminal (name, soa)
 let to_ns name map =
   let ttl, ns =
-    match Umap.(find Ns map) with
+    match Rr_map.(find Ns map) with
     | None -> 0l, Domain_name.Set.empty
     | Some (ttl, ns) -> ttl, ns
   in
@@ -51,16 +51,16 @@ let check_zone = function
 
 let lookup_res zone ty m =
   check_zone zone >>= fun (z, zmap) ->
-  guard (not (Umap.is_empty m)) (ent z zmap) >>= fun () ->
-  match Umap.lookup_rr ty m with
+  guard (not (Rr_map.is_empty m)) (ent z zmap) >>= fun () ->
+  match Rr_map.lookup_rr ty m with
   | Some v -> Ok (v, to_ns z zmap)
-  | None -> match Umap.(findb Cname m) with
-    | None when Umap.cardinal m = 1 && Umap.(mem Soa m) ->
+  | None -> match Rr_map.(findb Cname m) with
+    | None when Rr_map.cardinal m = 1 && Rr_map.(mem Soa m) ->
       (* this is primary a hack for localhost, which must be NXDomain,
          but there's a SOA for localhost (to handle it authoritatively) *)
       (* TODO should we check that the label-node map is empty?
          well, if we have a proper authoritative zone, there'll be a NS *)
-      let soa = Umap.get Umap.Soa zmap in
+      let soa = Rr_map.get Rr_map.Soa zmap in
       Error (`NotFound (z, soa))
     | None -> Error (ent z zmap)
     | Some cname -> Ok (cname, to_ns z zmap)
@@ -70,7 +70,7 @@ let lookup_aux name t =
   let l = Array.length k in
   let fzone idx map =
     let name = Domain_name.(of_array (Array.sub (to_array name) 0 idx)) in
-    match Umap.(mem Soa map, find Ns map) with
+    match Rr_map.(mem Soa map, find Ns map) with
     | true, _ -> Some (`Soa (name, map))
     | false, Some ns -> Some (`Delegation (name, ns))
     | false, None -> None
@@ -86,7 +86,7 @@ let lookup_aux name t =
               Error (`Delegation (name, (ttl, ns)))
             | None -> Error `NotAuthoritative
             | Some (`Soa (name, map)) ->
-              let soa = Umap.(get Soa map) in
+              let soa = Rr_map.(get Soa map) in
               Error (`NotFound (name, soa))
           end
         | x -> go (succ idx) zone x
@@ -101,9 +101,9 @@ let lookup name key t =
   match lookup_aux name t with
   | Error e -> Error e
   | Ok (_zone, _sub, map) ->
-    match Umap.(find key map) with
+    match Rr_map.(find key map) with
     | Some v -> Ok v
-    | None -> match Umap.(find Soa map) with
+    | None -> match Rr_map.(find Soa map) with
       | None -> Error `NotAuthoritative
       | Some soa -> Error (`NotFound (name, soa))
 
@@ -118,13 +118,13 @@ let lookup_ignore name ty t =
   match lookup_aux name t with
   | Error _ -> Error ()
   | Ok (_zone, _sub, map) ->
-    match Umap.lookup_rr ty map with
+    match Rr_map.lookup_rr ty map with
     | None -> Error ()
     | Some v -> Ok v
 
 let folde name key t f s =
   let get name map acc =
-    match Umap.find key map with
+    match Rr_map.find key map with
     | Some a -> f name a acc
     | None -> acc
   in
@@ -141,7 +141,7 @@ let folde name key t f s =
 
 let fold name t f acc =
   let rec foldm name (N (sub, map)) acc =
-    let acc' = Umap.fold (f name) map acc in
+    let acc' = Rr_map.fold (f name) map acc in
     let dns_name = Domain_name.prepend_exn ~hostname:false in
     M.fold (fun pre v acc -> foldm (dns_name name pre) v acc) sub acc'
   in
@@ -153,9 +153,9 @@ let collect_rrs name sub map =
   (* TODO: do not cross zone boundaries! or maybe not!? *)
   let collect_map name rrmap =
     (* collecting rr out of rrmap + name, no SOA! *)
-    Umap.fold (fun v acc ->
+    Rr_map.fold (fun v acc ->
         match v with
-        | Umap.(B (Soa, _)) -> acc
+        | Rr_map.(B (Soa, _)) -> acc
         | v -> (name, v) :: acc)
       rrmap []
   in
@@ -170,7 +170,7 @@ let collect_rrs name sub map =
 
 let collect_entries name sub map =
   let ttlsoa =
-    match Umap.(find Soa map) with
+    match Rr_map.(find Soa map) with
     | Some v -> Some v
     | None when Domain_name.(equal root name) ->
       Some { Soa.nameserver = Domain_name.root ;
@@ -184,7 +184,7 @@ let collect_entries name sub map =
   | Some soa ->
     let entries = collect_rrs name sub map in
     let map =
-      List.fold_left (fun acc (name, b) -> Name_map.add name b acc)
+      List.fold_left (fun acc (name, b) -> Name_rr_map.add name b acc)
         Domain_name.Map.empty entries
     in
     Ok (soa, map)
@@ -202,7 +202,7 @@ let entries name t =
 type err = [ `Missing_soa of Domain_name.t
            | `Cname_other of Domain_name.t
            | `Any_not_allowed of Domain_name.t
-           | `Bad_ttl of Domain_name.t * Umap.b
+           | `Bad_ttl of Domain_name.t * Rr_map.b
            | `Empty of Domain_name.t * Udns_enum.rr_typ
            | `Missing_address of Domain_name.t
            | `Soa_not_ns of Domain_name.t ]
@@ -210,28 +210,28 @@ type err = [ `Missing_soa of Domain_name.t
 (* TODO: check for no cname loops? and dangling cname!? *)
 let check trie =
   let has_address name =
-    match lookup name Umap.A trie with
+    match lookup name Rr_map.A trie with
     | Ok _ -> true
     | Error (`Delegation _) -> true
-    | _ -> match lookup name Umap.Aaaa trie with
+    | _ -> match lookup name Rr_map.Aaaa trie with
       | Ok _ -> true
       | _ -> false
   in
   let rec check_sub names state sub map =
     let name = Domain_name.of_strings_exn ~hostname:false (List.rev names) in
     let state' =
-      match Umap.(find Soa map) with
-      | None -> begin match Umap.(find Ns map) with
+      match Rr_map.(find Soa map) with
+      | None -> begin match Rr_map.(find Ns map) with
           | None -> state
           | Some _ -> `None
         end
       | Some _ -> `Soa name
     in
-    guard Umap.((mem Cname map && cardinal map = 1) ||
+    guard Rr_map.((mem Cname map && cardinal map = 1) ||
                 not (mem Cname map)) (`Cname_other name) >>= fun () ->
-    Umap.fold (fun v r ->
+    Rr_map.fold (fun v r ->
         r >>= fun () ->
-        let open Umap in
+        let open Rr_map in
         match v with
         | B (Dnskey, _) -> Ok ()
         | B (Ns, (ttl, names)) ->
@@ -326,7 +326,7 @@ let insertb name b t =
   let l = Array.length k in
   let rec go idx (N (sub, map)) =
     if idx = l then
-      N (sub, Umap.addb b map)
+      N (sub, Rr_map.addb b map)
     else
       let lbl = Array.get k idx in
       let node = match M.find lbl sub with
@@ -338,11 +338,11 @@ let insertb name b t =
   in
   go 0 t
 
-let insert name k v t = insertb name (Umap.B (k, v)) t
+let insert name k v t = insertb name (Rr_map.B (k, v)) t
 
 let insert_map m t =
   Domain_name.Map.fold (fun name map trie ->
-      Umap.fold (fun v trie -> insertb name v trie) map trie)
+      Rr_map.fold (fun v trie -> insertb name v trie) map trie)
     m t
 
 let remove_aux k t a =
@@ -356,7 +356,7 @@ let remove_aux k t a =
       | exception Not_found -> N (sub, map)
       | x ->
         let N (sub', map') = go (succ idx) x in
-        if M.is_empty sub' && Umap.is_empty map' then
+        if M.is_empty sub' && Rr_map.is_empty map' then
           N (M.remove lbl sub, map)
         else
           N (M.add lbl (N (sub', map')) sub, map)
@@ -365,7 +365,7 @@ let remove_aux k t a =
 
 let remove k ty t =
   let remove sub map =
-    let map' = Umap.remove ty map in
+    let map' = Rr_map.remove ty map in
     N (sub, map')
   in
   remove_aux k t remove
@@ -373,9 +373,9 @@ let remove k ty t =
 let remove_rr k ty t =
   let remove sub map =
     if ty = Udns_enum.ANY then
-      N (sub, Umap.empty)
+      N (sub, Rr_map.empty)
     else
-      let map' = Umap.remove_rr ty map in
+      let map' = Rr_map.remove_rr ty map in
       N (sub, map')
   in
   remove_aux k t remove
@@ -384,14 +384,14 @@ let remove_zone name t =
   let remove sub _ =
     let rec go sub =
       M.fold (fun lbl (N (sub, map)) s ->
-          if Umap.(mem Soa map) then
+          if Rr_map.(mem Soa map) then
             M.add lbl (N (sub, map)) s
           else
             let sub' = go sub in
-            if sub' = M.empty then s else M.add lbl (N (sub', Umap.empty)) s)
+            if sub' = M.empty then s else M.add lbl (N (sub', Rr_map.empty)) s)
         sub M.empty
     in
-    N (go sub, Umap.empty)
+    N (go sub, Rr_map.empty)
   in
   remove_aux name t remove
 
@@ -399,7 +399,7 @@ let pp_err ppf = function
   | `Missing_soa name -> Fmt.pf ppf "missing soa for %a" Domain_name.pp name
   | `Cname_other name -> Fmt.pf ppf "%a contains a cname record, and also other entries" Domain_name.pp name
   | `Any_not_allowed name -> Fmt.pf ppf "resource type ANY is not allowed, but present for %a" Domain_name.pp name
-  | `Bad_ttl (name, v) -> Fmt.pf ppf "bad TTL for %a %a" Domain_name.pp name Umap.pp_b v
+  | `Bad_ttl (name, v) -> Fmt.pf ppf "bad TTL for %a %a" Domain_name.pp name Rr_map.pp_b v
   | `Empty (name, typ) -> Fmt.pf ppf "%a empty %a" Domain_name.pp name Udns_enum.pp_rr_typ typ
   | `Missing_address name -> Fmt.pf ppf "missing address record for %a" Domain_name.pp name
   | `Soa_not_ns name -> Fmt.pf ppf "%a nameserver of SOA is not in nameserver set" Domain_name.pp name

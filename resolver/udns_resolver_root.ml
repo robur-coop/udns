@@ -27,11 +27,11 @@ let ns_records =
     let add_to_set set (name, _) = Domain_name.Set.add name set in
     List.fold_left add_to_set Domain_name.Set.empty root_servers
   in
-  Umap.(B (Ns, (ns_ttl, ns)))
+  Rr_map.(B (Ns, (ns_ttl, ns)))
 
 let a_records =
   List.map (fun (name, ip) ->
-      name, Umap.(B (A, (a_ttl, Ipv4_set.singleton ip))))
+      name, Rr_map.(B (A, (a_ttl, Ipv4_set.singleton ip))))
     root_servers
 
 let reserved_zone_records =
@@ -76,6 +76,6 @@ let reserved_zones =
                 serial = 0l ; refresh = 300l ; retry = 300l ;
                 expiry = 300l ; minimum = 300l }
     in
-    Umap.(B (Soa, soa))
+    Rr_map.(B (Soa, soa))
   in
   Domain_name.Set.fold (fun n acc -> (n, inv n) :: acc) reserved_zone_records []

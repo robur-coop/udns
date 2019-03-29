@@ -145,18 +145,18 @@ let maybe_insert typ nam ts rank res t =
 let resolve_ns t ts name =
   match cached t ts Udns_enum.A name with
   | Error _ -> `NeedA name, t
-  | Ok (NoErr Umap.(B (k, v) as b), t) ->
+  | Ok (NoErr Rr_map.(B (k, v) as b), t) ->
     begin
       match k, v with
-      | Umap.A, (_, ips) -> `HaveIPS ips, t
-      | Umap.Cname, (_, alias) ->
+      | Rr_map.A, (_, ips) -> `HaveIPS ips, t
+      | Rr_map.Cname, (_, alias) ->
         Logs.warn
           (fun m -> m "resolve_ns: asked for A record of NS %a, got cname %a"
               Domain_name.pp name Domain_name.pp alias) ;
         `NeedCname alias, t
       | _ ->
         Logs.warn (fun m -> m "resolve_ns: ignoring %a (looked A %a)"
-                      Umap.pp_b b Domain_name.pp name) ;
+                      Rr_map.pp_b b Domain_name.pp name) ;
         `NeedA name, t
     end
   | Ok (NoDom _, t) ->
@@ -176,7 +176,7 @@ let find_ns t rng ts stash name =
   in
   match cached t ts Udns_enum.NS name with
   | Error _ -> `NeedNS, t
-  | Ok (NoErr Umap.(B (k, v) as b), t) ->
+  | Ok (NoErr Rr_map.(B (k, v) as b), t) ->
     (* TODO test case -- we can't pick right now, unfortunately
        the following setup is there in the wild:
        berliner-zeitung.de NS 1.ns.berlinonline.de, 2.ns.berlinonline.de, x.ns.berlinonline.de
@@ -184,7 +184,7 @@ let find_ns t rng ts stash name =
        berlinonline.net NS 2.ns.berlinonline.de, x.ns.berlinonline.de, 1.ns.berlinonline.de.
        --> all delivered without glue *)
     begin match k, v with
-      | Umap.Ns, (_, ns) ->
+      | Rr_map.Ns, (_, ns) ->
         begin
           let actual = Domain_name.Set.diff ns stash in
           match pick (Domain_name.Set.elements actual) with
@@ -202,7 +202,7 @@ let find_ns t rng ts stash name =
             | `NeedCname cname, t -> `NeedA cname, t
             | `HaveIPS ips, t ->
               (* TODO should use a non-empty list of ips here *)
-              begin match pick (Umap.Ipv4_set.elements ips) with
+              begin match pick (Rr_map.Ipv4_set.elements ips) with
                 | None -> `NeedA nsname, t
                 | Some ip -> `HaveIP ip, t
               end
@@ -210,10 +210,10 @@ let find_ns t rng ts stash name =
             | `No, t -> `No, t
             | `NoDom, t -> `NoDom, t
         end
-      | Umap.Cname, (_, alias) -> `Cname alias, t (* foo.com CNAME bar.com case *)
+      | Rr_map.Cname, (_, alias) -> `Cname alias, t (* foo.com CNAME bar.com case *)
       | _ ->
         Logs.err (fun m -> m "find_ns: looked for NS %a, but got %a"
-                     Domain_name.pp name Umap.pp_b b) ;
+                     Domain_name.pp name Rr_map.pp_b b) ;
         `No, t
     end
   | Ok (_, t) -> `No, t
@@ -231,10 +231,10 @@ let find_nearest_ns rng ts t name =
     | Some ip -> ip
   in
   let find_ns name = match cached t ts Udns_enum.NS name with
-    | Ok (NoErr Umap.(B (Ns, (_, names))), _) -> Domain_name.Set.elements names
+    | Ok (NoErr Rr_map.(B (Ns, (_, names))), _) -> Domain_name.Set.elements names
     | _ -> []
   and find_a name = match cached t ts Udns_enum.A name with
-    | Ok (NoErr Umap.(B (A, (_, ips))), _) -> Umap.Ipv4_set.elements ips
+    | Ok (NoErr Rr_map.(B (A, (_, ips))), _) -> Rr_map.Ipv4_set.elements ips
     | _ -> []
   in
   let rec go nam =
@@ -386,9 +386,9 @@ let _resolve t ~rng ts name typ =
   go t (N.singleton name) typ Domain_name.root (List.rev (Domain_name.to_strings name)) Domain_name.root root
 
 let follow_cname t ts typ name b =
-  let rec follow t acc name Umap.(B (k, v) as b) =
+  let rec follow t acc name Rr_map.(B (k, v) as b) =
     match k, v with
-    | Umap.Cname, (_, alias) ->
+    | Rr_map.Cname, (_, alias) ->
       if Domain_name.Map.mem alias acc then begin
         Logs.debug (fun m -> m "follow_cname: cycle detected") ;
         `Cycle (acc, t)
@@ -399,7 +399,7 @@ let follow_cname t ts typ name b =
           `Query (alias, t)
         | Ok (NoErr ans, t) ->
           Logs.debug (fun m -> m "follow_cname: noerr, follow again") ;
-          follow t (Name_map.add alias ans acc) alias ans
+          follow t (Name_rr_map.add alias ans acc) alias ans
         | Ok (NoDom (ttl, soa) as res, t) ->
           Logs.debug (fun m -> m "follow_cname: nodom") ;
           `NoDom ((acc, to_map res), t)
@@ -412,9 +412,9 @@ let follow_cname t ts typ name b =
           Logs.debug (fun m -> m "follow_cname: servfail") ;
           `ServFail (to_map res, t)
       end
-    | _ -> `NoError (Name_map.add name b acc, t)
+    | _ -> `NoError (Name_rr_map.add name b acc, t)
   in
-  let initial = Name_map.add name b Domain_name.Map.empty in
+  let initial = Name_rr_map.add name b Domain_name.Map.empty in
   follow t initial name b
 
 (*

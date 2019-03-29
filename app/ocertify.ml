@@ -58,16 +58,16 @@ let query_certificate sock public_key fqdn =
   | Ok (_, `Query q, _, _) ->
     (* TODO verify id! *)
     (* collect TLSA pems *)
-    Logs.debug (fun m -> m "answer is %a" Name_map.pp q.Packet.Query.answer) ;
+    Logs.debug (fun m -> m "answer is %a" Name_rr_map.pp q.Packet.Query.answer) ;
     begin match Domain_name.Map.find fqdn q.Packet.Query.answer with
       | None ->
         Logs.err (fun m -> m "no resource records found for %a" Domain_name.pp fqdn) ;
         None
       | Some rrs ->
-        match Umap.(find Tlsa rrs) with
+        match Rr_map.(find Tlsa rrs) with
         | None -> Logs.err (fun m -> m "no TLSA records found") ; None
         | Some (_, tlsas) ->
-          Umap.Tlsa_set.(fold (fun tlsa r ->
+          Rr_map.Tlsa_set.(fold (fun tlsa r ->
               match parse tlsa, r with
               | Some c, _ -> Some c
               | None, x -> x)
@@ -95,7 +95,7 @@ let nsupdate_csr sock now hostname keyname zone dnskey csr =
       Domain_name.Map.singleton hostname
         [
           Packet.Update.Remove Udns_enum.TLSA ;
-          Packet.Update.Add (Umap.B (Tlsa, (3600l, Umap.Tlsa_set.singleton tlsa)))
+          Packet.Update.Add (Rr_map.B (Tlsa, (3600l, Rr_map.Tlsa_set.singleton tlsa)))
         ]
     in
     Packet.Update.create ~update zone

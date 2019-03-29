@@ -22,7 +22,7 @@ let invalid_soa name =
   name, (soa.minimum, soa)
 
 let soa_map name soa =
-  Domain_name.Map.singleton name Umap.(singleton Soa soa)
+  Domain_name.Map.singleton name Rr_map.(singleton Soa soa)
 
 let invalid_soa_map name =
   let _, (_, soa) = invalid_soa name in
@@ -166,7 +166,7 @@ let find_soa name dns =
   let rec go name =
     match Domain_name.Map.find name dns.Packet.Query.authority with
     | None -> go (Domain_name.drop_labels_exn name)
-    | Some rrmap -> match Umap.(find Soa rrmap) with
+    | Some rrmap -> match Rr_map.(find Soa rrmap) with
       | None -> go (Domain_name.drop_labels_exn name)
       | Some soa -> name, soa
   in
@@ -181,7 +181,7 @@ let nxdomain (name, _typ) hdr dns =
     let rec go acc name =
       match Domain_name.Map.find name dns.Packet.Query.answer with
       | None -> acc
-      | Some rrmap -> match Umap.(find Cname rrmap) with
+      | Some rrmap -> match Rr_map.(find Cname rrmap) with
         | None -> acc
         | Some (ttl, alias) -> go ((name, (ttl, alias)) :: acc) alias
     in
@@ -203,7 +203,7 @@ let nxdomain (name, _typ) hdr dns =
     [ Udns_enum.CNAME, name, rank, NoDom (name, (soa.minimum, soa)) ]
   | _, rrs ->
     List.map (fun (name, cname) ->
-        Udns_enum.CNAME, name, rank, NoErr Umap.(B (Cname, cname)))
+        Udns_enum.CNAME, name, rank, NoErr Rr_map.(B (Cname, cname)))
       rrs
 
 let noerror_stub (name, typ) dns =
@@ -213,9 +213,9 @@ let noerror_stub (name, typ) dns =
     | None -> None
     | Some rrmap -> match typ with
       | Udns_enum.ANY -> Some (`Entries rrmap)
-      | _ -> match Umap.lookup_rr typ rrmap with
+      | _ -> match Rr_map.lookup_rr typ rrmap with
         | Some b -> Some (`Entry b)
-        | None -> match Umap.(find Cname rrmap) with
+        | None -> match Rr_map.(find Cname rrmap) with
           | None -> None
           | Some (ttl, alias) -> Some (`Cname (ttl, alias))
   in
@@ -227,13 +227,13 @@ let noerror_stub (name, typ) dns =
       in
       (typ, name, NonAuthoritativeAnswer, NoData (name, soa)) :: acc
     | Some (`Cname (ttl, alias)) ->
-      let b = Umap.(B (Cname, (ttl, alias))) in
+      let b = Rr_map.(B (Cname, (ttl, alias))) in
       go ((Udns_enum.CNAME, name, NonAuthoritativeAnswer, NoErr b) :: acc) alias
     | Some (`Entry b) ->
       (typ, name, NonAuthoritativeAnswer, NoErr b) :: acc
     | Some (`Entries map) ->
-      Umap.fold (fun Umap.(B (k, v) as b) acc ->
-          (Umap.k_to_rr_typ k, name, NonAuthoritativeAnswer, NoErr b) :: acc)
+      Rr_map.fold (fun Rr_map.(B (k, v) as b) acc ->
+          (Rr_map.k_to_rr_typ k, name, NonAuthoritativeAnswer, NoErr b) :: acc)
         map acc
   in
   go [] name
