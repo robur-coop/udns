@@ -1,17 +1,56 @@
 (* (c) 2017-2019 Hannes Mehnert, all rights reserved *)
 (** µDNS - an opinionated Domain Name System (DNS) library
 
-    µDNS defines the supported DNS resource records in individual modules, each
-   providing a pretty printer and a comparison function. These are used in
-   {!Rr_map.k}, which is the data structure of resource record sets used
-   throughout these libraries.
+    The Domain Name System is a hierarchical and decentralized naming system
+   used on the Internet. It associates domain names with nearly arbitrary
+   information. Best known is the translation of easily memoizable domain names
+   to numerical IP addresses, which are used by computers for establishing
+   communication channels - so called {{!A}address} records. DNS has been
+   deployed since 1985 on the Internet. It is a widely deployed, fault-tolerant,
+   distributed key-value store with built-in caching mechanisms. The keys
+   are domain names and record type, the values are record sets. Each record
+   set has a time-to-live associated with it: the maximum time this entry may
+   be cached.
 
-    The {!Packet} module provides encoding and decoding operations to byte
-   buffers with validation, supporting multiple operations: query, axfr, notify,
-   and update. EDNS and TSIG are handled as well, {!Udns_tsig} implements HMAC.
+    A set of 13 authoritative name servers form the root zone which delegate
+   authority for subdomains to registrars (using country codes, etc.), which
+   delegate domains to individuals who host their Internet presence there.
 
+    The delegation mechanism utilizes the DNS protocol itself, using
+   {{!Ns}name server} records, and {{!Soa}start of authority} records. The
+   globally federated eMail system uses {{!Mx}mail exchange} records.
 
-*)
+    Each Internet domain has at least two authoritative name servers registered
+   to enable fault tolerance. To keep these synchronised, a zone transfer
+   mechanism is part of DNS. In-protocol DNS extension mechanisms include
+   dynamic updates, authentication, and notifications, which allow arbitrary
+   synchronized, authenticated modifications.
+
+    From a client perspective, the C library functions [gethostbyname] or
+   [getaddrinfo] are mainly used, which receive a string (and a record type)
+   and return a reply. A client requests a caching recursive resolver hosted
+   close to the client - e.g. at their ISP, and awaits an answer. The recursive
+   resolver iterates over the domain name parts, and requests the registered
+   authoritative name servers, until the name server responsible for the
+   requested domain name is found.
+
+    The core µDNS library includes type definitions of supported record types,
+  decoding and encoding thereof to the binary protocol used on the Internet,
+  also serialising and parsing of the standardized text form. The record types
+  and their values are defined by the {{!Rr_map.k}key} type, which has for
+  each record type a specific value type, using a generalized algebraic data
+  type -- i.e. an address record may only contain a time-to-live and a set of
+  IPv4 addresses. This is used to construct a map data structure.
+
+    Different µDNS libraries implement various DNS components:
+    {ul
+    {- {!Udns_tsig} implements TSIG authentication}
+    {- {!Udns_server} implements the authoritative server logic (both primary and secondary)}
+    {- {!Udns_client} implements a client API}
+    {- {!Udns_zonesfile} implements the zone file parser}
+    {- {!Udns_resolver} implements the resolver logic}}
+
+    {e %%VERSION%% - {{:%%PKG_HOMEPAGE%% }homepage}} *)
 
 type proto = [ `Tcp | `Udp ]
 
@@ -478,7 +517,7 @@ module Packet : sig
       {- Is the operation of [header] and [res] the same?}
       {- If [not_error] is [true] (the default): is the rcode of [header] NoError?}
       {- If [not_truncated] is [true] (the default): is the [truncation] flag not set?}
-      {- Is the [question] and the question of [response] equal?} *)
+      {- Is the [question] and the question of [response] equal?}} *)
 
   val size_edns : int option -> Edns.t option -> proto -> bool -> int * Edns.t option
 
