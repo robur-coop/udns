@@ -17,7 +17,7 @@ let notify zone serial key now =
   match key with
   | None -> Ok (header, question, fst (Packet.encode `Tcp header question (`Notify n)), Cstruct.empty)
   | Some (keyname, _, dnskey) ->
-    Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Dnskey.pp dnskey) ;
+    Logs.debug (fun m -> m "signing with key %a: %a" Domain_name.pp keyname Dnskey.pp dnskey) ;
     match Udns_tsig.encode_and_sign ~proto:`Tcp header question (`Notify n) now dnskey keyname with
     | Ok (cs, mac) -> Ok (header, question, cs, mac)
     | Error e -> Error e
@@ -26,9 +26,7 @@ let jump _ serverip port zone key serial =
   Random.self_init () ;
   let now = Ptime_clock.now () in
   Logs.app (fun m -> m "notifying to %a:%d zone %a serial %lu"
-               Ipaddr.V4.pp serverip port
-               Domain_name.pp zone
-               serial) ;
+               Ipaddr.V4.pp serverip port Domain_name.pp zone serial) ;
   match notify zone serial key now with
   | Error msg -> `Error (false, msg)
   | Ok (header, question, data, mac) ->
@@ -41,23 +39,31 @@ let jump _ serverip port zone key serial =
     match key with
     | None ->
       begin match Packet.decode read_data with
+        | Ok res when Packet.is_reply header question res ->
+          Logs.app (fun m -> m "successfull notify!") ;
+          `Ok ()
         | Ok res ->
-          if Packet.is_reply header question res then begin
-            Logs.app (fun m -> m "successfull notify!") ; `Ok ()
-          end else
-            `Error (false, "")
+          Logs.err (fun m -> m "expected reply to %a %a, got %a!"
+                       Packet.Header.pp header Packet.Question.pp question
+                       Packet.pp_res res) ;
+          `Error (false, "")
         | Error e ->
-          Logs.err (fun m -> m "failed to decode notify! %a" Packet.pp_err e) ;
+          Logs.err (fun m -> m "failed to decode notify reply! %a" Packet.pp_err e) ;
           `Error (false, "")
       end
     | Some (keyname, _, dnskey) ->
       begin match Udns_tsig.decode_and_verify now dnskey keyname ~mac read_data with
-        | Error e -> `Error (false, "notify replied with error " ^ e)
+        | Error e ->
+          Logs.err (fun m -> m "failed to decode TSIG signed notify reply! %s" e) ;
+          `Error (false, "")
+        | Ok (res, _, _) when Packet.is_reply header question res ->
+          Logs.app (fun m -> m "successfull TSIG signed notify!") ;
+          `Ok ()
         | Ok (res, _, _) ->
-          if Packet.is_reply header question res then begin
-            Logs.app (fun m -> m "successfull notify!") ; `Ok ()
-          end else
-            `Error (false, "")
+          Logs.err (fun m -> m "expected reply to %a %a, got %a!"
+                       Packet.Header.pp header Packet.Question.pp question
+                       Packet.pp_res res) ;
+          `Error (false, "")
       end
 
 open Cmdliner

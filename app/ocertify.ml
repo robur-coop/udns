@@ -108,7 +108,10 @@ let nsupdate_csr sock now hostname keyname zone dnskey csr =
     Udns_tsig.decode_and_verify now dnskey keyname ~mac data
   with
   | Error x -> Error (`Msg x)
-  | Ok _ -> Ok ()
+  | Ok (res, _, _) when Packet.is_reply header zone res -> Ok ()
+  | Ok (res, _, _) ->
+    Error (`Msg (Fmt.strf "expected reply to %a %a, got %a"
+                   Packet.Header.pp header Packet.Question.pp zone Packet.pp_res res))
 
 let jump server_ip port (keyname, zone, dnskey) hostname csr key seed bits cert force =
   Nocrypto_entropy_unix.initialize () ;

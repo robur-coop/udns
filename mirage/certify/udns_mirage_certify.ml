@@ -105,11 +105,9 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
         | Ok data ->
           match Udns_tsig.decode_and_verify now dnskey keyname ~mac data with
           | Error e -> Lwt.return_error ("nsupdate reply " ^ e)
+          | Ok (res, _, _) when Packet.is_reply header zone res -> Lwt.return_ok ()
           | Ok (res, _, _) ->
-            if Packet.is_reply header zone res then
-              Lwt.return_ok ()
-            else
-              Lwt.return_error ("nsupdate not reply")
+            Lwt.return_error (Fmt.strf "nsupdate invalid reply %a" Packet.pp_res res)
 
   let query_certificate flow public_key name =
     let good_tlsa tlsa =

@@ -2184,21 +2184,39 @@ module Packet = struct
     else
       Ok (hdr, question, t, Domain_name.Map.empty, None, None)
 
-  let is_reply hdr q (hdr', q', _, _, _, _) =
+  let is_reply ?(not_error = true) ?(not_truncated = true) hdr q ((hdr', q', _, _, _, _) as res) =
     match
       hdr.Header.id = hdr.Header.id,
       hdr'.Header.query,
+      hdr.Header.operation = hdr'.Header.operation,
+      (if not_error then hdr'.Header.rcode = Udns_enum.NoError else true),
+      (if not_truncated then not (Header.FS.mem `Truncation hdr'.Header.flags) else true),
       Question.compare q q' = 0
     with
-    | true, false, true -> true
-    | false, _ ,_ ->
-      Logs.warn (fun m -> m "header id mismatch, expected %d got %d" hdr.Header.id hdr'.Header.id) ;
+    | true, false, true, true, true, true -> true
+    | false, _ ,_, _, _, _ ->
+      Logs.warn (fun m -> m "header id mismatch, expected %d got %d in %a"
+                    hdr.Header.id hdr'.Header.id pp_res res) ;
       false
-    | _, true, _ ->
-      Logs.warn (fun m -> m "expected reply, got a query");
+    | _, true, _, _, _, _ ->
+      Logs.warn (fun m -> m "expected reply to %a, got a query %a"
+                    Question.pp q pp_res res);
       false
-    | _, _, false ->
-      Logs.warn (fun m -> m "expected a reply to %a, but got %a" Question.pp q Question.pp q') ;
+    | _, _, false, _, _, _ ->
+      Logs.warn (fun m -> m "expected opcode %a to %a, but got %a"
+                    Header.pp hdr Question.pp q pp_res res) ;
+      false
+    | _, _, _, false, _, _ ->
+      Logs.warn (fun m -> m "expected rcode noerror to %a %a, got %a"
+                    Header.pp hdr Question.pp q pp_res res) ;
+      false
+    | _, _, _, _, false, _ ->
+      Logs.warn (fun m -> m "expected not truncated answer to %a %a, got %a"
+                    Header.pp hdr Question.pp q pp_res res) ;
+      false
+    | _, _, _, _, _, false ->
+      Logs.warn (fun m -> m "question mismatch: expected reply to %a, got %a"
+                    Question.pp q pp_res res) ;
       false
 
   let max_udp = 1484 (* in MirageOS. using IPv4 this is max UDP payload via ethernet *)

@@ -48,7 +48,7 @@ let parse_response (type requested)
       end
   end >>= fun buf ->
   match Packet.decode buf with
-  | Ok (({Packet.Header.rcode = NoError ; operation = Query; _ }, q, `Query (answer, _), _, _, _) as res)
+  | Ok ((_, _, `Query (answer, _), _, _, _) as res)
       when Packet.is_reply state.header state.question res ->
     let rec follow_cname counter q_name =
       if counter <= 0 then Error (`Msg "CNAME recursion too deep")

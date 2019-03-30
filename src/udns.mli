@@ -1,4 +1,17 @@
 (* (c) 2017-2019 Hannes Mehnert, all rights reserved *)
+(** µDNS - an opinionated Domain Name System (DNS) library
+
+    µDNS defines the supported DNS resource records in individual modules, each
+   providing a pretty printer and a comparison function. These are used in
+   {!Rr_map.k}, which is the data structure of resource record sets used
+   throughout these libraries.
+
+    The {!Packet} module provides encoding and decoding operations to byte
+   buffers with validation, supporting multiple operations: query, axfr, notify,
+   and update. EDNS and TSIG are handled as well, {!Udns_tsig} implements HMAC.
+
+
+*)
 
 type proto = [ `Tcp | `Udp ]
 
@@ -455,7 +468,17 @@ module Packet : sig
 
   val decode : Cstruct.t -> (res, err) result
 
-  val is_reply : Header.t -> Question.t -> res -> bool
+  val is_reply : ?not_error:bool -> ?not_truncated:bool -> Header.t -> Question.t -> res -> bool
+  (** [is_reply ~not_error ~not_truncated header question response] validates the reply, and returns either
+      [true] or [false] and logs the failure. The following basic checks are
+      performed:
+      {ul
+      {- Is the header identifier of [header] and [response] equal?}
+      {- Is [res] a reply (first bit set)?}
+      {- Is the operation of [header] and [res] the same?}
+      {- If [not_error] is [true] (the default): is the rcode of [header] NoError?}
+      {- If [not_truncated] is [true] (the default): is the [truncation] flag not set?}
+      {- Is the [question] and the question of [response] equal?} *)
 
   val size_edns : int option -> Edns.t option -> proto -> bool -> int * Edns.t option
 
