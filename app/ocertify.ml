@@ -33,12 +33,12 @@ let dns_header () =
 
 let query_certificate sock public_key fqdn =
   let good_tlsa tlsa =
-    tlsa.Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate
-    && tlsa.Tlsa.tlsa_selector = Udns_enum.Tlsa_full_certificate
-    && tlsa.Tlsa.tlsa_matching_type = Udns_enum.Tlsa_no_hash
+    tlsa.Tlsa.cert_usage = Domain_issued_certificate
+    && tlsa.selector = Full_certificate
+    && tlsa.matching_type = No_hash
   in
   let parse tlsa =
-    match X509.Encoding.parse tlsa.Tlsa.tlsa_data with
+    match X509.Encoding.parse tlsa.Tlsa.data with
     | Some cert ->
       let keys_equal a b = Cstruct.equal (X509.key_id a) (X509.key_id b) in
       if keys_equal (X509.public_key cert) public_key then
@@ -82,10 +82,10 @@ let query_certificate sock public_key fqdn =
 
 let nsupdate_csr sock now hostname keyname zone dnskey csr =
   let tlsa =
-    { Tlsa.tlsa_cert_usage = Udns_enum.Domain_issued_certificate ;
-      tlsa_selector = Udns_enum.Tlsa_selector_private ;
-      tlsa_matching_type = Udns_enum.Tlsa_no_hash ;
-      tlsa_data = X509.Encoding.cs_of_signing_request csr ;
+    { Tlsa.cert_usage = Domain_issued_certificate ;
+      selector = Private ;
+      matching_type = No_hash ;
+      data = X509.Encoding.cs_of_signing_request csr ;
     }
   in
   let zone = (zone, Udns_enum.SOA)

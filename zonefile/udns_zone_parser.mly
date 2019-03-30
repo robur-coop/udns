@@ -132,22 +132,22 @@ rr:
      /* RFC 3596 */
  | TYPE_TLSA s int8 s int8 s int8 s hex
      { match
-         Udns_enum.int_to_tlsa_cert_usage $3,
-         Udns_enum.int_to_tlsa_selector $5,
-         Udns_enum.int_to_tlsa_matching_type $7
+         Tlsa.int_to_cert_usage $3,
+         Tlsa.int_to_selector $5,
+         Tlsa.int_to_matching_type $7
        with
-       | Some tlsa_cert_usage, Some tlsa_selector, Some tlsa_matching_type ->
-          let tlsa = { Tlsa.tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data = $9 } in
+       | Some cert_usage, Some selector, Some matching_type ->
+          let tlsa = { Tlsa.cert_usage ; selector ; matching_type ; data = $9 } in
           B (Tlsa, (0l, Rr_map.Tlsa_set.singleton tlsa ))
        | _ -> raise Parsing.Parse_error
      }
  | TYPE_SSHFP s int8 s int8 s hex
      { match
-         Udns_enum.int_to_sshfp_algorithm $3,
-         Udns_enum.int_to_sshfp_type $5
+         Sshfp.int_to_algorithm $3,
+         Sshfp.int_to_typ $5
        with
-       | Some sshfp_algorithm, Some sshfp_type ->
-          let sshfp = { Sshfp.sshfp_algorithm ; sshfp_type ; sshfp_fingerprint = $7 } in
+       | Some algorithm, Some typ ->
+          let sshfp = { Sshfp.algorithm ; typ ; fingerprint = $7 } in
           B (Sshfp, (0l, Rr_map.Sshfp_set.singleton sshfp))
        | _ -> raise Parsing.Parse_error
      }
@@ -155,7 +155,7 @@ rr:
  | TYPE_DNSKEY s int16 s int16 s int16 s charstring
      { if not ($5 = 3) then
            parse_error ("DNSKEY protocol is not 3, but " ^ string_of_int $5) ;
-       match Udns_enum.int_to_dnskey $7 with
+       match Dnskey.int_to_algorithm $7 with
        | None -> parse_error ("DNSKEY algorithm not supported " ^ string_of_int $7)
        | Some x ->
           let dnskey = { Dnskey.flags = $3 ; algorithm = x ; key = Cstruct.of_string $9 } in

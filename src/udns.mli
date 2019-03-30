@@ -8,9 +8,12 @@
    communication channels - so called {{!A}address} records. DNS has been
    deployed since 1985 on the Internet. It is a widely deployed, fault-tolerant,
    distributed key-value store with built-in caching mechanisms. The keys
-   are domain names and record type, the values are record sets. Each record
-   set has a time-to-live associated with it: the maximum time this entry may
-   be cached.
+   are {{!Domain_name}domain names} and {{!Udns_enum.rr_typ}record type}, the
+   values are record sets. Each record set has a time-to-live associated with
+   it: the maximum time this entry may be cached. The
+   {{:https://github.com/hannesm/domain-name}domain name} library provides
+   operations on domain names, which have a restricted character set (letters,
+   digits, hyphen), and comparison is defined case-insensitively.
 
     A set of 13 authoritative name servers form the root zone which delegate
    authority for subdomains to registrars (using country codes, etc.), which
@@ -35,26 +38,58 @@
    requested domain name is found.
 
     The core µDNS library includes type definitions of supported record types,
-  decoding and encoding thereof to the binary protocol used on the Internet,
-  also serialising and parsing of the standardized text form. The record types
-  and their values are defined by the {{!Rr_map.k}key} type, which has for
-  each record type a specific value type, using a generalized algebraic data
-  type -- i.e. an address record may only contain a time-to-live and a set of
-  IPv4 addresses. This is used to construct a map data structure.
+   decoding and encoding thereof to the binary protocol used on the Internet,
+   also serialising and parsing of the standardized text form. The record types
+   and their values are defined by the {{!Rr_map.k}key} type, which has for
+   each record type a specific value type, using a generalized algebraic data
+   type -- i.e. an address record may only contain a time-to-live and a set of
+   IPv4 addresses. This is used to construct a {{!Gmap}map} data structure.
 
-    Different µDNS libraries implement various DNS components:
+    This core µDNS library is used by various DNS components:
     {ul
     {- {!Udns_tsig} implements TSIG authentication}
-    {- {!Udns_server} implements the authoritative server logic (both primary and secondary)}
+    {- {!Udns_server} implements the authoritative server logic}
     {- {!Udns_client} implements a client API}
     {- {!Udns_zonesfile} implements the zone file parser}
     {- {!Udns_resolver} implements the resolver logic}}
 
+    These core libraries are pure, i.e. it is independent of network
+   communnication, uses immutable values, and errors are explicit as {!result}
+   type. Timestamps are passed in to the main handle functions. Some components,
+   such as a secondary server, which needs to check freshness of its data in
+   regular intervals. The logic is implemented and exposed as function, which
+   needs to be called from a side-effecting layer.
+
+    For the client library, several side-effecting layers are implemented:
+   [udns-client-unix] uses the blocking {!Unix} API, [udns-client-lwt] uses the
+   non-blocking {!Lwt}, and [udns-mirage-client] using MirageOS interfaces.
+   Unix command line utilities are provided in the [udns-cli] package.
+
+    For the server and resolver components, side-effecting implementations
+   using MirageOS interfaces are provided in [udns-mirage-server] and
+   [udns-mirage-resolver]. Some
+   {{:https://github.com/roburio/unikernels}example unikernels} are provided
+   externally, including authoritative primary and secondary servers, recursive
+   and stub resolvers.
+
+    The DNS protocol ({{!Txt}TXT} records) are used by the certificate authority
+   {{:https://letsencrypt}Let's Encrypt} to provision X.509 certificates which
+   are trusted by web browsers. µDNS together with
+   {{:https://github.com/mmaker/ocaml-letsencrypt}ocaml-letsencrypt} can be
+   used to provision certificate signing requests for your domain. The
+   certificate signing request and certificate are both stored as {{!Tlsa}TLSA}
+   records in DNS.
+
     {e %%VERSION%% - {{:%%PKG_HOMEPAGE%% }homepage}} *)
 
 type proto = [ `Tcp | `Udp ]
+(** The type of supported protocols. Used by {!Packet.encode} to decide on
+     maximum buffer length, etc. *)
 
-(* start of authority *)
+(** Start of authority
+
+    The start of authority (SOA) is a resource record at domain boundaries. It
+    contains metadata (serial number, refresh interval, hostmaster) of the domain. *)
 module Soa : sig
   type t = {
     nameserver : Domain_name.t ;
@@ -66,70 +101,122 @@ module Soa : sig
     minimum : int32 ;
   }
 
+  val create : ?serial:int32 -> ?refresh:int32 -> ?retry:int32 ->
+    ?expiry:int32 -> ?minimum:int32 -> ?hostmaster:Domain_name.t ->
+    Domain_name.t -> t
+  (** [create ~serial ~refresh ~retry ~expiry ~minimum ~hostmaster nameserver]
+      returns a start of authority. The default for [hostmaster] is replacing
+      the first domain name part of [nameserver] with "hostmaster" (to result
+      in hostmaster@foo.com if ns1.foo.com is the [nameserver]. *)
+
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the start of authority. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compare all fields of [a] with [b]. *)
+
   val newer : old:t -> t -> bool
+  (** [newer ~old new] checks if the serial of [old] is smaller than [new].
+      To accomodate wraparounds, the formula used is [new - old > 0]. *)
 end
 
-(* name server *)
+(** Name server
+
+    A name server (NS) record specifies authority over the domain. Each domain
+    may have multiple name server records, at least two. *)
 module Ns : sig
   type t = Domain_name.t
+  (** The type of a nameserver record. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the nameserver. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compares the nameserver [a] with [b]. *)
 end
 
-(* mail exchange *)
+(** Mail exchange
+
+    A mail exchange (MX) record specifies the mail server where mail for this
+   domain should be delivered to. A domain may have multiple MX records, each
+   has a 16bit preference. *)
 module Mx : sig
   type t = {
     preference : int ;
     mail_exchange : Domain_name.t ;
   }
+  (** The type of a mail exchange. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the mail exchange. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compares the name and preference of [a] with [b]. *)
 end
 
-(* canonical name *)
+(** Canonical name
+
+    A canonical name (CNAME) is an alias. [host.example.com CNAME foo.com]
+    redirects all record sets of [host.example.com] to [foo.com]. *)
 module Cname : sig
   type t = Domain_name.t
+  (** The type of a canonical name. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the canonical name. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compares the canonical name [a] and [b]. *)
 end
 
-(* address record *)
+(** Adress record
+
+    An address record (A) is an Internet protocol v4 address. *)
 module A : sig
   type t = Ipaddr.V4.t
+  (** The type of an A record. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the address. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compares the address [a] with [b]. *)
 end
 
-(* quad-a record *)
+(** Quad A record
+
+    An AAAA record is an Internet protocol v6 address. *)
 module Aaaa : sig
   type t = Ipaddr.V6.t
+  (** The type of an AAAA record. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the address. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compares the address [a] with [b]. *)
 end
 
-(* domain name pointer - reverse entries *)
+(** Domain name pointer
+
+    A domain name pointer (PTR) record specifies the name for an IP address.
+    This allows reverse lookups, instead of asking "which address is
+    [example.com] located at?", you can ask "who is located at
+    [3.4.5.6.in-addr.arpa.]?" ([ip6.arpa] for IPv6 addresses). *)
 module Ptr : sig
   type t = Domain_name.t
+  (** The type of a PTR record. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the domain name pointer. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compares the domain pointer pointer [a] with [b]. *)
 end
 
-(* service record *)
+(** Service record
+
+    A Service record (SRV) specifies a target, its priority, weight and port. *)
 module Srv : sig
   type t = {
     priority : int ;
@@ -137,63 +224,150 @@ module Srv : sig
     port : int ;
     target : Domain_name.t
   }
+  (** The type for a service record. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the service record. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compares the service record [a] with [b]. *)
 end
 
-(* DNS key *)
+(** DNS keys
+
+    A DNS key record (DNSKEY) specifies flags, algorithm, and key data. *)
 module Dnskey : sig
+
+  type algorithm =
+    | MD5
+    | SHA1
+    | SHA224
+    | SHA256
+    | SHA384
+    | SHA512
+    (** The type of supported algorithms. *)
+
+  val int_to_algorithm : int -> algorithm option
+  (** [int_to_algorithm i] tries to decode [i] to an [algorithm]. *)
+
+  val algorithm_to_int : algorithm -> int
+  (** [algorithm_to_int a] encodes [a] to an integer. *)
+
+  val pp_algorithm : algorithm Fmt.t
+  (** [pp_algorithm ppf a] pretty-prints the algorithm. *)
+
   type t = {
     flags : int ; (* uint16 *)
-    algorithm :  Udns_enum.dnskey ; (* u_int8_t *)
+    algorithm :  algorithm ; (* u_int8_t *)
     key : Cstruct.t ;
   }
+  (** The type of a DNSKEY record. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the DNSKEY. *)
 
   val compare : t -> t -> int
+  (** [comapre a b] compares the DNSKEY [a] with [b]. *)
 
   val of_string : string -> t option
+  (** [of_string str] attempts to parse [str] to a dnskey. The colon character
+      ([:]) is used as separator, supported formats are: [algo:keydata] and
+      [flags:algo:keydata], where keydata is a base64 string. *)
 
   val name_key_of_string : string -> (Domain_name.t * t, [> `Msg of string ]) result
+  (** [name_key_of_string str] attempts to parse [str] to a domain name and a
+      dnskey. The colon character ([:]) is used as separator. *)
 end
 
-(* certificate authority authorization *)
+(** Certificate authority authorization
+
+    A certificate authority authorization (CAA) record can restrict usage of
+    certain certificate authorities for an entire domain. *)
 module Caa : sig
   type t = {
     critical : bool ;
     tag : string ;
     value : string list ;
   }
+  (** The type of a CAA record. *)
 
   val pp : t Fmt.t
+  (** [pp ppf t] pretty-prints the CAA record. *)
 
   val compare : t -> t -> int
+  (** [compare a b] compares the CAA record [a] with [b]. *)
 end
 
-(* transport layer security A *)
+(** Transport layer security authentication *)
 module Tlsa : sig
-  type t = {
-    tlsa_cert_usage : Udns_enum.tlsa_cert_usage ;
-    tlsa_selector : Udns_enum.tlsa_selector ;
-    tlsa_matching_type : Udns_enum.tlsa_matching_type ;
-    tlsa_data : Cstruct.t ;
-  }
+  type cert_usage =
+    | CA_constraint
+    | Service_certificate_constraint
+    | Trust_anchor_assertion
+    | Domain_issued_certificate
 
+  val cert_usage_to_int : cert_usage -> int
+  val int_to_cert_usage : int -> cert_usage option
+  val pp_cert_usage : cert_usage Fmt.t
+
+  type selector =
+    | Full_certificate
+    | Subject_public_key_info
+    | Private
+
+  val selector_to_int : selector -> int
+  val int_to_selector : int -> selector option
+  val pp_selector : selector Fmt.t
+
+  type matching_type =
+    | No_hash
+    | SHA256
+    | SHA512
+
+  val matching_type_to_int : matching_type -> int
+  val int_to_matching_type : int -> matching_type option
+  val pp_matching_type : matching_type Fmt.t
+
+  type t = {
+    cert_usage : cert_usage ;
+    selector : selector ;
+    matching_type : matching_type ;
+    data : Cstruct.t ;
+  }
 
   val pp : t Fmt.t
 
   val compare : t -> t -> int
 end
 
-(* secure shell fingerprint *)
+(** Secure shell fingerprint
+
+    The secure shell (SSH) applies trust on first use, and can store
+   fingerprints as SSHFP records in DNS, which is then used as a second
+   channel. *)
 module Sshfp : sig
+  type algorithm =
+    | Rsa
+    | Dsa
+    | Ecdsa
+    | Ed25519
+
+  val algorithm_to_int : algorithm -> int
+  val int_to_algorithm : int -> algorithm option
+  val pp_algorithm : algorithm Fmt.t
+
+  type typ =
+    | SHA1
+    | SHA256
+
+  val typ_to_int : typ -> int
+  val int_to_typ : int -> typ option
+  val pp_typ : typ Fmt.t
+
   type t = {
-    sshfp_algorithm : Udns_enum.sshfp_algorithm ;
-    sshfp_type : Udns_enum.sshfp_type ;
-    sshfp_fingerprint : Cstruct.t ;
+    algorithm : algorithm ;
+    typ : typ ;
+    fingerprint : Cstruct.t ;
   }
 
   val pp : t Fmt.t
@@ -201,7 +375,7 @@ module Sshfp : sig
   val compare : t -> t -> int
 end
 
-(* Text record *)
+(** Text records *)
 module Txt : sig
   type t = string
 
@@ -210,6 +384,12 @@ module Txt : sig
   val compare : t -> t -> int
 end
 
+
+(** Transaction signature
+
+    A transaction signature is a resource record that authenticates a DNS
+    packet. Its nature is not to persist in databases, but it is handled
+    specially during decoding and encoding. *)
 module Tsig : sig
   type algorithm =
     | SHA1
@@ -257,6 +437,12 @@ module Tsig : sig
   val valid_time : Ptime.t -> t -> bool
 end
 
+(** Extensions to DNS
+
+    An extension record (EDNS) is extendable, includes a version number, payload
+    size restrictions, TCP keepalive timers, etc. This is only used in
+    transaction, and not persisted to a store. It is treat specially in decode
+    and encode. *)
 module Edns : sig
   type extension =
     | Nsid of Cstruct.t
@@ -287,11 +473,10 @@ module Edns : sig
 
 end
 
-(* resource record map *)
+(** A map whose key are record types and their values are the time-to-live and
+    the record set. The relation between key and value type is restricted by the
+    below defined GADT. *)
 module Rr_map : sig
-(** A map whose key are DNS resource record types and their values are the time
-   to live and the resource record. This module uses a GADT to express the
-   binding between record type and resource record. *)
 
   module Mx_set : Set.S with type elt = Mx.t
   module Txt_set : Set.S with type elt = Txt.t
@@ -319,10 +504,9 @@ module Rr_map : sig
     | Txt : (int32 * Txt_set.t) k
 
   val equal_k : 'a k -> 'a -> 'b k -> 'b -> bool
+  (** [equal_k k v k' v'] is [true] if [k = k'] and [v = v'], [false] otherwise. *)
 
   include Gmap.S with type 'a key = 'a k
-
-  (** {2 Conversion functions} *)
 
   val to_rr_typ : b -> Udns_enum.rr_typ
   (** [to_rr_typ b] is the resource record typ of [b]. *)
@@ -353,17 +537,30 @@ module Rr_map : sig
       [domain-name]. *)
 
   val subtract_k : 'a k -> 'a -> 'a -> 'a option
+  (** [subtract_k k v rem] removes [rem] from [v]. If the result is an empty set,
+     [None] is returned. *)
 
   val combine_k : 'a k -> 'a -> 'a -> 'a
+  (** [combine_k k old new] combines [old] with [new]. [new] always wins. *)
+
   val combine_opt : 'a k -> 'a -> 'a option -> 'a option
+  (** [combine_opt k new old] is [new] if [old] is [None], otherwise [combine_k k old v]. *)
 
   val text : ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> 'a k -> 'a -> string
+  (** [text ~origin ~default_ttl name k v] is the zone file data for [k, v]. *)
 
   val get_ttl : b -> int32
+  (** [get_ttl b] returns the time-to-live of [b]. *)
+
   val with_ttl : b -> int32 -> b
+  (** [with_ttl b ttl] updates [ttl] in [b]. *)
 
 end
 
+(** Name resource record map
+
+    This map uses the resource record map above as value in a domain name map.
+    Common DNS queries and answers have this structure as their value. *)
 module Name_rr_map : sig
 
   type t = Rr_map.t Domain_name.Map.t
@@ -380,6 +577,10 @@ module Name_rr_map : sig
   val remove_sub : t -> t -> t
 end
 
+(** The DNS packet.
+
+    Encoding and decoding from binary. Definition of types for multiple DNS
+   operations.  *)
 module Packet : sig
 
   type err = [

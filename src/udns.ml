@@ -144,6 +144,19 @@ module Soa = struct
     minimum : int32 ;
   }
 
+  let default_refresh = 86400l (* 24 hours *)
+  let default_retry = 7200l (* 2 hours *)
+  let default_expiry = 3600000l (* 1000 hours *)
+  let default_minimum = 3600l (* 1 hour *)
+
+  let create ?(serial = 0l) ?(refresh = default_refresh) ?(retry = default_retry)
+      ?(expiry = default_expiry) ?(minimum = default_minimum) ?hostmaster nameserver =
+    let hostmaster = match hostmaster with
+      | None -> Domain_name.(prepend_exn (drop_labels_exn nameserver) "hostmaster")
+      | Some x -> x
+    in
+    { nameserver ; hostmaster ; serial ; refresh ; retry ; expiry ; minimum }
+
   let pp ppf soa =
     Fmt.pf ppf "SOA %a %a %lu %lu %lu %lu %lu"
       Domain_name.pp soa.nameserver Domain_name.pp soa.hostmaster
@@ -327,15 +340,63 @@ end
 
 (* DNS key *)
 module Dnskey = struct
+
+  (* 8 bit *)
+  type algorithm =
+    | MD5 | SHA1 | SHA224 | SHA256 | SHA384 | SHA512
+
+  let algorithm_to_int = function
+    | MD5 -> 157
+    | SHA1 -> 161
+    | SHA224 -> 162
+    | SHA256 -> 163
+    | SHA384 -> 164
+    | SHA512 -> 165
+  let int_to_algorithm = function
+    | 157 -> Some MD5
+    | 161 -> Some SHA1
+    | 162 -> Some SHA224
+    | 163 -> Some SHA256
+    | 164 -> Some SHA384
+    | 165 -> Some SHA512
+    | _ -> None
+  let algorithm_to_string = function
+    | MD5 -> "MD5"
+    | SHA1 -> "SHA1"
+    | SHA224 -> "SHA224"
+    | SHA256 -> "SHA256"
+    | SHA384 -> "SHA384"
+    | SHA512 -> "SHA512"
+  let string_to_algorithm = function
+    | "MD5" -> Some MD5
+    | "SHA1" -> Some SHA1
+    | "SHA224" -> Some SHA224
+    | "SHA256" -> Some SHA256
+    | "SHA384" -> Some SHA384
+    | "SHA512" -> Some SHA512
+    | _ -> None
+
+  let algorithm_b64_len k =
+    let b64 bits = (bits / 8 + 2) / 3 * 4 in
+    match k with
+    | MD5 -> b64 128
+    | SHA1 -> b64 160
+    | SHA224 -> b64 224
+    | SHA256 -> b64 256
+    | SHA384 -> b64 384
+    | SHA512 -> b64 512
+
+  let pp_algorithm ppf k = Fmt.string ppf (algorithm_to_string k)
+
   type t = {
     flags : int ; (* uint16 *)
-    algorithm :  Udns_enum.dnskey ; (* u_int8_t *)
+    algorithm : algorithm ; (* u_int8_t *)
     key : Cstruct.t ;
   }
 
   let pp ppf t =
     Fmt.pf ppf "DNSKEY flags %u algo %a key %a"
-      t.flags Udns_enum.pp_dnskey t.algorithm
+      t.flags pp_algorithm t.algorithm
       Cstruct.hexdump_pp t.key
 
   let compare a b =
@@ -349,17 +410,17 @@ module Dnskey = struct
     and algo = Cstruct.get_uint8 buf (off + 3)
     in
     guard (proto = 3) (`Invalid (off + 2, "dnskey protocol", proto)) >>= fun () ->
-    match Udns_enum.int_to_dnskey algo with
+    match int_to_algorithm algo with
     | None -> Error (`Invalid (off + 3, "dnskey algorithm", algo))
     | Some algorithm ->
-      let len = Udns_enum.dnskey_len algorithm in
+      let len = algorithm_b64_len algorithm in
       let key = Cstruct.sub buf (off + 4) len in
       Ok ({ flags ; algorithm ; key }, names, off + len + 4)
 
   let encode t names buf off =
     Cstruct.BE.set_uint16 buf off t.flags ;
     Cstruct.set_uint8 buf (off + 2) 3 ;
-    Cstruct.set_uint8 buf (off + 3) (Udns_enum.dnskey_to_int t.algorithm) ;
+    Cstruct.set_uint8 buf (off + 3) (algorithm_to_int t.algorithm) ;
     let kl = Cstruct.len t.key in
     Cstruct.blit t.key 0 buf (off + 4) kl ;
     names, off + 4 + kl
@@ -367,7 +428,7 @@ module Dnskey = struct
   let of_string key =
     let parse flags algo key =
       let key = Cstruct.of_string key in
-      match Udns_enum.string_to_dnskey algo with
+      match string_to_algorithm algo with
       | None -> None
       | Some algorithm -> Some { flags ; algorithm ; key }
     in
@@ -433,25 +494,96 @@ end
 
 (* transport layer security A *)
 module Tlsa = struct
+
+  (* 8 bit *)
+  type cert_usage =
+    | CA_constraint
+    | Service_certificate_constraint
+    | Trust_anchor_assertion
+    | Domain_issued_certificate
+
+  let cert_usage_to_int = function
+    | CA_constraint -> 0
+    | Service_certificate_constraint -> 1
+    | Trust_anchor_assertion -> 2
+    | Domain_issued_certificate -> 3
+  let int_to_cert_usage = function
+    | 0 -> Some CA_constraint
+    | 1 -> Some Service_certificate_constraint
+    | 2 -> Some Trust_anchor_assertion
+    | 3 -> Some Domain_issued_certificate
+    | _ -> None
+  let cert_usage_to_string = function
+    | CA_constraint -> "CA constraint"
+    | Service_certificate_constraint -> "service certificate constraint"
+    | Trust_anchor_assertion -> "trust anchor assertion"
+    | Domain_issued_certificate -> "domain issued certificate"
+
+  let pp_cert_usage ppf k = Fmt.string ppf (cert_usage_to_string k)
+
+  (* 8 bit *)
+  type selector =
+    | Full_certificate
+    | Subject_public_key_info
+    | Private
+
+  let selector_to_int = function
+    | Full_certificate -> 0
+    | Subject_public_key_info -> 1
+    | Private -> 255
+  let int_to_selector = function
+    | 0 -> Some Full_certificate
+    | 1 -> Some Subject_public_key_info
+    | 255 -> Some Private
+    | _ -> None
+  let selector_to_string = function
+    | Full_certificate -> "full certificate"
+    | Subject_public_key_info -> "subject public key info"
+    | Private -> "private"
+
+  let pp_selector ppf k = Fmt.string ppf (selector_to_string k)
+
+  (* 8 bit *)
+  type matching_type =
+    | No_hash
+    | SHA256
+    | SHA512
+
+  let matching_type_to_int = function
+    | No_hash -> 0
+    | SHA256 -> 1
+    | SHA512 -> 2
+  let int_to_matching_type = function
+    | 0 -> Some No_hash
+    | 1 -> Some SHA256
+    | 2 -> Some SHA512
+    | _ -> None
+  let matching_type_to_string = function
+    | No_hash -> "no hash"
+    | SHA256 -> "SHA256"
+    | SHA512 -> "SHA512"
+
+  let pp_matching_type ppf k = Fmt.string ppf (matching_type_to_string k)
+
   type t = {
-    tlsa_cert_usage : Udns_enum.tlsa_cert_usage ;
-    tlsa_selector : Udns_enum.tlsa_selector ;
-    tlsa_matching_type : Udns_enum.tlsa_matching_type ;
-    tlsa_data : Cstruct.t ;
+    cert_usage : cert_usage ;
+    selector : selector ;
+    matching_type : matching_type ;
+    data : Cstruct.t ;
   }
 
   let pp ppf tlsa =
     Fmt.pf ppf "TLSA @[<v>%a %a %a@ %a@]"
-      Udns_enum.pp_tlsa_cert_usage tlsa.tlsa_cert_usage
-      Udns_enum.pp_tlsa_selector tlsa.tlsa_selector
-      Udns_enum.pp_tlsa_matching_type tlsa.tlsa_matching_type
-      Cstruct.hexdump_pp tlsa.tlsa_data
+      pp_cert_usage tlsa.cert_usage
+      pp_selector tlsa.selector
+      pp_matching_type tlsa.matching_type
+      Cstruct.hexdump_pp tlsa.data
 
   let compare t1 t2 =
-    andThen (compare t1.tlsa_cert_usage t2.tlsa_cert_usage)
-      (andThen (compare t1.tlsa_selector t2.tlsa_selector)
-         (andThen (compare t1.tlsa_matching_type t2.tlsa_matching_type)
-            (Cstruct.compare t1.tlsa_data t2.tlsa_data)))
+    andThen (compare t1.cert_usage t2.cert_usage)
+      (andThen (compare t1.selector t2.selector)
+         (andThen (compare t1.matching_type t2.matching_type)
+            (Cstruct.compare t1.data t2.data)))
 
   let decode names buf ~off ~len =
     let usage, selector, matching_type =
@@ -459,62 +591,107 @@ module Tlsa = struct
       Cstruct.get_uint8 buf (off + 1),
       Cstruct.get_uint8 buf (off + 2)
     in
-    let tlsa_data = Cstruct.sub buf (off + 3) (len - 3) in
-    match
-      Udns_enum.int_to_tlsa_cert_usage usage,
-      Udns_enum.int_to_tlsa_selector selector,
-      Udns_enum.int_to_tlsa_matching_type matching_type
-    with
-    | Some tlsa_cert_usage, Some tlsa_selector, Some tlsa_matching_type ->
-      let tlsa = { tlsa_cert_usage ; tlsa_selector ; tlsa_matching_type ; tlsa_data } in
+    let data = Cstruct.sub buf (off + 3) (len - 3) in
+    match int_to_cert_usage usage, int_to_selector selector, int_to_matching_type matching_type with
+    | Some cert_usage, Some selector, Some matching_type ->
+      let tlsa = { cert_usage ; selector ; matching_type ; data } in
       Ok (tlsa, names, off + len)
     | None, _, _ -> Error (`Invalid (off, "tlsa cert usage", usage))
     | _, None, _ -> Error (`Invalid (off + 1, "tlsa selector", selector))
     | _, _, None -> Error (`Invalid (off + 2, "tlsa matching type", matching_type))
 
   let encode tlsa names buf off =
-    Cstruct.set_uint8 buf off (Udns_enum.tlsa_cert_usage_to_int tlsa.tlsa_cert_usage) ;
-    Cstruct.set_uint8 buf (off + 1) (Udns_enum.tlsa_selector_to_int tlsa.tlsa_selector) ;
-    Cstruct.set_uint8 buf (off + 2) (Udns_enum.tlsa_matching_type_to_int tlsa.tlsa_matching_type) ;
-    let l = Cstruct.len tlsa.tlsa_data in
-    Cstruct.blit tlsa.tlsa_data 0 buf (off + 3) l ;
+    Cstruct.set_uint8 buf off (cert_usage_to_int tlsa.cert_usage) ;
+    Cstruct.set_uint8 buf (off + 1) (selector_to_int tlsa.selector) ;
+    Cstruct.set_uint8 buf (off + 2) (matching_type_to_int tlsa.matching_type) ;
+    let l = Cstruct.len tlsa.data in
+    Cstruct.blit tlsa.data 0 buf (off + 3) l ;
     names, off + 3 + l
 end
 
 (* secure shell fingerprint *)
 module Sshfp = struct
+
+  (* 8 bit *)
+  type algorithm =
+    | Rsa
+    | Dsa
+    | Ecdsa
+    | Ed25519
+
+  let algorithm_to_int = function
+    | Rsa -> 1
+    | Dsa -> 2
+    | Ecdsa -> 3
+    | Ed25519 -> 4
+
+  let int_to_algorithm = function
+    | 1 -> Some Rsa
+    | 2 -> Some Dsa
+    | 3 -> Some Ecdsa
+    | 4 -> Some Ed25519
+    | _ -> None
+
+  let algorithm_to_string = function
+    | Rsa -> "RSA"
+    | Dsa -> "DSA"
+    | Ecdsa -> "ECDSA"
+    | Ed25519 -> "ED25519"
+
+  let pp_algorithm ppf k = Fmt.string ppf (algorithm_to_string k)
+
+  (* 8 bit *)
+  type typ =
+    | SHA1
+    | SHA256
+
+  let typ_to_int = function
+    | SHA1 -> 1
+    | SHA256 -> 2
+
+  let int_to_typ = function
+    | 1 -> Some SHA1
+    | 2 -> Some SHA256
+    | _ -> None
+
+  let typ_to_string = function
+    | SHA1 -> "SHA1"
+    | SHA256 -> "SHA256"
+
+  let pp_typ ppf k = Fmt.string ppf (typ_to_string k)
+
   type t = {
-    sshfp_algorithm : Udns_enum.sshfp_algorithm ;
-    sshfp_type : Udns_enum.sshfp_type ;
-    sshfp_fingerprint : Cstruct.t ;
+    algorithm : algorithm ;
+    typ : typ ;
+    fingerprint : Cstruct.t ;
   }
 
   let pp ppf sshfp =
     Fmt.pf ppf "SSHFP %a %a %a"
-      Udns_enum.pp_sshfp_algorithm sshfp.sshfp_algorithm
-      Udns_enum.pp_sshfp_type sshfp.sshfp_type
-      Cstruct.hexdump_pp sshfp.sshfp_fingerprint
+      pp_algorithm sshfp.algorithm
+      pp_typ sshfp.typ
+      Cstruct.hexdump_pp sshfp.fingerprint
 
   let compare s1 s2 =
-    andThen (compare s1.sshfp_algorithm s2.sshfp_algorithm)
-      (andThen (compare s1.sshfp_type s2.sshfp_type)
-         (Cstruct.compare s1.sshfp_fingerprint s2.sshfp_fingerprint))
+    andThen (compare s1.algorithm s2.algorithm)
+      (andThen (compare s1.typ s2.typ)
+         (Cstruct.compare s1.fingerprint s2.fingerprint))
 
   let decode names buf ~off ~len =
     let algo, typ = Cstruct.get_uint8 buf off, Cstruct.get_uint8 buf (succ off) in
-    let sshfp_fingerprint = Cstruct.sub buf (off + 2) (len - 2) in
-    match Udns_enum.int_to_sshfp_algorithm algo, Udns_enum.int_to_sshfp_type typ with
-    | Some sshfp_algorithm, Some sshfp_type ->
-      let sshfp = { sshfp_algorithm ; sshfp_type ; sshfp_fingerprint } in
+    let fingerprint = Cstruct.sub buf (off + 2) (len - 2) in
+    match int_to_algorithm algo, int_to_typ typ with
+    | Some algorithm, Some typ ->
+      let sshfp = { algorithm ; typ ; fingerprint } in
       Ok (sshfp, names, off + len)
     | None, _ -> Error (`Invalid (off, "sshfp algorithm", algo))
     | _, None -> Error (`Invalid (off + 1, "sshfp type", typ))
 
   let encode sshfp names buf off =
-    Cstruct.set_uint8 buf off (Udns_enum.sshfp_algorithm_to_int sshfp.sshfp_algorithm) ;
-    Cstruct.set_uint8 buf (succ off) (Udns_enum.sshfp_type_to_int sshfp.sshfp_type) ;
-    let l = Cstruct.len sshfp.sshfp_fingerprint in
-    Cstruct.blit sshfp.sshfp_fingerprint 0 buf (off + 2) l ;
+    Cstruct.set_uint8 buf off (algorithm_to_int sshfp.algorithm) ;
+    Cstruct.set_uint8 buf (succ off) (typ_to_int sshfp.typ) ;
+    let l = Cstruct.len sshfp.fingerprint in
+    Cstruct.blit sshfp.fingerprint 0 buf (off + 2) l ;
     names, off + l + 2
 end
 
@@ -820,15 +997,88 @@ module Tsig = struct
 
   let dnskey_to_tsig_algo key =
     match key.Dnskey.algorithm with
-    | Udns_enum.MD5 -> None
-    | Udns_enum.SHA1 -> Some SHA1
-    | Udns_enum.SHA224 -> Some SHA224
-    | Udns_enum.SHA256 -> Some SHA256
-    | Udns_enum.SHA384 -> Some SHA384
-    | Udns_enum.SHA512 -> Some SHA512
+    | Dnskey.MD5 -> None
+    | Dnskey.SHA1 -> Some SHA1
+    | Dnskey.SHA224 -> Some SHA224
+    | Dnskey.SHA256 -> Some SHA256
+    | Dnskey.SHA384 -> Some SHA384
+    | Dnskey.SHA512 -> Some SHA512
 end
 
 module Edns = struct
+
+  (* 16 bit *)
+  type edns_opt =
+    (* 0,Reserved,,[RFC6891] *)
+    | LLQ (* On-hold,[http://files.dns-sd.org/draft-sekar-dns-llq.txt] *)
+    | UL (* On-hold,[http://files.dns-sd.org/draft-sekar-dns-ul.txt] *)
+    | NSID (* NSID,Standard,[RFC5001] *)
+    (* 4,Reserved,,[draft-cheshire-edns0-owner-option] *)
+    | DAU (* DAU,Standard,[RFC6975] *)
+    | DHU (* DHU,Standard,[RFC6975] *)
+    | N3U (* N3U,Standard,[RFC6975] *)
+    | Client_subnet (* edns-client-subnet,Optional,[RFC7871] *)
+    | Expire (* Optional,[RFC7314] *)
+    | Cookie (* COOKIE,Standard,[RFC7873] *)
+    | TCP_keepalive (* edns-tcp-keepalive,Standard,[RFC7828] *)
+    | Padding (* Padding,Standard,[RFC7830] *)
+    | Chain (* CHAIN,Standard,[RFC7901] *)
+    | Key_tag (* edns-key-tag,Optional,[RFC8145] *)
+    (* 15-26945,Unassigned *)
+    | DeviceID (* DeviceID,Optional,[https://docs.umbrella.com/developer/networkdevices-api/identifying-dns-traffic2][Brian_Hartvigsen] *)
+  (* 26947-65000,Unassigned
+     65001-65534,Reserved for Local/Experimental Use,,[RFC6891]
+     65535,Reserved for future expansion,,[RFC6891] *)
+
+  let edns_opt_to_int = function
+    | LLQ -> 1
+    | UL -> 2
+    | NSID -> 3
+    | DAU -> 5
+    | DHU -> 6
+    | N3U -> 7
+    | Client_subnet -> 8
+    | Expire -> 9
+    | Cookie -> 10
+    | TCP_keepalive -> 11
+    | Padding -> 12
+    | Chain -> 13
+    | Key_tag -> 14
+    | DeviceID -> 26946
+  let int_to_edns_opt = function
+    | 1 -> Some LLQ
+    | 2 -> Some UL
+    | 3 -> Some NSID
+    | 5 -> Some DAU
+    | 6 -> Some DHU
+    | 7 -> Some N3U
+    | 8 -> Some Client_subnet
+    | 9 -> Some Expire
+    | 10 -> Some Cookie
+    | 11 -> Some TCP_keepalive
+    | 12 -> Some Padding
+    | 13 -> Some Chain
+    | 14 -> Some Key_tag
+    | 26946 -> Some DeviceID
+    | _ -> None
+  let edns_opt_to_string = function
+    | LLQ -> "LLQ"
+    | UL -> "UL"
+    | NSID -> "NSID"
+    | DAU -> "DAU"
+    | DHU -> "DHU"
+    | N3U -> "N3U"
+    | Client_subnet -> "Client subnet"
+    | Expire -> "Expire"
+    | Cookie -> "Cookie"
+    | TCP_keepalive -> "TCP keepalive"
+    | Padding -> "Padding"
+    | Chain -> "Chain"
+    | Key_tag -> "Key tag"
+    | DeviceID -> "Device ID"
+
+  let pp_edns_opt ppf t = Fmt.string ppf (edns_opt_to_string t)
+
   type extension =
     | Nsid of Cstruct.t
     | Cookie of Cstruct.t
@@ -903,17 +1153,17 @@ module Edns = struct
     let v = Cstruct.sub buf (off + 4) tl in
     guard (len = tl + 4) (`Leftover (off, "edns extension")) >>= fun () ->
     let len = tl + 4 in
-    match Udns_enum.int_to_edns_opt code with
-    | Some Udns_enum.NSID -> Ok (Nsid v, len)
-    | Some Udns_enum.Cookie -> Ok (Cookie v, len)
-    | Some Udns_enum.TCP_keepalive ->
+    match int_to_edns_opt code with
+    | Some NSID -> Ok (Nsid v, len)
+    | Some Cookie -> Ok (Cookie v, len)
+    | Some TCP_keepalive ->
       (begin match tl with
          | 0 -> Ok None
          | 2 -> Ok (Some (Cstruct.BE.get_uint16 v 0))
          | _ -> Error (`Invalid (off, "edns keepalive", tl))
        end >>= fun i ->
        Ok (Tcp_keepalive i, len))
-    | Some Udns_enum.Padding -> Ok (Padding tl, len)
+    | Some Padding -> Ok (Padding tl, len)
     | _ -> Ok (Extension (code, v), len)
 
   let decode_extensions buf ~len =
@@ -950,12 +1200,12 @@ module Edns = struct
     Ok (opt, off + len)
 
   let encode_extension t buf off =
-    let o_i = Udns_enum.edns_opt_to_int in
+    let o_i = edns_opt_to_int in
     let code, v = match t with
-      | Nsid cs -> o_i Udns_enum.NSID, cs
-      | Cookie cs -> o_i Udns_enum.Cookie, cs
-      | Tcp_keepalive i -> o_i Udns_enum.TCP_keepalive, (match i with None -> Cstruct.create 0 | Some i -> let buf = Cstruct.create 2 in Cstruct.BE.set_uint16 buf 0 i ; buf)
-      | Padding i -> o_i Udns_enum.Padding, Cstruct.create i
+      | Nsid cs -> o_i NSID, cs
+      | Cookie cs -> o_i Cookie, cs
+      | Tcp_keepalive i -> o_i TCP_keepalive, (match i with None -> Cstruct.create 0 | Some i -> let buf = Cstruct.create 2 in Cstruct.BE.set_uint16 buf 0 i ; buf)
+      | Padding i -> o_i Padding, Cstruct.create i
       | Extension (t, v) -> t, v
     in
     let l = Cstruct.len v in
@@ -1115,8 +1365,8 @@ module Rr_map = struct
           rr names (Txt.encode txt) off ttl, succ count)
         txts ((names, off), 0)
 
-  let combine_k : type a. a k -> a -> a -> a = fun k v old ->
-    match k, v, old with
+  let combine_k : type a. a k -> a -> a -> a = fun k old v ->
+    match k, old, v with
     | Cname, _, cname -> cname
     | Mx, (_, mxs), (ttl, mxs') -> (ttl, Mx_set.union mxs mxs')
     | Ns, (_, ns), (ttl, ns') -> (ttl, Domain_name.Set.union ns ns')
@@ -1134,9 +1384,9 @@ module Rr_map = struct
   let combine_opt : type a. a k -> a -> a option -> a option = fun k v old ->
     match v, old with
     | v, None -> Some v
-    | v, Some old -> Some (combine_k k v old)
+    | v, Some old -> Some (combine_k k old v)
 
-let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
+  let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
     match k, v, rem with
     | Cname, _, _ -> None
     | Mx, (ttl, mxs), (_, rm) ->
@@ -1249,7 +1499,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
             Fmt.strf "%s%a\tDNSKEY\t%u\t3\t%d\t%s"
               str_name ttl_fmt (ttl_opt ttl)
               key.flags
-              (Udns_enum.dnskey_to_int key.algorithm)
+              (Dnskey.algorithm_to_int key.algorithm)
               (hex key.key) :: acc)
           keys []
       | Caa, (ttl, caas) ->
@@ -1263,17 +1513,17 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
         Tlsa_set.fold (fun tlsa acc ->
             Fmt.strf "%s\t%aTLSA\t%u\t%u\t%u\t%s"
               str_name ttl_fmt (ttl_opt ttl)
-              (Udns_enum.tlsa_cert_usage_to_int tlsa.tlsa_cert_usage)
-              (Udns_enum.tlsa_selector_to_int tlsa.tlsa_selector)
-              (Udns_enum.tlsa_matching_type_to_int tlsa.tlsa_matching_type)
-              (hex tlsa.tlsa_data) :: acc)
+              (Tlsa.cert_usage_to_int tlsa.cert_usage)
+              (Tlsa.selector_to_int tlsa.selector)
+              (Tlsa.matching_type_to_int tlsa.matching_type)
+              (hex tlsa.data) :: acc)
           tlsas []
       | Sshfp, (ttl, sshfps) ->
         Sshfp_set.fold (fun sshfp acc ->
             Fmt.strf "%s\t%aSSHFP\t%u\t%u\t%s" str_name ttl_fmt (ttl_opt ttl)
-              (Udns_enum.sshfp_algorithm_to_int sshfp.sshfp_algorithm)
-              (Udns_enum.sshfp_type_to_int sshfp.sshfp_type)
-              (hex sshfp.sshfp_fingerprint) :: acc)
+              (Sshfp.algorithm_to_int sshfp.algorithm)
+              (Sshfp.typ_to_int sshfp.typ)
+              (hex sshfp.fingerprint) :: acc)
           sshfps []
     in
     String.concat "\n" strs
@@ -2191,7 +2441,7 @@ module Packet = struct
       hdr.Header.operation = hdr'.Header.operation,
       (if not_error then hdr'.Header.rcode = Udns_enum.NoError else true),
       (if not_truncated then not (Header.FS.mem `Truncation hdr'.Header.flags) else true),
-      Question.compare q q' = 0
+      Question.compare q q' = 0 (* TODO here we should in most cases be happy to do _case-sensitive_ comparison! *)
     with
     | true, false, true, true, true, true -> true
     | false, _ ,_, _, _, _ ->

@@ -479,7 +479,7 @@ let handle_rr_update trie name = function
   | Packet.Update.Add Rr_map.(B (k, add) as b) ->
     begin match Udns_trie.lookup name k trie with
       | Ok old ->
-        let newval = Rr_map.combine_k k add old in
+        let newval = Rr_map.combine_k k old add in
         Log.info (fun m -> m "added %a: %a (stored %a), now %a"
                      Domain_name.pp name Rr_map.pp_b b Rr_map.pp_b (Rr_map.B (k, old))
                      Rr_map.pp_b (Rr_map.B (k, newval))) ;

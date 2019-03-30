@@ -13,12 +13,12 @@ let pp_zone_tlsa ppf (domain,ttl,(tlsa:Udns.Tlsa.t)) =
   Fmt.pf ppf "%a.\t%ld\tIN\t%d\t%d\t%d\t%s"
     Domain_name.pp domain
     ttl
-    (Udns_enum.tlsa_cert_usage_to_int tlsa.tlsa_cert_usage)
-    (Udns_enum.tlsa_selector_to_int tlsa.tlsa_selector)
-    (Udns_enum.tlsa_matching_type_to_int tlsa.tlsa_matching_type)
+    (Udns.Tlsa.cert_usage_to_int tlsa.cert_usage)
+    (Udns.Tlsa.selector_to_int tlsa.selector)
+    (Udns.Tlsa.matching_type_to_int tlsa.matching_type)
     ( (* this produces output similar to `dig`, splitting the hex string
          in chunks of 56 chars (28 bytes): *)
-      let `Hex hex = Hex.of_cstruct tlsa.tlsa_data in
+      let `Hex hex = Hex.of_cstruct tlsa.data in
       let hlen = String.length hex in
       let rec loop acc = function
         | n when n + 56 >= hlen ->
