@@ -38,10 +38,10 @@ val create : Udns_trie.t -> Authentication.t -> (int -> Cstruct.t) ->
 val text : Domain_name.t -> t -> (string, string) result
 (** [text name t] results in a string representation (zonefile) of the server. *)
 
-val handle_query : t -> proto -> Domain_name.t option -> Packet.Header.t ->
-  Packet.Query.t ->
-  (Packet.Header.t * Packet.t, Udns_enum.rcode) result
-(** [handle_query t proto key_name header query] handles the DNS query,
+val handle_question : t -> proto -> Domain_name.t option -> Packet.Header.t ->
+  Packet.Question.t ->
+  (Packet.Header.t * Packet.t * Udns.Name_rr_map.t option, Udns_enum.rcode) result
+(** [handle_question t proto key_name header query] handles the DNS query,
    respecting the current state: a whitelist of record types are looked up: A |
    NS | CNAME | SOA | PTR | MX | TXT | AAAA | SRV | ANY | CAA | SSHFP | TLSA |
    DNSKEY. Zone transfer need to be authorised. If a `Key-management key was used
@@ -49,14 +49,14 @@ val handle_query : t -> proto -> Domain_name.t option -> Packet.Header.t ->
 
 val notify : t -> (Domain_name.t * Ipaddr.V4.t * int) list -> int64 ->
   Domain_name.t -> Soa.t ->
-  (int64 * int * Ipaddr.V4.t * int * Packet.Header.t * Packet.Query.t) list
+  (int64 * int * Ipaddr.V4.t * int * (Packet.Header.t * Packet.Question.t * Packet.t)) list
 (** [notify t active_conns now zone soa] creates notifications for [zone]:
     all secondaries with glue in the server state for [zone],
     all matching [active_conns] of the [zone], and all secondaries where a key
     is in the server state with IP addresses in their names. *)
 
 val handle_tsig : ?mac:Cstruct.t -> t -> Ptime.t -> Packet.Header.t ->
-   Packet.t -> (Domain_name.t * Tsig.t * int) option ->
+   Packet.Question.t -> (Domain_name.t * Tsig.t * int) option ->
    Cstruct.t -> ((Domain_name.t * Tsig.t * Cstruct.t *
    Dnskey.t) option, Cstruct.t option) result
 (** [handle_tsig ~mac t now hdr v tsig offset buffer] verifies the tsig
@@ -82,8 +82,9 @@ module Primary : sig
   (** [create ~keys ~a ~tsig_verify ~tsig_sign ~rng data] creates a primary server. *)
 
   val handle_frame : s -> int64 -> Ipaddr.V4.t -> int -> Udns.proto ->
-    Domain_name.t option -> Packet.Header.t -> Packet.t ->
-    (s * (Packet.Header.t * Packet.t) option * (Ipaddr.V4.t * int * Cstruct.t) list * [ `Notify | `Signed_notify ] option,
+    Domain_name.t option -> Packet.Header.t -> Packet.Question.t -> Packet.t ->
+    Name_rr_map.t ->
+    (s * (Packet.Header.t * Packet.t * Name_rr_map.t option) option * (Ipaddr.V4.t * int * Cstruct.t) list * [ `Notify | `Signed_notify ] option,
      Udns_enum.rcode) result
   (** [handle_frame s now src src_port proto key hdr v] handles the given
      [frame], returning new state, an answer, and potentially notify packets to
@@ -128,8 +129,8 @@ module Secondary : sig
      DNS server state. *)
 
   val handle_frame : s -> Ptime.t -> int64 -> Ipaddr.V4.t -> proto ->
-    Domain_name.t option -> Packet.Header.t -> Packet.t ->
-    (s * (Packet.Header.t * Packet.t) option * (proto * Ipaddr.V4.t * int * Cstruct.t) list,
+    Domain_name.t option -> Packet.Header.t -> Packet.Question.t -> Packet.t -> Name_rr_map.t ->
+    (s * (Packet.Header.t * Packet.t * Name_rr_map.t option) option * (proto * Ipaddr.V4.t * int * Cstruct.t) list,
      Udns_enum.rcode) result
   (** [handle_frame s now ts ip proto key hdr v] handles the incoming frame. *)
 

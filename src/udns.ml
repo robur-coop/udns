@@ -175,15 +175,15 @@ module Soa = struct
     in
     (soa, names, off + 20)
 
-  let encode soa offs buf off =
-    let offs, off = Name.encode soa.nameserver offs buf off in
-    let offs, off = Name.encode soa.hostmaster offs buf off in
+  let encode soa names buf off =
+    let names, off = Name.encode soa.nameserver names buf off in
+    let names, off = Name.encode soa.hostmaster names buf off in
     Cstruct.BE.set_uint32 buf off soa.serial ;
     Cstruct.BE.set_uint32 buf (off + 4) soa.refresh ;
     Cstruct.BE.set_uint32 buf (off + 8) soa.retry ;
     Cstruct.BE.set_uint32 buf (off + 12) soa.expiry ;
     Cstruct.BE.set_uint32 buf (off + 16) soa.minimum ;
-    offs, off + 20
+    names, off + 20
 end
 
 (* name server *)
@@ -219,9 +219,9 @@ module Mx = struct
     Name.decode ~hostname:false names buf ~off:(off + 2) >>| fun (mx, names, off) ->
     { preference ; mail_exchange = mx }, names, off
 
-  let encode { preference ; mail_exchange } offs buf off =
+  let encode { preference ; mail_exchange } names buf off =
     Cstruct.BE.set_uint16 buf off preference ;
-    Name.encode mail_exchange offs buf (off + 2)
+    Name.encode mail_exchange names buf (off + 2)
 end
 
 (* canonical name *)
@@ -249,10 +249,10 @@ module A = struct
     let ip = Cstruct.BE.get_uint32 buf off in
     Ok (Ipaddr.V4.of_int32 ip, names, off + 4)
 
-  let encode ip offs buf off =
+  let encode ip names buf off =
     let ip = Ipaddr.V4.to_int32 ip in
     Cstruct.BE.set_uint32 buf off ip ;
-    offs, off + 4
+    names, off + 4
 end
 
 (* quad-a record *)
@@ -269,11 +269,11 @@ module Aaaa = struct
     in
     Ok (Ipaddr.V6.of_int64 (iph, ipl), names, off + 16)
 
-  let encode ip offs buf off =
+  let encode ip names buf off =
     let iph, ipl = Ipaddr.V6.to_int64 ip in
     Cstruct.BE.set_uint64 buf off iph ;
     Cstruct.BE.set_uint64 buf (off + 8) ipl ;
-    offs, off + 16
+    names, off + 16
 end
 
 (* domain name pointer - reverse entries *)
@@ -318,11 +318,11 @@ module Srv = struct
     Name.decode names buf ~off:(off + 6) >>= fun (target, names, off) ->
     Ok ({ priority ; weight ; port ; target }, names, off)
 
-  let encode t offs buf off =
+  let encode t names buf off =
     Cstruct.BE.set_uint16 buf off t.priority ;
     Cstruct.BE.set_uint16 buf (off + 2) t.weight ;
     Cstruct.BE.set_uint16 buf (off + 4) t.port ;
-    Name.encode t.target offs buf (off + 6)
+    Name.encode t.target names buf (off + 6)
 end
 
 (* DNS key *)
@@ -356,13 +356,13 @@ module Dnskey = struct
       let key = Cstruct.sub buf (off + 4) len in
       Ok ({ flags ; algorithm ; key }, names, off + len + 4)
 
-  let encode t offs buf off =
+  let encode t names buf off =
     Cstruct.BE.set_uint16 buf off t.flags ;
     Cstruct.set_uint8 buf (off + 2) 3 ;
     Cstruct.set_uint8 buf (off + 3) (Udns_enum.dnskey_to_int t.algorithm) ;
     let kl = Cstruct.len t.key in
     Cstruct.blit t.key 0 buf (off + 4) kl ;
-    offs, off + 4 + kl
+    names, off + 4 + kl
 
   let of_string key =
     let parse flags algo key =
@@ -420,7 +420,7 @@ module Caa = struct
     let value = Astring.String.cuts ~sep:";" (Cstruct.to_string value) in
     Ok ({ critical ; tag ; value }, names, off + len)
 
-  let encode t offs buf off =
+  let encode t names buf off =
     Cstruct.set_uint8 buf off (if t.critical then 0x80 else 0x0) ;
     let tl = String.length t.tag in
     Cstruct.set_uint8 buf (succ off) tl ;
@@ -428,7 +428,7 @@ module Caa = struct
     let value = Astring.String.concat ~sep:";" t.value in
     let vl = String.length value in
     Cstruct.blit_from_string value 0 buf (off + 2 + tl) vl ;
-    offs, off + tl + 2 + vl
+    names, off + tl + 2 + vl
 end
 
 (* transport layer security A *)
@@ -472,13 +472,13 @@ module Tlsa = struct
     | _, None, _ -> Error (`Invalid (off + 1, "tlsa selector", selector))
     | _, _, None -> Error (`Invalid (off + 2, "tlsa matching type", matching_type))
 
-  let encode tlsa offs buf off =
+  let encode tlsa names buf off =
     Cstruct.set_uint8 buf off (Udns_enum.tlsa_cert_usage_to_int tlsa.tlsa_cert_usage) ;
     Cstruct.set_uint8 buf (off + 1) (Udns_enum.tlsa_selector_to_int tlsa.tlsa_selector) ;
     Cstruct.set_uint8 buf (off + 2) (Udns_enum.tlsa_matching_type_to_int tlsa.tlsa_matching_type) ;
     let l = Cstruct.len tlsa.tlsa_data in
     Cstruct.blit tlsa.tlsa_data 0 buf (off + 3) l ;
-    offs, off + 3 + l
+    names, off + 3 + l
 end
 
 (* secure shell fingerprint *)
@@ -510,12 +510,12 @@ module Sshfp = struct
     | None, _ -> Error (`Invalid (off, "sshfp algorithm", algo))
     | _, None -> Error (`Invalid (off + 1, "sshfp type", typ))
 
-  let encode sshfp offs buf off =
+  let encode sshfp names buf off =
     Cstruct.set_uint8 buf off (Udns_enum.sshfp_algorithm_to_int sshfp.sshfp_algorithm) ;
     Cstruct.set_uint8 buf (succ off) (Udns_enum.sshfp_type_to_int sshfp.sshfp_type) ;
     let l = Cstruct.len sshfp.sshfp_fingerprint in
     Cstruct.blit sshfp.sshfp_fingerprint 0 buf (off + 2) l ;
-    offs, off + l + 2
+    names, off + l + 2
 end
 
 (* Text record *)
@@ -543,11 +543,11 @@ module Txt = struct
     let txts = more [] 0 in
     Ok (txts, names, off + len)
 
-  let encode txt offs buf off =
+  let encode txt names buf off =
     let len = String.length txt in
     Cstruct.set_uint8 buf off len ;
     Cstruct.blit_from_string txt 0 buf (succ off) len ;
-    offs, off + len + 1
+    names, off + len + 1
 end
 
 module Tsig = struct
@@ -740,9 +740,9 @@ module Tsig = struct
         Cstruct.BE.set_uint16 buf off a
 
   (* TODO unused -- why? *)
-  let encode t offs buf off =
+  let encode t names buf off =
     let algo = algorithm_to_name t.algorithm in
-    let offs, off = Name.encode ~compress:false algo offs buf off in
+    let names, off = Name.encode ~compress:false algo names buf off in
     encode_48bit_time buf ~off t.signed ;
     encode_16bit_time buf ~off:(off + 6) t.fudge ;
     let mac_len = Cstruct.len t.mac in
@@ -755,7 +755,7 @@ module Tsig = struct
     (match t.other with
      | None -> ()
      | Some t -> encode_48bit_time buf ~off:(off + 16 + mac_len) t) ;
-    offs, off + 16 + mac_len + other_len
+    names, off + 16 + mac_len + other_len
 
   let canonical_name name =
     let buf = Cstruct.create 255
@@ -901,6 +901,7 @@ module Edns = struct
     and tl = Cstruct.BE.get_uint16 buf (off + 2)
     in
     let v = Cstruct.sub buf (off + 4) tl in
+    guard (len = tl + 4) (`Leftover (off, "edns extension")) >>= fun () ->
     let len = tl + 4 in
     match Udns_enum.int_to_edns_opt code with
     | Some Udns_enum.NSID -> Ok (Nsid v, len)
@@ -989,11 +990,11 @@ module Edns = struct
     Cstruct.sub buf 0 off
 end
 
-let encode_ntc offs buf off (n, t, c) =
-  let offs, off = Name.encode n offs buf off in
+let encode_ntc names buf off (n, t, c) =
+  let names, off = Name.encode n names buf off in
   Cstruct.BE.set_uint16 buf off (Udns_enum.rr_typ_to_int t) ;
   Cstruct.BE.set_uint16 buf (off + 2) c ;
-  (offs, off + 4)
+  names, off + 4
 
 (* resource record map *)
 module Rr_map = struct
@@ -1055,66 +1056,64 @@ module Rr_map = struct
     | Sshfp -> Udns_enum.SSHFP
 
   let encode : type a. ?clas:Udns_enum.clas -> Domain_name.t -> a k -> a -> Name.name_offset_map -> Cstruct.t -> int ->
-    (Name.name_offset_map * int) * int = fun ?(clas = Udns_enum.IN) name k v offs buf off ->
+    (Name.name_offset_map * int) * int = fun ?(clas = Udns_enum.IN) name k v names buf off ->
     let typ = k_to_rr_typ k
     and clas = Udns_enum.clas_to_int clas
     in
-    let rr offs f off ttl =
-      let offs', off' = encode_ntc offs buf off (name, typ, clas) in
+    let rr names f off ttl =
+      let names, off' = encode_ntc names buf off (name, typ, clas) in
       (* leave 6 bytes space for TTL and length *)
       let rdata_start = off' + 6 in
-      let offs'', rdata_end = f offs' buf rdata_start in
+      let names, rdata_end = f names buf rdata_start in
       let rdata_len = rdata_end - rdata_start in
       Cstruct.BE.set_uint32 buf off' ttl ;
       Cstruct.BE.set_uint16 buf (off' + 4) rdata_len ;
-      (offs'', rdata_end)
+      names, rdata_end
     in
     match k, v with
-    | Soa, soa -> rr offs (Soa.encode soa) off soa.minimum, 1
+    | Soa, soa -> rr names (Soa.encode soa) off soa.minimum, 1
     | Ns, (ttl, ns) ->
-      Domain_name.Set.fold (fun name ((offs, off), count) ->
-          rr offs (Ns.encode name) off ttl, succ count)
-        ns ((offs, off), 0)
+      Domain_name.Set.fold (fun name ((names, off), count) ->
+          rr names (Ns.encode name) off ttl, succ count)
+        ns ((names, off), 0)
     | Mx, (ttl, mx) ->
-      Mx_set.fold (fun mx ((offs, off), count) ->
-          rr offs (Mx.encode mx) off ttl, succ count)
-        mx ((offs, off), 0)
-    | Cname, (ttl, alias) ->
-      rr offs (Cname.encode alias) off ttl, 1
+      Mx_set.fold (fun mx ((names, off), count) ->
+          rr names (Mx.encode mx) off ttl, succ count)
+        mx ((names, off), 0)
+    | Cname, (ttl, alias) -> rr names (Cname.encode alias) off ttl, 1
     | A, (ttl, addresses) ->
-      Ipv4_set.fold (fun address ((offs, off), count) ->
-        rr offs (A.encode address) off ttl, succ count)
-        addresses ((offs, off), 0)
+      Ipv4_set.fold (fun address ((names, off), count) ->
+        rr names (A.encode address) off ttl, succ count)
+        addresses ((names, off), 0)
     | Aaaa, (ttl, aaaas) ->
-      Ipv6_set.fold (fun address ((offs, off), count) ->
-          rr offs (Aaaa.encode address) off ttl, succ count)
-        aaaas ((offs, off), 0)
-    | Ptr, (ttl, rev) ->
-      rr offs (Ptr.encode rev) off ttl, 1
+      Ipv6_set.fold (fun address ((names, off), count) ->
+          rr names (Aaaa.encode address) off ttl, succ count)
+        aaaas ((names, off), 0)
+    | Ptr, (ttl, rev) -> rr names (Ptr.encode rev) off ttl, 1
     | Srv, (ttl, srvs) ->
-      Srv_set.fold (fun srv ((offs, off), count) ->
-          rr offs (Srv.encode srv) off ttl, succ count)
-        srvs ((offs, off), 0)
+      Srv_set.fold (fun srv ((names, off), count) ->
+          rr names (Srv.encode srv) off ttl, succ count)
+        srvs ((names, off), 0)
     | Dnskey, (ttl, dnskeys) ->
-      Dnskey_set.fold (fun dnskey ((offs, off), count) ->
-        rr offs (Dnskey.encode dnskey) off ttl, succ count)
-        dnskeys ((offs, off), 0)
+      Dnskey_set.fold (fun dnskey ((names, off), count) ->
+        rr names (Dnskey.encode dnskey) off ttl, succ count)
+        dnskeys ((names, off), 0)
     | Caa, (ttl, caas) ->
-      Caa_set.fold (fun caa ((offs, off), count) ->
-          rr offs (Caa.encode caa) off ttl, succ count)
-        caas ((offs, off), 0)
+      Caa_set.fold (fun caa ((names, off), count) ->
+          rr names (Caa.encode caa) off ttl, succ count)
+        caas ((names, off), 0)
     | Tlsa, (ttl, tlsas) ->
-      Tlsa_set.fold (fun tlsa ((offs, off), count) ->
-          rr offs (Tlsa.encode tlsa) off ttl, succ count)
-        tlsas ((offs, off), 0)
+      Tlsa_set.fold (fun tlsa ((names, off), count) ->
+          rr names (Tlsa.encode tlsa) off ttl, succ count)
+        tlsas ((names, off), 0)
     | Sshfp, (ttl, sshfps) ->
-      Sshfp_set.fold (fun sshfp ((offs, off), count) ->
-          rr offs (Sshfp.encode sshfp) off ttl, succ count)
-        sshfps ((offs, off), 0)
+      Sshfp_set.fold (fun sshfp ((names, off), count) ->
+          rr names (Sshfp.encode sshfp) off ttl, succ count)
+        sshfps ((names, off), 0)
     | Txt, (ttl, txts) ->
-      Txt_set.fold (fun txt ((offs, off), count) ->
-          rr offs (Txt.encode txt) off ttl, succ count)
-        txts ((offs, off), 0)
+      Txt_set.fold (fun txt ((names, off), count) ->
+          rr names (Txt.encode txt) off ttl, succ count)
+        txts ((names, off), 0)
 
   let combine_k : type a. a k -> a -> a -> a = fun k v old ->
     match k, v, old with
@@ -1147,7 +1146,7 @@ let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
       let s = Domain_name.Set.diff ns rm in
       if Domain_name.Set.is_empty s then None else Some (ttl, s)
     | Ptr, _, _ -> None
-    | Soa, soa, _ -> None
+    | Soa, _, _ -> None
     | Txt, (ttl, txts), (_, rm) ->
       let s = Txt_set.diff txts rm in
       if Txt_set.is_empty s then None else Some (ttl, s)
@@ -1483,6 +1482,8 @@ end
 module Name_rr_map = struct
   type t = Rr_map.t Domain_name.Map.t
 
+  let empty = Domain_name.Map.empty
+
   let equal a b =
     Domain_name.Map.equal (Rr_map.equal Rr_map.equal_b) a b
 
@@ -1557,8 +1558,8 @@ module Packet = struct
       | Some Udns_enum.IN -> Ok ((name, typ), names, off)
       | _ -> Error (`Invalid (off, "bad class in question", c))
 
-    let encode offs buf off (name, typ) =
-      encode_ntc offs buf off (name, typ, Udns_enum.clas_to_int Udns_enum.IN)
+    let encode names buf off (name, typ) =
+      encode_ntc names buf off (name, typ, Udns_enum.clas_to_int Udns_enum.IN)
   end
 
   module Header = struct
@@ -1698,13 +1699,13 @@ module Packet = struct
 
   module Name = Name
 
-  let encode_data map offs buf off =
+  let encode_data map names buf off =
     Domain_name.Map.fold (fun name rrmap acc ->
-        Rr_map.fold (fun (Rr_map.B (k, v)) ((offs, off), count) ->
-            let r, amount = Rr_map.encode name k v offs buf off in
+        Rr_map.fold (fun (Rr_map.B (k, v)) ((names, off), count) ->
+            let r, amount = Rr_map.encode name k v names buf off in
             (r, amount + count))
           rrmap acc)
-      map ((offs, off), 0)
+      map ((names, off), 0)
 
   let decode_rr names buf off =
     let open Rresult.R.Infix in
@@ -1751,25 +1752,13 @@ module Packet = struct
       Rr_map.decode names buf off' typ >>| fun (b, names, off') ->
       (Name_rr_map.add name b map, edns, None), names, off'
 
-  let rec decode_n_additional_aux names buf off map edns tsig = function
-    | 0 -> (map, edns, tsig), Ok off
+  let rec decode_n_additional names buf off map edns tsig = function
+    | 0 -> Ok (`Full (off, map, edns, tsig))
     | n -> match decode_one_additional map edns ~tsig:(n = 1) names buf off with
-      | Error e -> (map, edns, tsig), Error e
+      | Error `Partial -> Ok (`Partial (map, edns, tsig))
+      | Error e -> Error e
       | Ok ((map, edns, tsig), names, off') ->
-        decode_n_additional_aux names buf off' map edns tsig (pred n)
-
-  let decode_n_additional names buf off map edns tsig c =
-    let (map, edns, tsig), r = decode_n_additional_aux names buf off map edns tsig c in
-    match r with
-    | Ok off -> Ok (off, map, edns, tsig)
-    | Error e -> Error e
-
-  let decode_n_additional_partial names buf off map edns tsig c =
-    let (map, edns, tsig), r = decode_n_additional_aux names buf off map edns tsig c in
-    match r with
-    | Ok off -> Ok (`Full (off, map, edns, tsig))
-    | Error `Partial -> Ok (`Partial (map, edns, tsig))
-    | Error e -> Error e
+        decode_n_additional names buf off' map edns tsig (pred n)
 
   let decode_question buf =
     let open Rresult.R.Infix in
@@ -1778,179 +1767,141 @@ module Packet = struct
     guard (qcount = 1) (`Malformed (4, "question count not one")) >>= fun () ->
     Question.decode Name.IntMap.empty buf Header.len
 
-
   module Query = struct
 
-    type t = {
-      question : Question.t ;
-      answer : Name_rr_map.t ;
-      authority : Name_rr_map.t ;
-      additional : Name_rr_map.t ;
-    }
+    type t = Name_rr_map.t * Name_rr_map.t
 
-    let create ?(answer = Domain_name.Map.empty) ?(authority = Domain_name.Map.empty) ?(additional = Domain_name.Map.empty) question =
-      { question ; answer ; authority ; additional }
+    let empty = Name_rr_map.empty, Name_rr_map.empty
 
-    let equal a b =
-      Question.compare a.question b.question = 0 &&
-      Name_rr_map.equal a.answer b.answer &&
-      Name_rr_map.equal a.authority b.authority &&
-      Name_rr_map.equal a.additional b.additional
+    let equal (answer, authority) (answer', authority') =
+      Name_rr_map.equal answer answer' &&
+      Name_rr_map.equal authority authority'
 
-    let pp ppf t =
-      Fmt.pf ppf "question %a@ answer %a@ authority %a@ additional %a"
-        Question.pp t.question
-        Name_rr_map.pp t.answer Name_rr_map.pp t.authority Name_rr_map.pp t.additional
+    let pp ppf (answer, authority) =
+      Fmt.pf ppf "answer %a@ authority %a"
+        Name_rr_map.pp answer Name_rr_map.pp authority
 
-    let decode hdr question buf names off =
+    let decode hdr _question buf names off =
       let open Rresult.R.Infix in
       let truncated = Header.FS.mem `Truncation hdr.Header.flags in
       let ancount = Cstruct.BE.get_uint16 buf 6
       and aucount = Cstruct.BE.get_uint16 buf 8
-      and adcount = Cstruct.BE.get_uint16 buf 10
       in
       let empty = Domain_name.Map.empty in
-      let query = create question in
       decode_n_partial Name_rr_map.add decode_rr names buf off empty ancount >>= function
-      | `Partial answer ->
-        guard truncated `Partial >>| fun () -> { query with answer }, None, None
+      | `Partial answer -> guard truncated `Partial >>| fun () -> (answer, empty), names, off, false, truncated
       | `Full (names, off, answer) ->
-        let query = { query with answer } in
         decode_n_partial Name_rr_map.add decode_rr names buf off empty aucount >>= function
-        | `Partial authority ->
-          guard truncated `Partial >>| fun () -> { query with authority }, None, None
-        | `Full (names, off, authority) ->
-          let query = { query with authority } in
-          decode_n_additional_partial names buf off empty None None adcount >>= function
-          | `Partial (additional, edns, tsig) ->
-            guard truncated `Partial >>| fun () ->
-            { query with additional }, edns, tsig
-          | `Full (off, additional, edns, tsig) ->
-            (if Cstruct.len buf > off then
-               let n = Cstruct.len buf - off in
-               Logs.warn (fun m -> m "received %d extra bytes %a"
-                             n Cstruct.hexdump_pp (Cstruct.sub buf off n))) ;
-            Ok ({ query with additional }, edns, tsig)
+        | `Partial authority -> guard truncated `Partial >>| fun () -> (answer, authority), names, off, false, truncated
+        | `Full (names, off, authority) -> Ok ((answer, authority), names, off, true, truncated)
 
-    let encode_answer (qname, qtyp) map offs buf off =
+    let encode_answer (qname, qtyp) map names buf off =
       Logs.debug (fun m -> m "trying to encode the answer, following question %a %a"
                      Question.pp (qname, qtyp) Name_rr_map.pp map) ;
       (* A foo.com? foo.com CNAME bar.com ; bar.com A 127.0.0.1 *)
-      let rec encode_one offs off count name =
+      let rec encode_one names off count name =
         Logs.debug (fun m -> m "encoding %d %a" count Domain_name.pp name) ;
         match Domain_name.Map.find name map with
         | None ->
           Logs.warn (fun m -> m "nothing found") ;
-          (offs, off), count
+          (names, off), count
         | Some rrmap ->
           Logs.warn (fun m -> m "found an rrmap %a" Rr_map.pp rrmap) ;
-          let (offs, off), count, alias =
-            Rr_map.fold (fun (Rr_map.B (k, v)) ((offs, off), count, alias) ->
+          let (names, off), count, alias =
+            Rr_map.fold (fun (Rr_map.B (k, v)) ((names, off), count, alias) ->
                 let alias' = match k, v with
                   | Cname, (_, alias) -> Some alias
                   | _ -> alias
                 in
-                let r, amount = Rr_map.encode name k v offs buf off in
+                let r, amount = Rr_map.encode name k v names buf off in
                 (r, amount + count, alias'))
-              rrmap ((offs, off), count, None)
+              rrmap ((names, off), count, None)
           in
           match alias with
           | None ->
             Logs.info (fun m -> m "returning %d" count) ;
-            (offs, off), count
+            (names, off), count
           | Some n ->
             Logs.info (fun m -> m "continuing with %a" Domain_name.pp n) ;
-            encode_one offs off count n
+            encode_one names off count n
       in
-      encode_one offs off 0 qname
+      encode_one names off 0 qname
 
-    let encode buf data =
-      let offs, off = Question.encode Domain_name.Map.empty buf Header.len data.question in
-      Cstruct.BE.set_uint16 buf 4 1 ;
-      let (offs, off), ancount = encode_answer data.question data.answer offs buf off in
+    let encode names buf off question (answer, authority) =
+      let (names, off), ancount = encode_answer question answer names buf off in
       Cstruct.BE.set_uint16 buf 6 ancount ;
-      let (offs, off), aucount = encode_data data.authority offs buf off in
+      let (names, off), aucount = encode_data authority names buf off in
       Cstruct.BE.set_uint16 buf 8 aucount ;
-      let (_offs, off), adcount = encode_data data.additional offs buf off in
-      Cstruct.BE.set_uint16 buf 10 adcount ;
-      off
+      names, off
   end
 
   module Axfr = struct
 
-    type t = {
-      soa : Soa.t ;
-      entries : Name_rr_map.t ;
-    }
+    type t = (Soa.t * Name_rr_map.t) option
 
-    let equal a b =
-      Soa.compare a.soa b.soa = 0 &&
-      Name_rr_map.equal a.entries b.entries
+    let empty = None
 
-    let pp ppf axfr =
-      Fmt.pf ppf "soa %a data %a" Soa.pp axfr.soa Name_rr_map.pp axfr.entries
+    let equal a b = match a, b with
+      | None, None -> true
+      | Some (soa, entries), Some (soa', entries') ->
+        Soa.compare soa soa' = 0 &&
+        Name_rr_map.equal entries entries'
+      | _ -> false
 
-    let decode hdr question buf names off =
+    let pp ppf = function
+      | None -> Fmt.string ppf "none"
+      | Some (soa, entries) ->
+        Fmt.pf ppf "soa %a data %a" Soa.pp soa Name_rr_map.pp entries
+
+    let decode hdr _question buf names off =
       let open Rresult.R.Infix in
       let ancount = Cstruct.BE.get_uint16 buf 6
       and aucount = Cstruct.BE.get_uint16 buf 8
-      and adcount = Cstruct.BE.get_uint16 buf 10
       in
       guard (not (Header.FS.mem `Truncation hdr.Header.flags)) `Partial >>= fun () ->
       let empty = Domain_name.Map.empty in
       guard (aucount = 0) (`Invalid (8,"AXFR with aucount > 0", aucount)) >>= fun () ->
-      (if hdr.Header.query then begin
-          guard (ancount = 0) (`Invalid (6, "AXFR query with ancount > 0", ancount)) >>| fun () ->
-          None, names, off
-        end else begin
-         (* TODO handle partial AXFR:
-            - only first frame must have the question, subsequent may have empty questions
-            - only first frame starts with SOA
-            - last one ends with SOA *)
-         guard (ancount >= 2)
-           (`Invalid (6, "AXFR needs at least two RRs in answer", ancount)) >>= fun () ->
-         decode_rr names buf off >>= fun (name, B (k, v), names, off) ->
-         (* TODO: verify name == zname in question, also all RR sub of zname *)
-         match k, v with
-         | Soa, soa ->
-           decode_n Name_rr_map.add decode_rr names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
-           decode_rr names buf off >>= fun (name', B (k', v'), names, off) ->
-           begin
-             match k', v' with
-             | Soa, soa' ->
-               (* TODO: verify that answer does not contain a SOA!? *)
-               guard (Domain_name.equal name name')
-                 (`Malformed (off, "AXFR SOA RRs do not use the same name")) >>= fun () ->
-               guard (Soa.compare soa soa' = 0)
-                 (`Malformed (off, "AXFR SOA RRs are not equal")) >>| fun () ->
-               Some { soa ; entries = answer }, names, off
-             | _ -> Error (`Malformed (off, "AXFR last RR in answer must be SOA"))
-           end
-         | _ -> Error (`Malformed (off, "AXFR first RR in answer must be SOA"))
-       end) >>= fun (axfr, names, off) ->
-      decode_n_additional names buf off empty None None adcount >>= fun (off, _add, edns, tsig) ->
-      (if Cstruct.len buf > off then
-         let n = Cstruct.len buf - off in
-         Logs.warn (fun m -> m "received %d extra bytes %a"
-                       n Cstruct.hexdump_pp (Cstruct.sub buf off n))) ;
-      (* TODO we drop additional here *)
-      Ok ((question, axfr), edns, tsig)
+      if hdr.Header.query then begin
+        guard (ancount = 0) (`Invalid (6, "AXFR query with ancount > 0", ancount)) >>| fun () ->
+        None, names, off
+      end else begin
+        (* TODO handle partial AXFR:
+           - only first frame must have the question, subsequent may have empty questions
+           - only first frame starts with SOA
+           - last one ends with SOA *)
+        guard (ancount >= 2)
+          (`Invalid (6, "AXFR needs at least two RRs in answer", ancount)) >>= fun () ->
+        decode_rr names buf off >>= fun (name, B (k, v), names, off) ->
+        (* TODO: verify name == zname in question, also all RR sub of zname *)
+        match k, v with
+        | Soa, soa ->
+          decode_n Name_rr_map.add decode_rr names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
+          decode_rr names buf off >>= fun (name', B (k', v'), names, off) ->
+          begin
+            match k', v' with
+            | Soa, soa' ->
+              (* TODO: verify that answer does not contain a SOA!? *)
+              guard (Domain_name.equal name name')
+                (`Malformed (off, "AXFR SOA RRs do not use the same name")) >>= fun () ->
+              guard (Soa.compare soa soa' = 0)
+                (`Malformed (off, "AXFR SOA RRs are not equal")) >>| fun () ->
+              (Some ((soa, answer) : Soa.t * Name_rr_map.t)), names, off
+            | _ -> Error (`Malformed (off, "AXFR last RR in answer must be SOA"))
+          end
+        | _ -> Error (`Malformed (off, "AXFR first RR in answer must be SOA"))
+      end
 
-    let encode buf (question, axfr) =
-      (* TODO if this would truncate, should create another packet --
-         how does this interact with TSIG, is each individual packet signed? *)
-      let offs, off = Question.encode Domain_name.Map.empty buf Header.len question in
-      Cstruct.BE.set_uint16 buf 4 1 ;
-      match axfr with
-      | None -> off
-      | Some axfr ->
+    let encode names buf off question = function
+      | None -> names, off
+      | Some (soa, entries) ->
+        (* TODO if this would truncate, should create another packet --
+           how does this interact with TSIG, is each individual packet signed? *)
         (* serialise: SOA .. other data .. SOA *)
-        let (offs, off), _ = Rr_map.encode (fst question) Soa axfr.soa offs buf off in
-        let (offs, off), count = encode_data axfr.entries offs buf off in
-        let (_offs, off), _ = Rr_map.encode (fst question) Soa axfr.soa offs buf off in
+        let (names, off), _ = Rr_map.encode (fst question) Soa soa names buf off in
+        let (names, off), count = encode_data entries names buf off in
+        let (names, off), _ = Rr_map.encode (fst question) Soa soa names buf off in
         Cstruct.BE.set_uint16 buf 6 (count + 2) ;
-        off
-
+        names, off
   end
 
   module Update = struct
@@ -1997,34 +1948,34 @@ module Packet = struct
         Ok (name, Exists_data rdata, names, off'')
       | _ -> Error (`Invalid (off, "prereq bad class", cls))
 
-    let encode_prereq offs buf off count name = function
+    let encode_prereq names buf off count name = function
       | Exists typ ->
-        let offs, off =
-          encode_ntc offs buf off (name, typ, Udns_enum.(clas_to_int ANY_CLASS))
+        let names, off =
+          encode_ntc names buf off (name, typ, Udns_enum.(clas_to_int ANY_CLASS))
         in
         (* ttl + rdlen, both 0 *)
-        (offs, off + 6), succ count
+        (names, off + 6), succ count
       | Exists_data (B (k, v)) ->
-        let ret, count' = Rr_map.encode name k v offs buf off in
+        let ret, count' = Rr_map.encode name k v names buf off in
         ret, count' + count
       | Not_exists typ ->
-        let offs, off =
-          encode_ntc offs buf off (name, typ, Udns_enum.(clas_to_int NONE))
+        let names, off =
+          encode_ntc names buf off (name, typ, Udns_enum.(clas_to_int NONE))
         in
         (* ttl + rdlen, both 0 *)
-        (offs, off + 6), succ count
+        (names, off + 6), succ count
       | Name_inuse ->
-        let offs, off =
-          encode_ntc offs buf off Udns_enum.(name, ANY, clas_to_int ANY_CLASS)
+        let names, off =
+          encode_ntc names buf off Udns_enum.(name, ANY, clas_to_int ANY_CLASS)
         in
         (* ttl + rdlen, both 0 *)
-        (offs, off + 6), succ count
+        (names, off + 6), succ count
       | Not_name_inuse ->
-        let offs, off =
-          encode_ntc offs buf off Udns_enum.(name, ANY, clas_to_int NONE)
+        let names, off =
+          encode_ntc names buf off Udns_enum.(name, ANY, clas_to_int NONE)
         in
         (* ttl + rdlen, both 0 *)
-        (offs, off + 6), succ count
+        (names, off + 6), succ count
 
     type update =
       | Remove of Udns_enum.rr_typ
@@ -2072,99 +2023,81 @@ module Packet = struct
         Ok (name, Add rdata, names, off)
       | _ -> Error (`Invalid (off, "bad update class", cls))
 
-    let encode_update offs buf off count name = function
+    let encode_update names buf off count name = function
       | Remove typ ->
-        let offs, off =
-          encode_ntc offs buf off (name, typ, Udns_enum.(clas_to_int ANY_CLASS))
+        let names, off =
+          encode_ntc names buf off (name, typ, Udns_enum.(clas_to_int ANY_CLASS))
         in
         (* ttl + rdlen, both 0 *)
-        (offs, off + 6), succ count
+        (names, off + 6), succ count
       | Remove_all ->
-        let offs, off =
-          encode_ntc offs buf off Udns_enum.(name, ANY, clas_to_int ANY_CLASS)
+        let names, off =
+          encode_ntc names buf off Udns_enum.(name, ANY, clas_to_int ANY_CLASS)
         in
         (* ttl + rdlen, both 0 *)
-        (offs, off + 6), succ count
+        (names, off + 6), succ count
       | Remove_single (B (k, v)) ->
-        let ret, count' = Rr_map.encode ~clas:Udns_enum.NONE name k v offs buf off in
+        let ret, count' = Rr_map.encode ~clas:Udns_enum.NONE name k v names buf off in
         ret, count + count'
       | Add (B (k, v)) ->
-        let ret, count' = Rr_map.encode name k v offs buf off in
+        let ret, count' = Rr_map.encode name k v names buf off in
         ret, count + count'
 
-    type t = {
-      zone : Question.t ;
-      prereq : prereq list Domain_name.Map.t ;
-      update : update list Domain_name.Map.t ;
-      addition : Name_rr_map.t ;
-    }
+    type t = prereq list Domain_name.Map.t * update list Domain_name.Map.t
 
-    let create ?(prereq = Domain_name.Map.empty) ?(update = Domain_name.Map.empty)
-        ?(addition = Domain_name.Map.empty) zone =
-      { zone ; prereq ; update ; addition }
+    let empty = Domain_name.Map.empty, Domain_name.Map.empty
 
-    let equal t t' =
+    let equal (prereq, update) (prereq', update') =
       let eq_list f a b =
         List.length a = List.length b &&
         List.fold_left2 (fun acc a b -> acc && f a b) true a b
       in
-      Question.compare t.zone t'.zone = 0 &&
-      Domain_name.Map.equal (eq_list equal_prereq) t.prereq t'.prereq &&
-      Domain_name.Map.equal (eq_list equal_update) t.update t'.update &&
-      Name_rr_map.equal t.addition t'.addition
+      Domain_name.Map.equal (eq_list equal_prereq) prereq prereq' &&
+      Domain_name.Map.equal (eq_list equal_update) update update'
 
-    let pp ppf t =
-      Fmt.pf ppf "%a@ %a@ %a@ %a"
-        Question.pp t.zone
+    let pp ppf (prereq, update) =
+      Fmt.pf ppf "%a@ %a"
         Fmt.(list ~sep:(unit ";@ ")
                (pair ~sep:(unit ":") Domain_name.pp
                   (list ~sep:(unit ", ") pp_prereq)))
-        (Domain_name.Map.bindings t.prereq)
+        (Domain_name.Map.bindings prereq)
         Fmt.(list ~sep:(unit ";@ ")
                (pair ~sep:(unit ":") Domain_name.pp
                   (list ~sep:(unit ", ") pp_update)))
-        (Domain_name.Map.bindings t.update)
-        Name_rr_map.pp t.addition
+        (Domain_name.Map.bindings update)
 
-    let decode _header zone buf names off =
+    let decode _header question buf names off =
       let open Rresult.R.Infix in
       let prcount = Cstruct.BE.get_uint16 buf 6
       and upcount = Cstruct.BE.get_uint16 buf 8
-      and adcount = Cstruct.BE.get_uint16 buf 10
       in
       let add_to_list name a map =
         let base = match Domain_name.Map.find name map with None -> [] | Some x -> x in
         Domain_name.Map.add name (base @ [a]) map
       in
-      guard (snd zone = Udns_enum.SOA) (`Invalid (off, "update question not SOA", Udns_enum.rr_typ_to_int (snd zone))) >>= fun () ->
+      guard (snd question = Udns_enum.SOA) (`Invalid (off, "update question not SOA", Udns_enum.rr_typ_to_int (snd question))) >>= fun () ->
       decode_n add_to_list decode_prereq names buf off Domain_name.Map.empty prcount >>= fun (names, off, prereq) ->
       decode_n add_to_list decode_update names buf off Domain_name.Map.empty upcount >>= fun (names, off, update) ->
-      decode_n_additional names buf off Domain_name.Map.empty None None adcount >>= fun (off, addition, edns, tsig) ->
-      guard (Cstruct.len buf = off) (`Leftover (off, "end of update")) >>= fun () ->
-      Ok ({ zone ; prereq ; update ; addition }, edns, tsig)
+      Ok ((prereq, update), names, off)
 
-    let encode_map map f offs buf off =
-      Domain_name.Map.fold (fun name v ((offs, off), count) ->
-          List.fold_left (fun ((offs, off), count) p ->
-              f offs buf off count name p) ((offs, off), count) v)
-        map ((offs, off), 0)
+    let encode_map map f names buf off =
+      Domain_name.Map.fold (fun name v ((names, off), count) ->
+          List.fold_left (fun ((names, off), count) p ->
+              f names buf off count name p) ((names, off), count) v)
+        map ((names, off), 0)
 
-    let encode buf t =
-      let offs, off = Question.encode Domain_name.Map.empty buf Header.len t.zone in
-      Cstruct.BE.set_uint16 buf 4 1 ;
-      let (offs, off), prereq_count = encode_map t.prereq encode_prereq offs buf off in
+    let encode names buf off _question (prereq, update) =
+      let (names, off), prereq_count = encode_map prereq encode_prereq names buf off in
       Cstruct.BE.set_uint16 buf 6 prereq_count ;
-      let (offs, off), update_count = encode_map t.update encode_update offs buf off in
+      let (names, off), update_count = encode_map update encode_update names buf off in
       Cstruct.BE.set_uint16 buf 8 update_count ;
-      let (_offs, off), ad_count = encode_data t.addition offs buf off in
-      Cstruct.BE.set_uint16 buf 10 ad_count ;
-      off
+      names, off
   end
 
   type t = [
     | `Query of Query.t
     | `Notify of Query.t
-    | `Axfr of Question.t * Axfr.t option
+    | `Axfr of Axfr.t
     | `Update of Update.t
   ]
 
@@ -2172,75 +2105,88 @@ module Packet = struct
     | `Update u, `Update u' -> Update.equal u u'
     | `Query q, `Query q' -> Query.equal q q'
     | `Notify n, `Notify n' -> Query.equal n n'
-    | `Axfr (q, axfr), `Axfr (q', axfr') ->
-      begin Question.compare q q' = 0 && match axfr, axfr' with
-        | None, None -> true
-        | Some a, Some b -> Axfr.equal a b
-        | _ -> false
-      end
+    | `Axfr a, `Axfr a' -> Axfr.equal a a'
     | _ -> false
 
   let pp ppf = function
     | `Query q -> Query.pp ppf q
     | `Notify n -> Query.pp ppf n
-    | `Axfr (question, axfr) ->
-      Fmt.pf ppf "AXFR %a: %a"
-        Question.pp question
-        Fmt.(option ~none:(unit "NO") Axfr.pp) axfr
+    | `Axfr a -> Axfr.pp ppf a
     | `Update u -> Update.pp ppf u
 
-  type res = Header.t * t * Edns.t option * (Domain_name.t * Tsig.t * int) option
+  type res = Header.t * Question.t * t * Name_rr_map.t * Edns.t option * (Domain_name.t * Tsig.t * int) option
 
   let pp_tsig ppf (name, tsig, off) =
     Fmt.pf ppf "tsig %a %a %d" Domain_name.pp name Tsig.pp tsig off
 
-  let pp_res ppf (header, v, edns, tsig) =
-    Fmt.pf ppf "header %a@ %a@ edns %a@ tsig %a@ "
-      Header.pp header pp v
+  let pp_res ppf (header, question, t, additional, edns, tsig) =
+    Fmt.pf ppf "header %a@.question %a@.data %a@.additional %a@.edns %a@ tsig %a@ "
+      Header.pp header
+      Question.pp question
+      pp t
+      Name_rr_map.pp additional
       Fmt.(option ~none:(unit "no") Edns.pp) edns
       Fmt.(option ~none:(unit "no") pp_tsig) tsig
 
-  let decode buf =
-    let ext_rcode hdr = function
-      | Some e when e.Edns.extended_rcode > 0 ->
-        begin
-          let rcode =
-            Udns_enum.rcode_to_int hdr.Header.rcode + e.extended_rcode lsl 4
-          in
-          match Udns_enum.int_to_rcode rcode with
-          | None -> Error (`Invalid (0, "extended rcode", rcode))
-          | Some rcode -> Ok ({ hdr with rcode })
-        end
-      | _ -> Ok hdr
-    in
+  let decode_additional names buf off allow_trunc =
+    let open Rresult.R.Infix in
+    let adcount = Cstruct.BE.get_uint16 buf 10 in
+    decode_n_additional names buf off Domain_name.Map.empty None None adcount >>= function
+    | `Partial (additional, edns, tsig) ->
+      Logs.warn (fun m -> m "truncated packet (allowed? %B)" allow_trunc) ;
+      guard allow_trunc `Partial >>= fun () ->
+      Ok (additional, edns, tsig)
+    | `Full (off, additional, edns, tsig) ->
+      (if Cstruct.len buf > off then
+         let n = Cstruct.len buf - off in
+         Logs.warn (fun m -> m "received %d extra bytes %a"
+                       n Cstruct.hexdump_pp (Cstruct.sub buf off n))) ;
+      Ok (additional, edns, tsig)
+
+  let ext_rcode hdr = function
+    | Some e when e.Edns.extended_rcode > 0 ->
+      begin
+        let rcode =
+          Udns_enum.rcode_to_int hdr.Header.rcode + e.extended_rcode lsl 4
+        in
+        match Udns_enum.int_to_rcode rcode with
+        | None -> Error (`Invalid (0, "extended rcode", rcode))
+        | Some rcode -> Ok ({ hdr with rcode })
+      end
+    | _ -> Ok hdr
+
+  let decode : Cstruct.t -> (res, err) result = fun buf ->
     let open Rresult.R.Infix in
     Header.decode buf >>= fun hdr ->
     decode_question buf >>= fun (question, names, off) ->
-    match hdr.Header.operation with
-    | Udns_enum.Query ->
-      begin match snd question with
-        | Udns_enum.AXFR ->
-          Axfr.decode hdr question buf names off >>| fun (axfr, edns, tsig) ->
-          `Axfr axfr, edns, tsig
-        | _ ->
-          Query.decode hdr question buf names off >>| fun (q, edns, tsig) ->
-          `Query q, edns, tsig
-      end >>= fun (v, edns, tsig) ->
-      ext_rcode hdr edns >>| fun hdr ->
-      hdr, v, edns, tsig
-    | Udns_enum.Notify ->
-      (* TODO notify has some restrictions: Q=1, AN>=0 (must be SOA) *)
-      Query.decode hdr question buf names off >>= fun (n, edns, tsig) ->
-      ext_rcode hdr edns >>| fun hdr ->
-      hdr, `Notify n, edns, tsig
-    | Udns_enum.Update ->
-      Update.decode hdr question buf names off >>= fun (u, edns, tsig) ->
-      ext_rcode hdr edns >>| fun hdr ->
-      hdr, `Update u, edns, tsig
-    | x -> Error (`Invalid (2, "unsupported opcode", Udns_enum.opcode_to_int x))
+    begin match hdr.Header.operation with
+      | Udns_enum.Query ->
+        begin match snd question with
+          | Udns_enum.AXFR ->
+            Axfr.decode hdr question buf names off >>| fun (axfr, names, off) ->
+            `Axfr axfr, names, off, true, false
+          | _ ->
+            Query.decode hdr question buf names off >>| fun (query, names, off, cont, allow_trunc) ->
+            `Query query, names, off, cont, allow_trunc
+        end
+      | Udns_enum.Notify ->
+        (* TODO notify has some restrictions: Q=1, AN>=0 (must be SOA) *)
+        Query.decode hdr question buf names off >>| fun (notify, names, off, cont, allow_trunc) ->
+        `Notify notify, names, off, cont, allow_trunc
+      | Udns_enum.Update ->
+        Update.decode hdr question buf names off >>| fun (update, names, off) ->
+        `Update update, names, off, true, false
+      | x -> Error (`Invalid (2, "unsupported opcode", Udns_enum.opcode_to_int x))
+    end >>= fun (t, names, off, cont, allow_trunc) ->
+    if cont then
+      decode_additional names buf off allow_trunc >>= fun (additional, edns, tsig) ->
+      ext_rcode hdr edns >>| fun hdr' ->
+      (hdr', question, t, additional, edns, tsig)
+    else
+      Ok (hdr, question, t, Domain_name.Map.empty, None, None)
 
   let max_udp = 1484 (* in MirageOS. using IPv4 this is max UDP payload via ethernet *)
-  let max_reply_udp = 450 (* we don't want anyone to amplify! *)
+  let max_reply_udp = 400 (* we don't want anyone to amplify! *)
   let max_tcp = 1 lsl 16 - 1 (* DNS-over-TCP is 2 bytes len ++ payload *)
 
   let size_edns max_size edns protocol query =
@@ -2261,11 +2207,11 @@ module Packet = struct
     in
     maximum, edns
 
-  let encode_t buf = function
-    | `Query q -> Query.encode buf q
-    | `Notify n -> Query.encode buf n
-    | `Axfr data -> Axfr.encode buf data
-    | `Update u -> Update.encode buf u
+  let encode_t names buf off question = function
+    | `Query q -> Query.encode names buf off question q
+    | `Notify n -> Query.encode names buf off question n
+    | `Axfr data -> Axfr.encode names buf off question data
+    | `Update u -> Update.encode names buf off question u
 
   let encode_edns hdr edns buf off = match edns with
     | None -> off
@@ -2276,14 +2222,18 @@ module Packet = struct
       Cstruct.BE.set_uint16 buf 10 (adcount + 1) ;
       off
 
-  let encode ?max_size ?edns protocol hdr v =
+  let encode ?max_size ?(additional = Domain_name.Map.empty) ?edns protocol hdr question t =
     let max, edns = size_edns max_size edns protocol hdr.Header.query in
     let try_encoding buf =
       let off, trunc =
         try
           Header.encode buf hdr ;
-          let off = encode_t buf v in
+          let names, off = Question.encode Domain_name.Map.empty buf Header.len question in
+          Cstruct.BE.set_uint16 buf 4 1 ;
+          let names, off = encode_t names buf off question t in
           (* TODO we used to drop all other additionals if rcode <> 0 *)
+          let (_names, off), adcount = encode_data additional names buf off in
+          Cstruct.BE.set_uint16 buf 10 adcount ;
           (* TODO if edns embedding would truncate, we used to drop all other additionals and only encode EDNS *)
           (* TODO if additional would truncate, drop them (do not set truncation) *)
           encode_edns hdr edns buf off, false
@@ -2307,29 +2257,20 @@ module Packet = struct
     in
     doit (min max 4000) (* (mainly for TCP) we use a page as initial allocation *)
 
-  let error header v rcode =
+  let error header question rcode =
     if not header.Header.query then
-      let header = { header with rcode }
-      and question = match v with
-        | `Axfr (q, _) -> q
-        | `Update u -> u.Update.zone
-        | `Query q | `Notify q -> q.Query.question
-      in
+      let header = { header with rcode } in
       let errbuf = Cstruct.create max_reply_udp in
-      let query = Query.create question in
       Header.encode errbuf header ;
-      let encode query =
-        let off = Query.encode errbuf query in
-      encode_edns header (Some (Edns.create ())) errbuf off
-      in
-      let off = encode query in
+      let _names, off = Question.encode Domain_name.Map.empty errbuf Header.len question in
+      let off = encode_edns header (Some (Edns.create ())) errbuf off in
       Some (Cstruct.sub errbuf 0 off, max_reply_udp)
     else
       None
 end
 
 module Tsig_op = struct
-  type verify = ?mac:Cstruct.t -> Ptime.t -> Packet.t -> Packet.Header.t ->
+  type verify = ?mac:Cstruct.t -> Ptime.t -> Packet.Header.t -> Packet.Question.t ->
     Domain_name.t -> key:Dnskey.t option -> Tsig.t -> Cstruct.t ->
     (Tsig.t * Cstruct.t * Dnskey.t, Cstruct.t option) result
 

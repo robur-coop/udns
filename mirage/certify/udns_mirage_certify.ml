@@ -80,22 +80,22 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
         tlsa_data = X509.Encoding.cs_of_signing_request csr ;
       }
     in
-    let nsupdate =
-      let zone = (zone, Udns_enum.SOA)
-      and update =
+    let zone = (zone, Udns_enum.SOA)
+    and update =
+      let up =
         Domain_name.Map.singleton hostname
           [
             Packet.Update.Remove Udns_enum.TLSA ;
             Packet.Update.Add Rr_map.(B (Tlsa, (600l, Tlsa_set.singleton tlsa)))
           ]
       in
-      Packet.Update.create ~update zone
+      (Domain_name.Map.empty, up)
     and header =
       let hdr = dns_header () in
       { hdr with operation = Udns_enum.Update }
     in
     let now = Ptime.v (P.now_d_ps ()) in
-    match Udns_tsig.encode_and_sign ~proto:`Tcp header (`Update nsupdate) now dnskey keyname with
+    match Udns_tsig.encode_and_sign ~proto:`Tcp header zone (`Update update) now dnskey keyname with
     | Error msg -> Lwt.return_error msg
     | Ok (data, mac) ->
       Dns.send_tcp (Dns.flow flow) data >>= function
@@ -127,8 +127,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
     let header = dns_header ()
     and question = (name, Udns_enum.TLSA)
     in
-    let query = Packet.Query.create question in
-    let buf, _ = Packet.encode `Tcp header (`Query query) in
+    let buf, _ = Packet.encode `Tcp header question (`Query Packet.Query.empty) in
     Dns.send_tcp (Dns.flow flow) buf >>= function
     | Error () -> Lwt.fail_with "couldn't send tcp"
     | Ok () ->
@@ -136,11 +135,11 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
       | Error () -> Lwt.fail_with "couldn't read tcp"
       | Ok data ->
         match Packet.decode data with
-        | Ok (header', `Query q, _, _)
+        | Ok (header', _, `Query (answer, _), _, _, _)
           when not header'.query && header'.id = header.id ->
           (* collect TLSA pems *)
           let tlsa =
-            match Domain_name.Map.find name q.Packet.Query.answer with
+            match Domain_name.Map.find name answer with
             | None -> None
             | Some rrmap ->
               match Rr_map.(find Tlsa rrmap) with
@@ -154,8 +153,8 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
                   None
           in
           Lwt.return tlsa
-        | Ok (_, v, _, _) ->
-          Log.err (fun m -> m "expected a response, but got %a" Packet.pp v) ;
+        | Ok res ->
+          Log.err (fun m -> m "expected a response, but got %a" Packet.pp_res res) ;
           Lwt.return None
         | Error e ->
           Log.err (fun m -> m "error %a while decoding answer" Packet.pp_err e) ;

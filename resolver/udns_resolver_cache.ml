@@ -437,7 +437,7 @@ let answer t ts (name, typ) id =
                    rcode ; flags }
     (* XXX: we should look for a fixpoint here ;) *)
     (*    and additional, t = if add then additionals t ts answer else [], t *)
-    and query = Packet.Query.create ~answer ~authority (* ~additional *) (name, typ) in
+    and query = (answer, authority) in
     (header, `Query query, t)
   in
   match cached t ts typ name with

@@ -316,6 +316,7 @@ module Name_rr_map : sig
 
   type t = Rr_map.t Domain_name.Map.t
 
+  val empty : t
   val equal : t -> t -> bool
 
   val pp : t Fmt.t
@@ -400,43 +401,26 @@ module Packet : sig
   end
 
   module Query : sig
-
-    type t = {
-      question : Question.t ;
-      answer : Name_rr_map.t ;
-      authority : Name_rr_map.t ;
-      additional : Name_rr_map.t ;
-    }
-
-    val create : ?answer:Name_rr_map.t -> ?authority:Name_rr_map.t ->
-      ?additional:Name_rr_map.t -> Question.t -> t
-
+    type t = Name_rr_map.t * Name_rr_map.t
+    val empty : t
     val pp : t Fmt.t
-
     val equal : t -> t -> bool
   end
 
   module Axfr : sig
-
-    type t = {
-      soa : Soa.t ;
-      entries : Name_rr_map.t ;
-    }
-
+    type t = (Soa.t * Name_rr_map.t) option
+    val empty : t
     val pp : t Fmt.t
-
     val equal : t -> t -> bool
   end
 
   module Update : sig
-
     type prereq =
       | Exists of Udns_enum.rr_typ
       | Exists_data of Rr_map.b
       | Not_exists of Udns_enum.rr_typ
       | Name_inuse
       | Not_name_inuse
-
     val pp_prereq : prereq Fmt.t
     val equal_prereq : prereq -> prereq -> bool
 
@@ -445,30 +429,19 @@ module Packet : sig
       | Remove_all
       | Remove_single of Rr_map.b
       | Add of Rr_map.b
-
     val pp_update : update Fmt.t
     val equal_update : update -> update -> bool
 
-    type t = {
-      zone : Question.t ;
-      prereq : prereq list Domain_name.Map.t ;
-      update : update list Domain_name.Map.t ;
-      addition : Name_rr_map.t ;
-    }
-
-    val create : ?prereq:prereq list Domain_name.Map.t ->
-      ?update:update list Domain_name.Map.t ->
-      ?addition:Name_rr_map.t -> Question.t -> t
-
+    type t = prereq list Domain_name.Map.t * update list Domain_name.Map.t
+    val empty : t
     val pp : t Fmt.t
-
     val equal : t -> t -> bool
   end
 
   type t = [
     | `Query of Query.t
     | `Notify of Query.t
-    | `Axfr of Question.t * Axfr.t option
+    | `Axfr of Axfr.t
     | `Update of Update.t
   ]
 
@@ -476,7 +449,7 @@ module Packet : sig
 
   val equal : t -> t -> bool
 
-  type res = Header.t * t * Edns.t option * (Domain_name.t * Tsig.t * int) option
+  type res = Header.t * Question.t * t * Name_rr_map.t * Edns.t option * (Domain_name.t * Tsig.t * int) option
 
   val pp_res : res Fmt.t
 
@@ -484,15 +457,14 @@ module Packet : sig
 
   val size_edns : int option -> Edns.t option -> proto -> bool -> int * Edns.t option
 
-  val encode_t : Cstruct.t -> t -> int
+  val encode : ?max_size:int -> ?additional:Name_rr_map.t -> ?edns:Edns.t ->
+    proto -> Header.t -> Question.t -> t -> Cstruct.t * int
 
-  val encode : ?max_size:int -> ?edns:Edns.t -> proto -> Header.t -> t -> Cstruct.t * int
-
-  val error : Header.t -> t -> Udns_enum.rcode -> (Cstruct.t * int) option
+  val error : Header.t -> Question.t -> Udns_enum.rcode -> (Cstruct.t * int) option
 end
 
 module Tsig_op : sig
-  type verify = ?mac:Cstruct.t -> Ptime.t -> Packet.t -> Packet.Header.t ->
+  type verify = ?mac:Cstruct.t -> Ptime.t -> Packet.Header.t -> Packet.Question.t ->
     Domain_name.t -> key:Dnskey.t option -> Tsig.t -> Cstruct.t ->
     (Tsig.t * Cstruct.t * Dnskey.t, Cstruct.t option) result
 

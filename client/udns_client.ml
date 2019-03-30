@@ -13,16 +13,12 @@ let make_query protocol hostname
   (* SRV records: Service + Protocol are case-insensitive, see RFC2728 pg2. *)
   fun record_type ->
   let question = (hostname, Rr_map.k_to_rr_typ record_type) in
-  let query : Packet.Query.t = Packet.Query.create question in
   let header = {
     Packet.Header.id = Random.int 0xffff ; (* TODO *)
     query = true ; operation = Udns_enum.Query; rcode = Udns_enum.NoError ;
     flags = Packet.Header.FS.singleton `Recursion_desired }
   in
-  (*let max_size, edns = Udns_packet.size_edns None None proto query in*)
-  let cs , _ =
-    Packet.encode ~max_size:1200 ?edns:None
-      protocol header (`Query query) in
+  let cs , _ = Packet.encode protocol header question (`Query Packet.Query.empty) in
   begin match protocol with
     | `Udp -> cs
     | `Tcp ->
@@ -53,20 +49,19 @@ let parse_response (type requested)
   end >>= fun buf ->
   match Packet.decode buf with
   | Ok ({Packet.Header.rcode = NoError ; operation = Query ; id = hdr_id;
-          query = false; _ },
-         `Query resp, _edns (* what is flags? *), _tsig)
+         query = false; _ }, q, `Query (answer, _), _, _, _)
     when hdr_id = state.header.id
-      && Packet.Question.compare resp.question state.question = 0
+      && Packet.Question.compare q state.question = 0
     ->
     let rec follow_cname counter q_name =
       if counter <= 0 then Error (`Msg "CNAME recursion too deep")
       else
-        Domain_name.Map.find_opt q_name resp.answer
+        Domain_name.Map.find_opt q_name answer
         |> R.of_option ~none:(fun () ->
             R.error_msgf "Can't find relevant map in response:@ \
                           %a in [%a]"
               Domain_name.pp q_name
-              Name_rr_map.pp resp.answer
+              Name_rr_map.pp answer
           ) >>= fun relevant_map ->
         begin match Rr_map.find state.key relevant_map with
           | Some response -> Ok response
@@ -79,17 +74,18 @@ let parse_response (type requested)
         end
     in
     follow_cname 20 (fst state.question)
-  | Ok (h, `Query q, edns, tsig) ->
+  | Ok (h, question, `Query q, additional, edns, tsig) ->
     R.error_msgf
-      "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a  opt:%a tsig:%B@,@]"
+      "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a%a  opt:%a tsig:%B@,@]"
       Packet.Header.pp h
       h.id state.header.id
-      (Packet.Question.compare q.question state.question = 0)
+      (Packet.Question.compare question state.question = 0)
+      Packet.Question.pp question
       Packet.Query.pp q
       (Fmt.option Udns.Edns.pp) edns
       (match tsig with None -> false | Some _ -> true)
-  | Ok (_, `Notify _, _, _)-> Error (`Msg "Ok _ Notify _")
-  | Ok (_, `Update _, _, _) -> Error (`Msg "Ok _ Update todo")
-  | Ok (_, `Axfr _, _, _) -> Error (`Msg "Ok _ Axfr todo")
+  | Ok (_, _, `Notify _, _, _, _)-> Error (`Msg "Ok _ Notify _")
+  | Ok (_, _, `Update _, _, _, _) -> Error (`Msg "Ok _ Update todo")
+  | Ok (_, _, `Axfr _, _, _, _) -> Error (`Msg "Ok _ Axfr todo")
   | Error `Partial as err -> err
   | Error err -> R.error_msgf "Error parsing response: %a" Packet.pp_err err

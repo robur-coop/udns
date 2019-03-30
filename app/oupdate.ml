@@ -3,21 +3,21 @@
 open Udns
 
 let update zone hostname ip_address keyname dnskey now =
-  let nsupdate =
-    let zone = (zone, Udns_enum.SOA)
-    and update =
+  let zone = (zone, Udns_enum.SOA)
+  and update =
+    let up =
       Domain_name.Map.singleton hostname
         [
           Packet.Update.Remove Udns_enum.A ;
           Packet.Update.Add Rr_map.(B (A, (60l, Ipv4_set.singleton ip_address)))
         ]
     in
-    Packet.Update.create ~update zone
+    (Domain_name.Map.empty, up)
   and header =
     let hdr = Udns_cli.dns_header (Random.int 0xFFFF) in
     { hdr with operation = Udns_enum.Update }
   in
-  Udns_tsig.encode_and_sign ~proto:`Tcp header (`Update nsupdate) now dnskey keyname
+  Udns_tsig.encode_and_sign ~proto:`Tcp header zone (`Update update) now dnskey keyname
 
 let jump _ serverip port (keyname, zone, dnskey) hostname ip_address =
   Random.self_init () ;

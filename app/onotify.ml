@@ -3,25 +3,22 @@
 open Udns
 
 let notify zone serial key now =
-  let notify =
-    let question = (zone, Udns_enum.SOA)
-    and answer =
-      let soa = { Soa.nameserver = zone ; hostmaster = zone ; serial ;
-                  refresh = 0l; retry = 0l ; expiry = 0l ; minimum = 0l }
-      in
-      Domain_name.Map.singleton zone (Rr_map.singleton Rr_map.Soa soa)
+  let question = (zone, Udns_enum.SOA)
+  and n =
+    let soa = { Soa.nameserver = zone ; hostmaster = zone ; serial ;
+                refresh = 0l; retry = 0l ; expiry = 0l ; minimum = 0l }
     in
-    Packet.Query.create ~answer question
+    (Domain_name.Map.singleton zone (Rr_map.singleton Rr_map.Soa soa),
+     Name_rr_map.empty)
   and header =
     let hdr = Udns_cli.dns_header (Random.int 0xFFFF) in
     { hdr with operation = Udns_enum.Notify ; flags = Packet.Header.FS.singleton `Authoritative }
   in
-  let v = `Notify notify in
   match key with
-  | None -> Ok (fst (Packet.encode `Tcp header v), Cstruct.empty)
+  | None -> Ok (fst (Packet.encode `Tcp header question (`Notify n)), Cstruct.empty)
   | Some (keyname, _, dnskey) ->
     Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Dnskey.pp dnskey) ;
-    Udns_tsig.encode_and_sign ~proto:`Tcp header (`Notify notify) now dnskey keyname
+    Udns_tsig.encode_and_sign ~proto:`Tcp header question (`Notify n) now dnskey keyname
 
 let jump _ serverip port zone key serial =
   Random.self_init () ;

@@ -48,7 +48,7 @@ let sign ?mac ?max_size name tsig ~key buf =
     match add_tsig ?max_size name tsig buf with
     | Some out -> Some (out, mac)
     | None ->
-      match Packet.Question.decode Name.IntMap.empty buf 12 with
+      match Packet.Question.decode Packet.Name.IntMap.empty buf 12 with
       | Error e ->
         Logs.err
           (fun m -> m "dns_tsig sign: truncated, couldn't reparse question %a:@.%a"
@@ -87,7 +87,7 @@ let verify_raw ?mac now name ~key tsig tbs =
     (Tsig.with_signed tsig now) >>= fun tsig ->
   Ok (tsig, mac)
 
-let verify ?mac now v header name ~key tsig tbs =
+let verify ?mac now header question name ~key tsig tbs =
   match
     Rresult.R.of_option ~none:(fun () -> Error (`BadKey (name, tsig))) key >>= fun key ->
     verify_raw ?mac now name ~key tsig tbs >>= fun (tsig, mac) ->
@@ -97,7 +97,7 @@ let verify ?mac now v header name ~key tsig tbs =
   | Error e ->
     let header = { header with Packet.Header.query = not header.Packet.Header.query } in
     let or_err f err = match f err with None -> Some err | Some x -> Some x in
-    match Packet.error header v Udns_enum.NotAuth, e with
+    match Packet.error header question Udns_enum.NotAuth, e with
     | None, _ -> Error None
     | Some (err, max_size), `BadKey (name, tsig) ->
       let tsig = Tsig.with_error (Tsig.with_mac tsig Cstruct.empty) Udns_enum.BadKey in
@@ -117,8 +117,8 @@ let verify ?mac now v header name ~key tsig tbs =
         | None -> Error (Some err)
         | Some (buf, _) -> Error (Some buf)
 
-let encode_and_sign ?(proto = `Udp) header v now key keyname =
-  let b, _ = Packet.encode proto header v in
+let encode_and_sign ?(proto = `Udp) ?additional header question p now key keyname =
+  let b, _ = Packet.encode ?additional proto header question p in
   match Tsig.dnskey_to_tsig_algo key with
   | None -> Error "cannot discover tsig algorithm of key"
   | Some algorithm -> match Tsig.tsig ~algorithm ~signed:now () with
@@ -130,11 +130,11 @@ let encode_and_sign ?(proto = `Udp) header v now key keyname =
 let decode_and_verify now key keyname ?mac buf =
   match Packet.decode buf with
   | Error _ -> Error "decode"
-  | Ok (_, _, _, None) -> Error "not signed"
-  | Ok (header, v, edns, Some (name, tsig, tsig_off)) when Domain_name.equal keyname name ->
+  | Ok (_, _, _, _, _, None) -> Error "not signed"
+  | Ok (header, question, v, additional, edns, Some (name, tsig, tsig_off)) when Domain_name.equal keyname name ->
       begin match verify_raw ?mac now keyname ~key tsig (Cstruct.sub buf 0 tsig_off) with
-        | Ok (_, mac) -> Ok (header, v, edns, tsig, mac)
+        | Ok (_, mac) -> Ok (header, question, v, additional, edns, tsig, mac)
         | Error _ -> Error "invalid signature"
       end
-  | Ok (_, _, _, Some _) ->
+  | Ok (_, _, _, _, _, Some _) ->
     Error "invalid key name"

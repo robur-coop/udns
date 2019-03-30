@@ -50,16 +50,15 @@ let query_certificate sock public_key fqdn =
   let header = dns_header ()
   and question = (fqdn, Udns_enum.TLSA)
   in
-  let query = Packet.Query.create question in
-  let buf, _ = Packet.encode `Tcp header (`Query query) in
+  let buf, _ = Packet.encode `Tcp header question (`Query Packet.Query.empty) in
   Udns_cli.send_tcp sock buf ;
   let data = Udns_cli.recv_tcp sock in
   match Packet.decode data with
-  | Ok (_, `Query q, _, _) ->
+  | Ok (_, _, `Query (answer, _), _, _, _) ->
     (* TODO verify id! *)
     (* collect TLSA pems *)
-    Logs.debug (fun m -> m "answer is %a" Name_rr_map.pp q.Packet.Query.answer) ;
-    begin match Domain_name.Map.find fqdn q.Packet.Query.answer with
+    Logs.debug (fun m -> m "answer is %a" Name_rr_map.pp answer) ;
+    begin match Domain_name.Map.find fqdn answer with
       | None ->
         Logs.err (fun m -> m "no resource records found for %a" Domain_name.pp fqdn) ;
         None
@@ -74,8 +73,8 @@ let query_certificate sock public_key fqdn =
               (filter good_tlsa tlsas)
               None)
     end
-  | Ok (_, v, _, _) ->
-    Logs.err (fun m -> m "expected a response, but got %a" Packet.pp v) ;
+  | Ok res ->
+    Logs.err (fun m -> m "expected a response, but got %a" Packet.pp_res res) ;
     None
   | Error e ->
     Logs.err (fun m -> m "error %a while decoding answer" Packet.pp_err e) ;
@@ -89,22 +88,21 @@ let nsupdate_csr sock now hostname keyname zone dnskey csr =
       tlsa_data = X509.Encoding.cs_of_signing_request csr ;
     }
   in
-  let nsupdate =
-    let zone = (zone, Udns_enum.SOA)
-    and update =
-      Domain_name.Map.singleton hostname
+  let zone = (zone, Udns_enum.SOA)
+  and update =
+    let up = Domain_name.Map.singleton hostname
         [
           Packet.Update.Remove Udns_enum.TLSA ;
           Packet.Update.Add (Rr_map.B (Tlsa, (3600l, Rr_map.Tlsa_set.singleton tlsa)))
         ]
     in
-    Packet.Update.create ~update zone
+    (Domain_name.Map.empty, up)
   and header =
     let hdr = dns_header () in
     { hdr with operation = Udns_enum.Update }
   in
   match
-    Udns_tsig.encode_and_sign ~proto:`Tcp header (`Update nsupdate) now dnskey keyname >>= fun (data, mac) ->
+    Udns_tsig.encode_and_sign ~proto:`Tcp header zone (`Update update) now dnskey keyname >>= fun (data, mac) ->
     Udns_cli.send_tcp sock data ;
     let data = Udns_cli.recv_tcp sock in
     Udns_tsig.decode_and_verify now dnskey keyname ~mac data

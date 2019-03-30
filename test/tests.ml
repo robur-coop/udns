@@ -27,21 +27,22 @@ let n_of_s = Domain_name.of_string_exn
 
 let p_cs = Alcotest.testable Cstruct.hexdump_pp Cstruct.equal
 
-module Name = struct
-  let p_err =
-    let module M = struct
-      type t = Name.err
-      let pp = Name.pp_err
-      let equal a b = match a, b with
-        | `Partial, `Partial -> true
-        | `TooLong, `TooLong -> true
-        | `BadOffset a, `BadOffset b -> a = b
-        | `BadTag a, `BadTag b -> a = b
-        | `BadContent a, `BadContent b -> String.compare a b = 0
-        | _ -> false
-    end in
-    (module M: Alcotest.TESTABLE with type t = M.t)
+let p_err =
+  let module M = struct
+    type t = err
+    let pp = pp_err
+    let equal a b = match a, b with
+      | `Invalid _, `Invalid _
+      | `Invalids _, `Invalids _
+      | `Leftover _, `Leftover _
+      | `Malformed _, `Malformed _
+      | `Partial, `Partial
+      | `Bad_edns_version _, `Bad_edns_version _ -> true
+      | _ -> false
+  end in
+  (module M: Alcotest.TESTABLE with type t = M.t)
 
+module Name = struct
   let p_ok =
     let module M = struct
       type t = Domain_name.t * (Domain_name.t * int) Name.IntMap.t * int
@@ -174,32 +175,32 @@ module Name = struct
 
   let bad_ptr () =
     Alcotest.(check (result p_ok p_err) "bad pointer in label"
-                (Error (`BadOffset 10))
+                (Error (`Malformed (0, "foo")))
                 (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x0A") 0)) ;
     Alcotest.(check (result p_ok p_err) "cyclic self-pointer in label"
-                (Error (`BadOffset 0))
+                (Error (`Malformed (0, "foo")))
                 (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x00") 0)) ;
     Alcotest.(check (result p_ok p_err) "cyclic self-pointer in label"
-                (Error (`BadOffset 1))
+                (Error (`Malformed (0, "foo")))
                 (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x01") 0))
 
   let bad_tag () =
     Alcotest.(check (result p_ok p_err) "bad tag (0x40) in label"
-                (Error (`BadTag 0x40))
+                (Error (`Invalid (0, "bad tag", 0)))
                 (Name.decode Name.IntMap.empty (Cstruct.of_string "\x40") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad tag (0x80) in label"
-                (Error (`BadTag 0x80))
+                (Error (`Invalid (0, "bad tag", 0)))
                 (Name.decode Name.IntMap.empty (Cstruct.of_string "\x80") 0))
 
   let bad_content () =
     Alcotest.(check (result p_ok p_err) "bad content '-' in label"
-                (Error (`BadContent "-"))
+                (Error (`Invalids (0, "", "")))
                 (Name.decode Name.IntMap.empty (Cstruct.of_string "\001-\000") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad content 'foo-+' in label"
-                (Error (`BadContent "foo-+"))
+                (Error (`Invalids (0, "", "")))
                 (Name.decode Name.IntMap.empty (Cstruct.of_string "\005foo-+\000") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad content '23' in label"
-                (Error (`BadContent "23"))
+                (Error (`Invalids (0, "", "")))
                 (Name.decode Name.IntMap.empty (Cstruct.of_string "\00223\000") 0))
 
   let length () =
@@ -218,12 +219,12 @@ module Name = struct
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3D" ^ lst ^ "\000"))
                    0)) ;
     Alcotest.(check (result p_ok p_err) "domain name too long"
-                (Error `TooLong)
+                (Error (`Malformed (0, "TooLong")))
                 (Name.decode Name.IntMap.empty
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3E" ^ lst ^ "1\000"))
                    0)) ;
     Alcotest.(check (result p_ok p_err) "domain name really too long"
-                (Error `TooLong)
+                (Error (`Malformed (0, "TooLong")))
                 (Name.decode Name.IntMap.empty
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\000"))
                    0))
@@ -241,47 +242,6 @@ end
 
 
 module Packet = struct
-  let p_err =
-    let module M = struct
-      type t = Packet.err
-      let pp = Packet.pp_err
-      let equal a b = match a, b with
-        | `Partial, `Partial -> true
-        | `TooLong, `TooLong -> true
-        | `BadOffset a, `BadOffset b -> a = b
-        | `BadTag a, `BadTag b -> a = b
-        | `BadContent a, `BadContent b -> String.compare a b = 0
-        | `BadTTL a, `BadTTL b -> Int32.compare a b = 0
-        | `BadRRTyp a, `BadRRTyp b -> a = b
-        | `UnsupportedRRTyp a, `UnsupportedRRTyp b -> a = b
-        | `BadClass a, `BadClass b -> a = b
-        | `UnsupportedClass a, `UnsupportedClass b -> a = b
-        | `BadOpcode a, `BadOpcode b -> a = b
-        | `UnsupportedOpcode a, `UnsupportedOpcode b -> a = b
-        | `BadRcode a, `BadRcode b -> a = b
-        | `BadCaaTag, `BadCaaTag -> true
-        | `LeftOver, `LeftOver -> true
-        | `BadProto a, `BadProto b -> a = b
-        | `BadAlgorithm a, `BadAlgorithm b -> a = b
-        | `BadEdns, `BadEdns -> true
-        | `BadKeepalive, `BadKeepalive -> true
-        | `InvalidTimestamp a, `InvalidTimestamp b -> a = b
-        | `InvalidAlgorithm a, `InvalidAlgorithm b -> Domain_name.equal a b
-        | `NonZeroTTL a, `NonZeroTTL b -> a = b
-        | `NonZeroRdlen a, `NonZeroRdlen b -> a = b
-        | `InvalidZoneCount a, `InvalidZoneCount b -> a = b
-        | `InvalidZoneRR a, `InvalidZoneRR b -> a = b
-        | `BadTlsaCertUsage u, `BadTlsaCertUsage v -> u = v
-        | `BadTlsaSelector s, `BadTlsaSelector t -> s = t
-        | `BadTlsaMatchingType m, `BadTlsaMatchingType n -> m = n
-        | `BadSshfpAlgorithm i, `BadSshfpAlgorithm j -> i = j
-        | `BadSshfpType i, `BadSshfpType j -> i = j
-        | `Bad_edns_version a, `Bad_edns_version b -> a = b
-        | `None_or_multiple_questions, `None_or_multiple_questions -> true
-        | _ -> false
-    end in
-    (module M: Alcotest.TESTABLE with type t = M.t)
-
   let question_equal a b = Question.compare a b = 0
 
 (*  let prereq_equal a b = match a, b with
@@ -314,9 +274,10 @@ module Packet = struct
 
   let q_ok =
     let module M = struct
-      type t = Header.t * Packet.t
-      let pp = Fmt.(pair Header.pp Packet.pp)
-      let equal (ah, a) (bh, b) = Header.compare ah bh = 0 && Packet.equal a b
+      type t = Header.t * Question.t * Packet.t
+      let pp ppf (hdr, q, p) = Fmt.pf ppf "header %a question %a packet %a"
+          Header.pp hdr Question.pp q Packet.pp p
+      let equal (ah, q, a) (bh, q', b) = Header.compare ah bh = 0 && question_equal q q' && Packet.equal a b
     end in
     (module M: Alcotest.TESTABLE with type t = M.t)
 
@@ -363,10 +324,10 @@ module Packet = struct
     Alcotest.(check (result h_ok p_err) "fifth encoded header can be decoded"
                 (Ok hdr') (Header.decode cs)) ;
     Alcotest.(check (result h_ok p_err) "header with bad opcode"
-                (Error (`BadOpcode 14))
+                (Error (`Invalid (0, "opcode", 14)))
                 (Header.decode (of_hex "0000 7000 0000 0000 0000 0000"))) ;
     Alcotest.(check (result h_ok p_err) "header with bad rcode"
-                (Error (`BadRcode 14))
+                (Error (`Invalid (0, "opcode", 14)))
                 (Header.decode (of_hex "0000 000e 0000 0000 0000 0000"))) ;
     let hdr' =
       let flags = Header.FS.singleton `Authoritative in
@@ -406,28 +367,28 @@ module Packet = struct
   let decode cs =
     match Packet.decode cs with
     | Error e -> Error e
-    | Ok (header, v, _, _) -> Ok (header, v)
+    | Ok (header, q, v, _, _, _) -> Ok (header, q, v)
 
   let bad_query () =
     let cs = of_hex "0000 0000 0001 0000 0000 0000 0000 0100 02" in
     Alcotest.(check (result q_ok p_err) "query with bad class"
-                (Error (`BadClass 2))
+                (Error (`Invalid (0, "BadClass", 2)))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 0100 03" in
     Alcotest.(check (result q_ok p_err) "query with unsupported class"
-                (Error (`UnsupportedClass Udns_enum.CHAOS))
+                (Error (`Invalid (0, "UnsupportedClass", 0)))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 0000 01" in
     Alcotest.(check (result q_ok p_err) "question with unsupported typ"
-                (Error (`BadRRTyp 0))
+                (Error (`Invalid (0, "typ", 0)))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 2100 01" in
     Alcotest.(check (result q_ok p_err) "question with bad SRV"
-                (Error (`BadContent ""))
+                (Error (`Invalids (0, "BadContent", "")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0102 0000 0200 01" in
     Alcotest.(check (result q_ok p_err) "question with bad hostname"
-                (Error (`BadContent "\002"))
+                (Error (`Invalids (0, "BadContent", "")))
                 (decode cs))
 
   let regression0 () =
@@ -457,13 +418,10 @@ module Packet = struct
     }
     in
     Alcotest.(check (result q_ok p_err) "regression 0 decodes"
-                (Ok (header, `Query {
-                     question = (n_of_s "6.16.150.138.in-addr.arpa", Udns_enum.PTR) ;
-                     answer = Domain_name.Map.empty ;
-                     authority =
-                       Domain_name.Map.singleton (n_of_s "150.138.in-addr.arpa")
-                         Umap.(singleton Soa soa) ;
-                     additional = Domain_name.Map.empty}))
+                (Ok (header, (n_of_s "6.16.150.138.in-addr.arpa", Udns_enum.PTR),
+                     `Query (Domain_name.Map.empty,
+                             Domain_name.Map.singleton (n_of_s "150.138.in-addr.arpa")
+                               Rr_map.(singleton Soa soa))))
                 (decode data))
 
   let regression1 () =
@@ -477,7 +435,7 @@ module Packet = struct
         rcode = Udns_enum.NoError ; flags }
     in
     Alcotest.(check (result q_ok p_err) "regression 1 decodes"
-                (Ok (header, `Query (Packet.Query.create (n_of_s "keys.riseup.net", Udns_enum.AAAA))))
+                (Ok (header, (n_of_s "keys.riseup.net", Udns_enum.AAAA), `Query Packet.Query.empty))
                 (decode data))
 
   let regression2 () =
@@ -503,13 +461,10 @@ module Packet = struct
       expiry = 0x00015180l ; minimum = 0x0000012cl
     } in
     Alcotest.(check (result q_ok p_err) "regression 2 decodes"
-                (Ok (header, `Query {
-                     question = (n_of_s "news.bbc.net.uk", Udns_enum.NS) ;
-                     authority =
-                       Domain_name.Map.singleton (n_of_s "bbc.net.uk")
-                         Umap.(singleton Soa soa) ;
-                     answer = Domain_name.Map.empty ;
-                     additional = Domain_name.Map.empty }))
+                (Ok (header, (n_of_s "news.bbc.net.uk", Udns_enum.NS),
+                     `Query (Domain_name.Map.empty,
+                             Domain_name.Map.singleton (n_of_s "bbc.net.uk")
+                               Rr_map.(singleton Soa soa))))
                 (decode data))
 
   let regression3 () =
@@ -534,15 +489,13 @@ module Packet = struct
         mail_exchange = Domain_name.of_string_exn ~hostname:false "0.0.0.0"
       } in
       Domain_name.Map.singleton (Domain_name.of_string_exn "foo.com")
-        Umap.(singleton Mx (556l, Mx_set.singleton mx))
-    and additional = Domain_name.Map.empty
+        Rr_map.(singleton Mx (556l, Mx_set.singleton mx))
     in
 (*      let opt = Udns_packet.opt ~payload_size:450 () in
       [ { name = Domain_name.root ; ttl = 0l ; rdata = OPTS opt } ]
         in *)
     Alcotest.(check (result q_ok p_err) "regression 4 decodes"
-                (Ok (header, `Query {
-                     question ; authority = additional ; answer ; additional}))
+                (Ok (header, question, `Query (answer, Domain_name.Map.empty)))
                 (decode data))
 
   (* still not sure whether to allow this or not... -- since the resolver code
@@ -570,15 +523,13 @@ module Packet = struct
                   expiry = 0x127500l ; minimum = 0x012cl }
       in
       Domain_name.Map.singleton (Domain_name.of_string_exn "riseup.net")
-        Umap.(singleton Soa soa)
+        Rr_map.(singleton Soa soa)
     and additional = Domain_name.Map.empty
 (*      let opt = Udns_packet.opt ~payload_size:4096 () in
         [ { name = Domain_name.root ; ttl = 0l ; rdata = OPTS opt } ] *)
     in
     Alcotest.(check (result q_ok p_err) "regression 4 decodes"
-                (Ok (header, `Query {
-                     question ; authority ;
-                     answer = additional ; additional}))
+                (Ok (header, question, `Query (additional, authority)))
                 (decode data))
 
   let regression5 () =
@@ -598,7 +549,7 @@ module Packet = struct
       (Domain_name.of_string_exn "ns4.bbc.net.uk", Udns_enum.NS)
     in
     Alcotest.(check (result q_ok p_err) "regression 5 decodes"
-                (Ok (header, `Query (Packet.Query.create question)))
+                (Ok (header, question, `Query Query.empty))
                 (decode data))
 
 
@@ -821,48 +772,47 @@ module Packet = struct
                         64 6f 6d 61 69 6e 00 00  01 00 01 |}
     in
     match decode data with
-    | Error `None_or_multiple_questions -> ()
-    | Error _ -> Alcotest.fail "expected to fail with none or multiple questions"
+    | Error _ -> ()
     | Ok _ -> Alcotest.fail "got ok, expected to fail with multiple questions"
 
   let regression7 () =
     (* encoding a remove_single in an update frame lead to wrong rdlength (off by 2) *)
-    let header, update =
-      let header =
-        let rcode = Udns_enum.NoError in
-        { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
-          rcode ; flags = Header.FS.empty }
-      and update = Domain_name.Map.singleton
+    let header =
+      let rcode = Udns_enum.NoError in
+      { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
+        rcode ; flags = Header.FS.empty }
+    and update =
+      let up =
+        Domain_name.Map.singleton
           (n_of_s "www.example.com")
-          [ Packet.Update.Remove_single Umap.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))) ]
-      and zone = n_of_s "example.com", Udns_enum.SOA
+          [ Packet.Update.Remove_single Rr_map.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))) ]
       in
-      header, { Packet.Update.zone ; prereq = Domain_name.Map.empty ;
-                update = update ; addition = Domain_name.Map.empty }
+      (Domain_name.Map.empty, up)
+    and zone = n_of_s "example.com", Udns_enum.SOA
     in
     (* encode followed by decode should lead to same data *)
     Alcotest.(check (result q_ok p_err) "regression 7 decode encode works"
-                (Ok (header, `Update update))
-                (decode @@ fst @@ Packet.encode `Udp header (`Update update)))
+                (Ok (header, zone, `Update update))
+                (decode @@ fst @@ Packet.encode `Udp header zone (`Update update)))
 
   let regression8 () =
     (* encoding a exists_data in an update frame lead to wrong rdlength (off by 2) *)
-    let header, update =
-      let header =
-        let rcode = Udns_enum.NoError in
-        { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
-          rcode ; flags = Header.FS.empty }
-      and prereq =
+    let header =
+      let rcode = Udns_enum.NoError in
+      { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
+        rcode ; flags = Header.FS.empty }
+    and prereq =
+      let pre =
         Domain_name.Map.singleton (n_of_s "www.example.com")
-          [ Packet.Update.Exists_data Umap.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost)))]
-      and zone = (n_of_s "example.com", Udns_enum.SOA)
+          [ Packet.Update.Exists_data Rr_map.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost)))]
       in
-      header, Packet.Update.create ~prereq zone
+      (pre, Domain_name.Map.empty)
+    and zone = (n_of_s "example.com", Udns_enum.SOA)
     in
     (* encode followed by decode should lead to same data *)
     Alcotest.(check (result q_ok p_err) "regression 8 decode encode works"
-                (Ok (header, `Update update))
-                (decode @@ fst @@ Packet.encode `Udp header (`Update update)))
+                (Ok (header, zone, `Update prereq))
+                (decode @@ fst @@ Packet.encode `Udp header zone (`Update prereq)))
 
   let code_tests = [
     "basic header", `Quick, basic_header ;

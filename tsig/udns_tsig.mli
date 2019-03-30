@@ -15,15 +15,15 @@ val sign : Tsig_op.sign
 val verify : Tsig_op.verify
 (** [verify] is the verify function. *)
 
-val encode_and_sign : ?proto:proto -> Packet.Header.t ->
-  Packet.t -> Ptime.t -> Udns.Dnskey.t -> Domain_name.t ->
+val encode_and_sign : ?proto:proto -> ?additional:Name_rr_map.t -> Packet.Header.t ->
+  Packet.Question.t -> Packet.t -> Ptime.t -> Udns.Dnskey.t -> Domain_name.t ->
   (Cstruct.t * Cstruct.t, string) result
 (** [encode_and_sign ~proto hdr v now dnskey name] signs and encodes the DNS
    packet. *)
 
 val decode_and_verify : Ptime.t -> Dnskey.t -> Domain_name.t ->
   ?mac:Cstruct.t -> Cstruct.t ->
-  (Packet.Header.t * Packet.t * Edns.t option * Tsig.t * Cstruct.t, string) result
+  (Packet.Header.t * Packet.Question.t * Packet.t * Name_rr_map.t * Edns.t option * Tsig.t * Cstruct.t, string) result
 (** [decode_and_verify now dnskey name ~mac buffer] decodes and verifies the
    given buffer using the key material, resulting in a DNS packet and the mac,
    or a failure. *)
