@@ -238,11 +238,11 @@ let handle_primary t now ts proto sender sport header question p additional edns
             s := { !s with authoritative = succ !s.authoritative } ;
             let max_size, edns = Edns.reply edns in
             Logs.debug (fun m -> m "authoritative reply %a %a" Packet.Header.pp header Packet.pp p) ;
-            let out = Packet.encode ?max_size ?edns proto header question p' in
+            let out = Packet.encode ?max_size ?additional ?edns proto header question p' in
             `Reply (t, out)
           end else begin
             s := { !s with delegation = succ !s.delegation } ;
-            `Delegation p'
+            `Delegation (p', additional)
           end
       | Error rcode ->
         Logs.debug (fun m -> m "authoritative returned %a" Udns_enum.pp_rcode rcode) ;
@@ -376,7 +376,7 @@ let handle_reply t ts proto sender header question v =
     Logs.err (fun m -> m "ignoring %a %a" Packet.Header.pp header Packet.pp v) ;
     Error (error Udns_enum.FormErr)
 
-let handle_delegation t ts proto sender sport header question p additional edns delegation =
+let handle_delegation t ts proto sender sport header question p additional edns (delegation, add_dele) =
   Logs.debug (fun m -> m "handling delegation %a (for %a)" Packet.pp delegation Packet.pp p) ;
   let error rcode =
     s := { !s with errors = succ !s.errors } ;
@@ -389,17 +389,17 @@ let handle_delegation t ts proto sender sport header question p additional edns 
   | `Query q ->
     begin match Udns_resolver_cache.answer t.cache ts question header.id with
       | `Query (name, cache) ->
-        (* parse v', which should contain an a record ask that for the very same query! *)
-        Logs.debug (fun m -> m "looking for %a" Domain_name.pp name) ;
         let t = { t with cache } in
-        begin match delegation with
-          | `Query qdelegation ->
+        (* we should look into delegation for the actual delegation, but instead we're looking for glue A *)
+        begin match add_dele with
+          | None -> Logs.err (fun m -> m "no glue data") ; t, [], []
+          | Some data ->
             let ips = Domain_name.Map.fold (fun n rrmap ips ->
                 Logs.debug (fun m -> m "%a maybe in %a" Domain_name.pp n Rr_map.pp rrmap) ;
                 match Rr_map.(find A rrmap) with
                 | None -> ips
                 | Some (_, ips') -> Rr_map.Ipv4_set.union ips ips')
-                additional Rr_map.Ipv4_set.empty
+                data Rr_map.Ipv4_set.empty
             in
             begin match pick t.rng (Rr_map.Ipv4_set.elements ips) with
               | None ->
@@ -417,10 +417,6 @@ let handle_delegation t ts proto sender sport header question p additional edns 
                   | `Query (cs, ip), t -> t, [], [ (`Udp, ip, cs) ]
                 end
             end
-          | p ->
-            Logs.err (fun m -> m "something is wrong, delegation with %a (expected query answer with glue)"
-                         Packet.pp p);
-            t, [], []
         end
       | `Packet (header, pkt, cache) ->
         let max_size, edns = Edns.reply edns in
@@ -474,8 +470,8 @@ let handle t now ts query proto sender sport buf =
         match handle_primary t.primary now ts proto sender sport header question p additional edns tsig buf with
         | `Reply (primary, (pkt, _)) ->
           { t with primary }, [ (proto, sender, sport, pkt) ], []
-        | `Delegation v' ->
-          handle_delegation t ts proto sender sport header question p additional edns v'
+        | `Delegation dele ->
+          handle_delegation t ts proto sender sport header question p additional edns dele
         | `None -> t, [], []
         | `No ->
           match resolve t ts proto sender sport header question p edns with
