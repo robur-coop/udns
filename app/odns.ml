@@ -37,12 +37,15 @@ let do_a nameserver domains _ =
     Lwt_list.iter_p (fun domain ->
         let open Lwt in
         Logs.debug (fun m -> m "looking up %a" Domain_name.pp domain);
-        Udns_client_lwt.(getaddrinfo t Udns.Rr_map.A domain)
+        Udns_client_lwt.(getaddrinfo t A domain)
         >|= function
-        | Ok r ->
+        | Ok (_ttl, addrs) when Udns.Rr_map.Ipv4_set.is_empty addrs ->
           (* handle empty response? *)
-          Logs.app (fun m -> m "response: %a. IN A %a" Domain_name.pp domain
-                   Udns.Rr_map.pp_b (B (A, r)))
+          Logs.app (fun m -> m ";%a. IN %a"
+                       Domain_name.pp domain
+                       Udns_enum.pp_rr_typ (Udns.Rr_map.k_to_rr_typ A))
+        | Ok resp ->
+          Logs.app (fun m -> m "%a" pp_zone (domain, A, resp))
         | Error (`Msg msg) ->
           Logs.err (fun m -> m "Failed to lookup %a: %s\n"
                        Domain_name.pp domain msg)
