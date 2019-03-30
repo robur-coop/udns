@@ -54,8 +54,8 @@ let query_certificate sock public_key fqdn =
   Udns_cli.send_tcp sock buf ;
   let data = Udns_cli.recv_tcp sock in
   match Packet.decode data with
-  | Ok (_, _, `Query (answer, _), _, _, _) ->
-    (* TODO verify id! *)
+  | Ok ((_, _, `Query (answer, _), _, _, _) as res)
+    when Packet.is_reply header question res ->
     (* collect TLSA pems *)
     Logs.debug (fun m -> m "answer is %a" Name_rr_map.pp answer) ;
     begin match Domain_name.Map.find fqdn answer with
@@ -133,7 +133,7 @@ let jump server_ip port (keyname, zone, dnskey) hostname csr key seed bits cert 
       Ok req) >>= fun req ->
   let public_key = (X509.CA.info req).X509.CA.public_key in
   (* before doing anything, let's check whether cert_filename is present, matches public key, and is valid *)
-  let _now, tomorrow =
+  let now, tomorrow =
     let (d, ps) = Ptime_clock.now_d_ps () in
     Ptime.v (d, ps), Ptime.v (succ d, ps)
   in
@@ -161,7 +161,7 @@ let jump server_ip port (keyname, zone, dnskey) hostname csr key seed bits cert 
   with
   | Some x -> write_certificate x
   | None ->
-    (*nsupdate_csr sock now hostname keyname zone dnskey req >>= fun () -> *)
+    nsupdate_csr sock now hostname keyname zone dnskey req >>= fun () ->
     let rec request retries =
       if retries = 0 then
         Error (`Msg "failed to request certificate")

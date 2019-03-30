@@ -455,6 +455,8 @@ module Packet : sig
 
   val decode : Cstruct.t -> (res, err) result
 
+  val is_reply : Header.t -> Question.t -> res -> bool
+
   val size_edns : int option -> Edns.t option -> proto -> bool -> int * Edns.t option
 
   val encode : ?max_size:int -> ?additional:Name_rr_map.t -> ?edns:Edns.t ->

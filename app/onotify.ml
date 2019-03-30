@@ -15,10 +15,12 @@ let notify zone serial key now =
     { hdr with operation = Udns_enum.Notify ; flags = Packet.Header.FS.singleton `Authoritative }
   in
   match key with
-  | None -> Ok (fst (Packet.encode `Tcp header question (`Notify n)), Cstruct.empty)
+  | None -> Ok (header, question, fst (Packet.encode `Tcp header question (`Notify n)), Cstruct.empty)
   | Some (keyname, _, dnskey) ->
     Logs.debug (fun m -> m "using key %a: %a" Domain_name.pp keyname Dnskey.pp dnskey) ;
-    Udns_tsig.encode_and_sign ~proto:`Tcp header question (`Notify n) now dnskey keyname
+    match Udns_tsig.encode_and_sign ~proto:`Tcp header question (`Notify n) now dnskey keyname with
+    | Ok (cs, mac) -> Ok (header, question, cs, mac)
+    | Error e -> Error e
 
 let jump _ serverip port zone key serial =
   Random.self_init () ;
@@ -29,7 +31,7 @@ let jump _ serverip port zone key serial =
                serial) ;
   match notify zone serial key now with
   | Error msg -> `Error (false, msg)
-  | Ok (data, mac) ->
+  | Ok (header, question, data, mac) ->
     let data_len = Cstruct.len data in
     Logs.debug (fun m -> m "built data %d" data_len) ;
     let socket = Udns_cli.connect_tcp serverip port in
@@ -39,13 +41,23 @@ let jump _ serverip port zone key serial =
     match key with
     | None ->
       begin match Packet.decode read_data with
-        | Ok _ -> Logs.app (fun m -> m "successfull notify!") ; `Ok ()
-        | Error e -> `Error (false, "notify reply " ^ Fmt.to_to_string Packet.pp_err e)
+        | Ok res ->
+          if Packet.is_reply header question res then begin
+            Logs.app (fun m -> m "successfull notify!") ; `Ok ()
+          end else
+            `Error (false, "")
+        | Error e ->
+          Logs.err (fun m -> m "failed to decode notify! %a" Packet.pp_err e) ;
+          `Error (false, "")
       end
     | Some (keyname, _, dnskey) ->
       begin match Udns_tsig.decode_and_verify now dnskey keyname ~mac read_data with
         | Error e -> `Error (false, "notify replied with error " ^ e)
-        | Ok _ -> Logs.app (fun m -> m "successfull notify!") ; `Ok ()
+        | Ok (res, _, _) ->
+          if Packet.is_reply header question res then begin
+            Logs.app (fun m -> m "successfull notify!") ; `Ok ()
+          end else
+            `Error (false, "")
       end
 
 open Cmdliner

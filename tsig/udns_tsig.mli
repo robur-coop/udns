@@ -23,7 +23,7 @@ val encode_and_sign : ?proto:proto -> ?additional:Name_rr_map.t -> Packet.Header
 
 val decode_and_verify : Ptime.t -> Dnskey.t -> Domain_name.t ->
   ?mac:Cstruct.t -> Cstruct.t ->
-  (Packet.Header.t * Packet.Question.t * Packet.t * Name_rr_map.t * Edns.t option * Tsig.t * Cstruct.t, string) result
+  (Packet.res * Tsig.t * Cstruct.t, string) result
 (** [decode_and_verify now dnskey name ~mac buffer] decodes and verifies the
    given buffer using the key material, resulting in a DNS packet and the mac,
    or a failure. *)

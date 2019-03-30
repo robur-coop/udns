@@ -105,7 +105,11 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
         | Ok data ->
           match Udns_tsig.decode_and_verify now dnskey keyname ~mac data with
           | Error e -> Lwt.return_error ("nsupdate reply " ^ e)
-          | Ok _ -> Lwt.return_ok ()
+          | Ok (res, _, _) ->
+            if Packet.is_reply header zone res then
+              Lwt.return_ok ()
+            else
+              Lwt.return_error ("nsupdate not reply")
 
   let query_certificate flow public_key name =
     let good_tlsa tlsa =
@@ -135,8 +139,8 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
       | Error () -> Lwt.fail_with "couldn't read tcp"
       | Ok data ->
         match Packet.decode data with
-        | Ok (header', _, `Query (answer, _), _, _, _)
-          when not header'.query && header'.id = header.id ->
+        | Ok ((_, _, `Query (answer, _), _, _, _) as res)
+          when Packet.is_reply header question res ->
           (* collect TLSA pems *)
           let tlsa =
             match Domain_name.Map.find name answer with

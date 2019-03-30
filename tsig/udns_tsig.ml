@@ -131,9 +131,9 @@ let decode_and_verify now key keyname ?mac buf =
   match Packet.decode buf with
   | Error _ -> Error "decode"
   | Ok (_, _, _, _, _, None) -> Error "not signed"
-  | Ok (header, question, v, additional, edns, Some (name, tsig, tsig_off)) when Domain_name.equal keyname name ->
+  | Ok ((_, _, _, _, _, Some (name, tsig, tsig_off)) as res) when Domain_name.equal keyname name ->
       begin match verify_raw ?mac now keyname ~key tsig (Cstruct.sub buf 0 tsig_off) with
-        | Ok (_, mac) -> Ok (header, question, v, additional, edns, tsig, mac)
+        | Ok (_, mac) -> Ok (res, tsig, mac)
         | Error _ -> Error "invalid signature"
       end
   | Ok (_, _, _, _, _, Some _) ->

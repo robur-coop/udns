@@ -1803,9 +1803,7 @@ module Packet = struct
       let rec encode_one names off count name =
         Logs.debug (fun m -> m "encoding %d %a" count Domain_name.pp name) ;
         match Domain_name.Map.find name map with
-        | None ->
-          Logs.warn (fun m -> m "nothing found") ;
-          (names, off), count
+        | None -> (names, off), count
         | Some rrmap ->
           Logs.warn (fun m -> m "found an rrmap %a" Rr_map.pp rrmap) ;
           let (names, off), count, alias =
@@ -2156,7 +2154,7 @@ module Packet = struct
       end
     | _ -> Ok hdr
 
-  let decode : Cstruct.t -> (res, err) result = fun buf ->
+  let decode buf =
     let open Rresult.R.Infix in
     Header.decode buf >>= fun hdr ->
     decode_question buf >>= fun (question, names, off) ->
@@ -2185,6 +2183,23 @@ module Packet = struct
       (hdr', question, t, additional, edns, tsig)
     else
       Ok (hdr, question, t, Domain_name.Map.empty, None, None)
+
+  let is_reply hdr q (hdr', q', _, _, _, _) =
+    match
+      hdr.Header.id = hdr.Header.id,
+      hdr'.Header.query,
+      Question.compare q q' = 0
+    with
+    | true, false, true -> true
+    | false, _ ,_ ->
+      Logs.warn (fun m -> m "header id mismatch, expected %d got %d" hdr.Header.id hdr'.Header.id) ;
+      false
+    | _, true, _ ->
+      Logs.warn (fun m -> m "expected reply, got a query");
+      false
+    | _, _, false ->
+      Logs.warn (fun m -> m "expected a reply to %a, but got %a" Question.pp q Question.pp q') ;
+      false
 
   let max_udp = 1484 (* in MirageOS. using IPv4 this is max UDP payload via ethernet *)
   let max_reply_udp = 400 (* we don't want anyone to amplify! *)
