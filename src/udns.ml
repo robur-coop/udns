@@ -740,7 +740,7 @@ module Tsig = struct
         Cstruct.BE.set_uint16 buf off a
 
   (* TODO unused -- why? *)
-  let encode t names buf off =
+  let _encode t names buf off =
     let algo = algorithm_to_name t.algorithm in
     let names, off = Name.encode ~compress:false algo names buf off in
     encode_48bit_time buf ~off t.signed ;

@@ -71,7 +71,7 @@ let parse_response (type requested)
         end
     in
     follow_cname 20 (fst state.question)
-  | Ok (h, question, `Query q, additional, edns, tsig) ->
+  | Ok (h, question, `Query q, _additional, edns, tsig) ->
     R.error_msgf
       "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a%a  opt:%a tsig:%B@,@]"
       Packet.Header.pp h

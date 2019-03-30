@@ -578,7 +578,7 @@ let update_data trie zone (prereq, update) =
     Ok (trie'', Some soa)
   | _, _ -> Ok (trie', None)
 
-let handle_update t l ts proto key (zone, _) ((prereq, update) as u) =
+let handle_update t l ts proto key (zone, _) ((_prereq, update) as u) =
   if Authentication.authorise t.auth proto key zone `Key_management then begin
      Log.info (fun m -> m "key-management key %a authorised for update %a"
                    Fmt.(option ~none:(unit "none") Domain_name.pp) key
@@ -724,7 +724,8 @@ module Primary = struct
       in
       Ok ((t, l, notifications), None, [], None)
     | `Notify n, true ->
-      Log.warn (fun m -> m "unsolicited notify request (replying anyways)") ;
+      Log.warn (fun m -> m "unsolicited notify request %a (replying anyways)"
+                   Packet.Query.pp n) ;
       let reply =
         let n = Packet.Query.empty in
         s_header header, `Notify n, None
@@ -1170,9 +1171,9 @@ module Secondary = struct
     in
     Ok ((t, zones), outs)
 
-  let handle_frame (t, zones) now ts ip proto keyname header question p additional =
+  let handle_frame (t, zones) now ts ip proto keyname header question p _additional =
     match p, header.Packet.Header.query with
-    | `Query q, true ->
+    | `Query _q, true ->
       handle_question t proto keyname header question >>| fun answer ->
       (t, zones), Some answer, []
     | `Query q, false ->
@@ -1198,7 +1199,7 @@ module Secondary = struct
       Log.err (fun m -> m "ignoring notify response (we don't send notifications)") ;
       Ok ((t, zones), None, [])
 
-  let find_mac zones header (name, _) =
+  let find_mac zones (name, _) =
     match Domain_name.Map.find name zones with
     | None -> None
     | Some (Requested_axfr (_, _, mac), _, _, _) -> Some mac
@@ -1222,7 +1223,7 @@ module Secondary = struct
         | Ok (t, None, out) -> (t, None, out)
         | Error rcode -> ((t, zones), err header question rcode, [])
       in
-      let mac = find_mac zones header question in
+      let mac = find_mac zones question in
       match handle_tsig ?mac t now header question tsig buf with
       | Error data -> ((t, zones), data, [])
       | Ok None ->
