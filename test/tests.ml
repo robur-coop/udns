@@ -45,18 +45,18 @@ let p_err =
 module Name = struct
   let p_ok =
     let module M = struct
-      type t = Domain_name.t * (Domain_name.t * int) Name.IntMap.t * int
+      type t = Domain_name.t * (Domain_name.t * int) Name.Int_map.t * int
       let pp ppf (name, map, off) =
         Fmt.pf ppf "%a (map: %a) %d"
           Domain_name.pp name
           (Fmt.list ~sep:(Fmt.unit ";@ ")
              (Fmt.pair ~sep:(Fmt.unit "->") Fmt.int
                 (Fmt.pair ~sep:(Fmt.unit " ") Domain_name.pp Fmt.int)))
-          (Name.IntMap.bindings map)
+          (Name.Int_map.bindings map)
           off
       let equal (n, m, off) (n', m', off') =
         Domain_name.equal n n' && off = off' &&
-        Name.IntMap.equal
+        Name.Int_map.equal
           (fun (nam, siz) (nam', siz') -> Domain_name.equal nam nam' && siz = siz')
           m m'
     end in
@@ -89,40 +89,40 @@ module Name = struct
 
   let simple () =
     let m =
-      Name.IntMap.add 0 (n_of_s "foo.com", 9)
-        (Name.IntMap.add 4 (n_of_s "com", 5)
-           (Name.IntMap.add 8 (Domain_name.root, 1) Name.IntMap.empty))
+      Name.Int_map.add 0 (n_of_s "foo.com", 9)
+        (Name.Int_map.add 4 (n_of_s "com", 5)
+           (Name.Int_map.add 8 (Domain_name.root, 1) Name.Int_map.empty))
     in
     Alcotest.(check (result p_ok p_err) "simple name decode test"
                 (Ok (n_of_s "foo.com", m, 9))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\003foo\003com\000") 0)) ;
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\003foo\003com\000") 0)) ;
     Alcotest.(check (result p_ok p_err) "another simple name decode test"
-                (Ok (n_of_s "foo.com", Name.IntMap.add 9 (n_of_s "foo.com", 9) m, 11))
+                (Ok (n_of_s "foo.com", Name.Int_map.add 9 (n_of_s "foo.com", 9) m, 11))
                 (Name.decode m (Cstruct.of_string "\003foo\003com\000\xC0\000") 9)) ;
     Alcotest.(check (result p_ok p_err) "a ptr added to the name decode test"
                 (Ok (n_of_s "bar.foo.com",
-                     Name.IntMap.add 13 (n_of_s "foo.com", 9)
-                       (Name.IntMap.add 9 (n_of_s "bar.foo.com", 13) m),
+                     Name.Int_map.add 13 (n_of_s "foo.com", 9)
+                       (Name.Int_map.add 9 (n_of_s "bar.foo.com", 13) m),
                      15))
                 (Name.decode m (Cstruct.of_string "\003foo\003com\000\003bar\xC0\000") 9)) ;
     Alcotest.(check (result p_ok p_err) "a ptr with bar- added to the name decode test"
                 (Ok (n_of_s "bar-.foo.com",
-                     Name.IntMap.add 14 (n_of_s "foo.com", 9)
-                       (Name.IntMap.add 9 (n_of_s "bar-.foo.com", 14) m),
+                     Name.Int_map.add 14 (n_of_s "foo.com", 9)
+                       (Name.Int_map.add 9 (n_of_s "bar-.foo.com", 14) m),
                      16))
                 (Name.decode m (Cstruct.of_string "\003foo\003com\000\004bar-\xC0\000") 9)) ;
     let m =
-      Name.IntMap.add 0 (n_of_s "f23", 5) (Name.IntMap.add 4 (Domain_name.root, 1) Name.IntMap.empty)
+      Name.Int_map.add 0 (n_of_s "f23", 5) (Name.Int_map.add 4 (Domain_name.root, 1) Name.Int_map.empty)
     in
     Alcotest.(check (result p_ok p_err) "simple name decode test of f23"
                 (Ok (n_of_s "f23", m, 5))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\003f23\000") 0)) ;
-    let m = Name.IntMap.add 0 (n_of_s ~hostname:false "23", 4)
-        (Name.IntMap.add 3 (Domain_name.root, 1) Name.IntMap.empty)
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\003f23\000") 0)) ;
+    let m = Name.Int_map.add 0 (n_of_s ~hostname:false "23", 4)
+        (Name.Int_map.add 3 (Domain_name.root, 1) Name.Int_map.empty)
     in
     Alcotest.(check (result p_ok p_err) "simple DNS name decode test of 23"
                 (Ok (n_of_s ~hostname:false "23", m, 4))
-                (Name.decode ~hostname:false Name.IntMap.empty
+                (Name.decode ~hostname:false Name.Int_map.empty
                    (Cstruct.of_string "\00223\000") ~off:0))
 
   let encode () =
@@ -165,43 +165,43 @@ module Name = struct
   let partial () =
     Alcotest.(check (result p_ok p_err) "partial domain name (bar)"
                 (Error `Partial)
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\003bar") 0));
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\003bar") 0));
     Alcotest.(check (result p_ok p_err) "partial domain name (one byte ptr)"
                 (Error `Partial)
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0") 0)) ;
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\xC0") 0)) ;
     Alcotest.(check (result p_ok p_err) "partial domain name (5foo)"
                 (Error `Partial)
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\005foo") 0))
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\005foo") 0))
 
   let bad_ptr () =
     Alcotest.(check (result p_ok p_err) "bad pointer in label"
                 (Error (`Malformed (0, "foo")))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x0A") 0)) ;
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\xC0\x0A") 0)) ;
     Alcotest.(check (result p_ok p_err) "cyclic self-pointer in label"
                 (Error (`Malformed (0, "foo")))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x00") 0)) ;
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\xC0\x00") 0)) ;
     Alcotest.(check (result p_ok p_err) "cyclic self-pointer in label"
                 (Error (`Malformed (0, "foo")))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\xC0\x01") 0))
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\xC0\x01") 0))
 
   let bad_tag () =
     Alcotest.(check (result p_ok p_err) "bad tag (0x40) in label"
                 (Error (`Invalid (0, "bad tag", 0)))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\x40") 0)) ;
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\x40") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad tag (0x80) in label"
                 (Error (`Invalid (0, "bad tag", 0)))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\x80") 0))
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\x80") 0))
 
   let bad_content () =
     Alcotest.(check (result p_ok p_err) "bad content '-' in label"
                 (Error (`Invalids (0, "", "")))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\001-\000") 0)) ;
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\001-\000") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad content 'foo-+' in label"
                 (Error (`Invalids (0, "", "")))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\005foo-+\000") 0)) ;
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\005foo-+\000") 0)) ;
     Alcotest.(check (result p_ok p_err) "bad content '23' in label"
                 (Error (`Invalids (0, "", "")))
-                (Name.decode Name.IntMap.empty (Cstruct.of_string "\00223\000") 0))
+                (Name.decode Name.Int_map.empty (Cstruct.of_string "\00223\000") 0))
 
   let length () =
     let max = "s23456789012345678901234567890123456789012345678901234567890123" in
@@ -209,23 +209,23 @@ module Name = struct
     let full = n_of_s (String.concat ~sep:"." [ max ; max ; max ; lst ]) in
     Alcotest.(check (result p_ok p_err) "longest allowed domain name"
                 (Ok (full,
-                     Name.IntMap.add 0 (full, 255)
-                       (Name.IntMap.add 64 (n_of_s (String.concat ~sep:"." [ max ; max ; lst ]), 191)
-                          (Name.IntMap.add 128 (n_of_s (String.concat ~sep:"." [ max ; lst ]), 127)
-                             (Name.IntMap.add 192 (n_of_s lst, 63)
-                                (Name.IntMap.add 254 (Domain_name.root, 1) Name.IntMap.empty)))),
+                     Name.Int_map.add 0 (full, 255)
+                       (Name.Int_map.add 64 (n_of_s (String.concat ~sep:"." [ max ; max ; lst ]), 191)
+                          (Name.Int_map.add 128 (n_of_s (String.concat ~sep:"." [ max ; lst ]), 127)
+                             (Name.Int_map.add 192 (n_of_s lst, 63)
+                                (Name.Int_map.add 254 (Domain_name.root, 1) Name.Int_map.empty)))),
                      255))
-                (Name.decode Name.IntMap.empty
+                (Name.decode Name.Int_map.empty
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3D" ^ lst ^ "\000"))
                    0)) ;
     Alcotest.(check (result p_ok p_err) "domain name too long"
                 (Error (`Malformed (0, "TooLong")))
-                (Name.decode Name.IntMap.empty
+                (Name.decode Name.Int_map.empty
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3E" ^ lst ^ "1\000"))
                    0)) ;
     Alcotest.(check (result p_ok p_err) "domain name really too long"
                 (Error (`Malformed (0, "TooLong")))
-                (Name.decode Name.IntMap.empty
+                (Name.decode Name.Int_map.empty
                    (Cstruct.of_string ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\000"))
                    0))
 

@@ -48,7 +48,7 @@ let sign ?mac ?max_size name tsig ~key buf =
     match add_tsig ?max_size name tsig buf with
     | Some out -> Some (out, mac)
     | None ->
-      match Packet.Question.decode Packet.Name.IntMap.empty buf 12 with
+      match Packet.Question.decode buf with
       | Error e ->
         Logs.err
           (fun m -> m "dns_tsig sign: truncated, couldn't reparse question %a:@.%a"

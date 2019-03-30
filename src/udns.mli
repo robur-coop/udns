@@ -166,7 +166,7 @@ module Tsig : sig
     | SHA384
     | SHA512
 
-  type t = {
+  type t = private {
     algorithm : algorithm ;
     signed : Ptime.t ;
     fudge : Ptime.Span.t ;
@@ -377,9 +377,9 @@ module Packet : sig
   end
 
   module Name : sig
-    module IntMap : Map.S with type key = int
+    module Int_map : Map.S with type key = int
 
-    type offset_name_map = (Domain_name.t * int) IntMap.t
+    type offset_name_map = (Domain_name.t * int) Int_map.t
 
     type name_offset_map = int Domain_name.Map.t
 
@@ -396,7 +396,7 @@ module Packet : sig
     val pp : t Fmt.t
     val compare : t -> t -> int
 
-    val decode : Name.offset_name_map -> Cstruct.t -> Name.IntMap.key ->
+    val decode : ?names:Name.offset_name_map -> ?off:int -> Cstruct.t ->
       (t * Name.offset_name_map * int, err) result
   end
 

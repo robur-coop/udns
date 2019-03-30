@@ -10,7 +10,7 @@ let int32_compare (a : int32) (b : int32) = Int32.compare a b
 let guard p err = if p then Ok () else Error err
 
 module Name = struct
-  module IntMap = Map.Make(struct
+  module Int_map = Map.Make(struct
       type t = int
       let compare = int_compare
     end)
@@ -34,7 +34,7 @@ module Name = struct
     | `Partial -> Fmt.string ppf "partial"
     | `Bad_edns_version version -> Fmt.pf ppf "bad edns version %d" version
 
-  type offset_name_map = (Domain_name.t * int) IntMap.t
+  type offset_name_map = (Domain_name.t * int) Int_map.t
 
   let ptr_tag = 0xC0 (* = 1100 0000 *)
 
@@ -57,12 +57,12 @@ module Name = struct
     (* treat last element special -- either Z or P *)
     (match l with
      | `Z, off -> Ok (off, root, 1)
-     | `P p, off -> match IntMap.find p names with
+     | `P p, off -> match Int_map.find p names with
        | exception Not_found ->
          Error (`Malformed (off, "bad label offset: " ^ string_of_int p))
        | (exp, size) -> Ok (off, exp, size)) >>= fun (off, name, size) ->
     (* insert last label into names Map*)
-    let names = IntMap.add off (name, size) names in
+    let names = Int_map.add off (name, size) names in
     (* fold over offs, insert into names Map, and reassemble the actual name *)
     let t = Array.(append (to_array name) (make (List.length offs) "")) in
     let names, _, size =
@@ -70,7 +70,7 @@ module Name = struct
           let s = succ size + String.length label in
           Array.set t idx label ;
           let sub = of_array (Array.sub t 0 (succ idx)) in
-          IntMap.add off (sub, s) names, succ idx, s)
+          Int_map.add off (sub, s) names, succ idx, s)
         (names, Array.length (to_array name), size) offs
     in
     let t = of_array t in
@@ -1540,27 +1540,11 @@ let decode_ntc names buf off =
 
 module Packet = struct
 
-  module Question = struct
-    type t = Domain_name.t * Udns_enum.rr_typ
+  type err = Name.err
 
-    let pp ppf (name, typ) =
-      Fmt.pf ppf "%a %a?" Domain_name.pp name Udns_enum.pp_rr_typ typ
+  let pp_err = Name.pp_err
 
-    let compare (name, typ) (name', typ') =
-      andThen (Domain_name.compare name name')
-        (int_compare (Udns_enum.rr_typ_to_int typ)
-           (Udns_enum.rr_typ_to_int typ'))
-
-    let decode names buf off =
-      let open Rresult.R.Infix in
-      decode_ntc names buf off >>= fun ((name, typ, c), names, off) ->
-      match Udns_enum.int_to_clas c with
-      | Some Udns_enum.IN -> Ok ((name, typ), names, off)
-      | _ -> Error (`Invalid (off, "bad class in question", c))
-
-    let encode names buf off (name, typ) =
-      encode_ntc names buf off (name, typ, Udns_enum.clas_to_int Udns_enum.IN)
-  end
+  module Name = Name
 
   module Header = struct
     module Flags = struct
@@ -1693,11 +1677,28 @@ module Packet = struct
         Fmt.(list ~sep:(unit ", ") Flags.pp) (FS.elements hdr.flags)
   end
 
-  type err = Name.err
+  module Question = struct
+    type t = Domain_name.t * Udns_enum.rr_typ
 
-  let pp_err = Name.pp_err
+    let pp ppf (name, typ) =
+      Fmt.pf ppf "%a %a?" Domain_name.pp name Udns_enum.pp_rr_typ typ
 
-  module Name = Name
+    let compare (name, typ) (name', typ') =
+      andThen (Domain_name.compare name name')
+        (int_compare (Udns_enum.rr_typ_to_int typ)
+           (Udns_enum.rr_typ_to_int typ'))
+
+    let decode ?(names = Name.Int_map.empty) ?(off = Header.len) buf =
+      let open Rresult.R.Infix in
+      decode_ntc names buf off >>= fun ((name, typ, c), names, off) ->
+      match Udns_enum.int_to_clas c with
+      | Some Udns_enum.IN -> Ok ((name, typ), names, off)
+      | _ -> Error (`Invalid (off, "bad class in question", c))
+
+    let encode names buf off (name, typ) =
+      encode_ntc names buf off (name, typ, Udns_enum.clas_to_int Udns_enum.IN)
+  end
+
 
   let encode_data map names buf off =
     Domain_name.Map.fold (fun name rrmap acc ->
@@ -1765,7 +1766,7 @@ module Packet = struct
     guard (Cstruct.len buf >= 12) `Partial >>= fun () ->
     let qcount = Cstruct.BE.get_uint16 buf 4 in
     guard (qcount = 1) (`Malformed (4, "question count not one")) >>= fun () ->
-    Question.decode Name.IntMap.empty buf Header.len
+    Question.decode buf
 
   module Query = struct
 
