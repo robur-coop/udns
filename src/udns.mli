@@ -629,28 +629,11 @@ module Packet : sig
     val encode : Cstruct.t -> t -> unit
   end
 
-  module Name : sig
-    module Int_map : Map.S with type key = int
-
-    type offset_name_map = (Domain_name.t * int) Int_map.t
-
-    type name_offset_map = int Domain_name.Map.t
-
-    val decode : ?hostname:bool -> offset_name_map -> Cstruct.t -> off:int ->
-      (Domain_name.t * offset_name_map * int, err) result
-
-    val encode : ?compress:bool -> Domain_name.t -> name_offset_map -> Cstruct.t ->
-      int -> name_offset_map * int
-  end
-
   module Question : sig
     type t = Domain_name.t * Udns_enum.rr_typ
 
     val pp : t Fmt.t
     val compare : t -> t -> int
-
-    val decode : ?names:Name.offset_name_map -> ?off:int -> Cstruct.t ->
-      (t * Name.offset_name_map * int, err) result
   end
 
   module Query : sig
@@ -726,6 +709,8 @@ module Packet : sig
     proto -> Header.t -> Question.t -> t -> Cstruct.t * int
 
   val error : Header.t -> Question.t -> Udns_enum.rcode -> (Cstruct.t * int) option
+
+  val raw_error : Cstruct.t -> Udns_enum.rcode -> Cstruct.t option
 end
 
 module Tsig_op : sig
@@ -734,5 +719,6 @@ module Tsig_op : sig
     (Tsig.t * Cstruct.t * Dnskey.t, Cstruct.t option) result
 
   type sign = ?mac:Cstruct.t -> ?max_size:int -> Domain_name.t -> Tsig.t ->
-    key:Dnskey.t -> Cstruct.t -> (Cstruct.t * Cstruct.t) option
+    key:Dnskey.t -> Packet.Header.t -> Packet.Question.t -> Cstruct.t ->
+    (Cstruct.t * Cstruct.t) option
 end

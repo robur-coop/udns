@@ -34,7 +34,7 @@ let mac_to_prep = function
     Cstruct.BE.set_uint16 l 0 (Cstruct.len mac) ;
     Cstruct.append l mac
 
-let sign ?mac ?max_size name tsig ~key buf =
+let sign ?mac ?max_size name tsig ~key hdr question buf =
   match Nocrypto.Base64.decode key.Dnskey.key with
   | None -> None
   | Some key ->
@@ -48,29 +48,24 @@ let sign ?mac ?max_size name tsig ~key buf =
     match add_tsig ?max_size name tsig buf with
     | Some out -> Some (out, mac)
     | None ->
-      match Packet.Question.decode buf with
-      | Error e ->
-        Logs.err
-          (fun m -> m "dns_tsig sign: truncated, couldn't reparse question %a:@.%a"
-              Packet.pp_err e Cstruct.hexdump_pp buf) ;
-        None (* assert false? *)
-      | Ok (q, _, off) ->
-        let new_buf = Cstruct.sub buf 0 off in
-        Cstruct.set_uint8 new_buf 2 (0x02 lor (Cstruct.get_uint8 new_buf 2)) ;
-        Cstruct.BE.set_uint16 new_buf 4 1 ;
-        Cstruct.BE.set_uint16 new_buf 6 0 ;
-        Cstruct.BE.set_uint16 new_buf 8 0 ;
-        Cstruct.BE.set_uint16 new_buf 10 1 ;
-        let mac = compute_tsig name tsig ~key (Cstruct.append prep new_buf) in
-        let tsig = Tsig.with_mac tsig mac in
-        match add_tsig name tsig new_buf with
-        | None ->
-          Logs.err (fun m -> m "dns_tsig sign: query %a with tsig %a too big %a:@.%a"
-                       Packet.Question.pp q Tsig.pp tsig
-                       Fmt.(option ~none:(unit "none") int) max_size
-                       Cstruct.hexdump_pp new_buf) ;
-          None
-        | Some out -> Some (out, mac)
+      Logs.err (fun m -> m "dns_tsig sign: truncated, sending tsig error") ;
+      let header = {
+        hdr with Packet.Header.flags = Packet.Header.FS.add `Truncation hdr.Packet.Header.flags
+      } in
+      let new_buf, off = Packet.encode `Udp header question (`Query Packet.Query.empty) in
+      let tbs = Cstruct.sub new_buf 0 off in
+      let mac = compute_tsig name tsig ~key (Cstruct.append prep tbs) in
+      let tsig = Tsig.with_mac tsig mac in
+      match add_tsig name tsig new_buf with
+      | None ->
+        Logs.err (fun m -> m "dns_tsig sign failed the second time: query %a %a with tsig %a too big %a:@.%a"
+                     Packet.Header.pp header
+                     Packet.Question.pp question
+                     Tsig.pp tsig
+                     Fmt.(option ~none:(unit "none") int) max_size
+                     Cstruct.hexdump_pp new_buf) ;
+        None
+      | Some out -> Some (out, mac)
 
 let verify_raw ?mac now name ~key tsig tbs =
   Rresult.R.of_option ~none:(fun () -> Error (`BadKey (name, tsig)))
@@ -113,7 +108,7 @@ let verify ?mac now header question name ~key tsig tbs =
       match Tsig.with_other tsig (Some now) with
       | None -> Error (Some err)
       | Some tsig ->
-        match sign ~max_size ~mac:tsig.Tsig.mac name tsig ~key err with
+        match sign ~max_size ~mac:tsig.Tsig.mac name tsig ~key header question err with
         | None -> Error (Some err)
         | Some (buf, _) -> Error (Some buf)
 
@@ -123,7 +118,7 @@ let encode_and_sign ?(proto = `Udp) ?additional header question p now key keynam
   | None -> Error "cannot discover tsig algorithm of key"
   | Some algorithm -> match Tsig.tsig ~algorithm ~signed:now () with
     | None -> Error "couldn't create tsig"
-    | Some tsig -> match sign keyname ~key tsig b with
+    | Some tsig -> match sign keyname ~key tsig header question b with
       | None -> Error "key is not good"
       | Some r -> Ok r
 

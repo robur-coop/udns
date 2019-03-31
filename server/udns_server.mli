@@ -81,9 +81,9 @@ module Primary : sig
     tsig_sign:Tsig_op.sign -> rng:(int -> Cstruct.t) -> Udns_trie.t -> s
   (** [create ~keys ~a ~tsig_verify ~tsig_sign ~rng data] creates a primary server. *)
 
-  val handle_frame : s -> int64 -> Ipaddr.V4.t -> int -> Udns.proto ->
-    Domain_name.t option -> Packet.Header.t -> Packet.Question.t -> Packet.t ->
-    Name_rr_map.t ->
+  val handle_frame : s -> int64 -> Udns.proto -> Ipaddr.V4.t -> int ->
+    Packet.Header.t -> Packet.Question.t -> Packet.t ->
+    Name_rr_map.t -> Domain_name.t option ->
     (s * (Packet.Header.t * Packet.t * Name_rr_map.t option) option * (Ipaddr.V4.t * int * Cstruct.t) list * [ `Notify | `Signed_notify ] option,
      Udns_enum.rcode) result
   (** [handle_frame s now src src_port proto key hdr v] handles the given

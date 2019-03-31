@@ -230,7 +230,7 @@ let handle_primary t now ts proto sender sport header question p additional edns
     if not header.Packet.Header.query then
       `No
     else
-      match Udns_server.Primary.handle_frame t ts sender sport proto name header question p additional with
+      match Udns_server.Primary.handle_frame t ts proto sender sport header question p additional name with
       | Ok (_, None, _, _) -> `None (* incoming notifications are never replied to *)
       | Ok (t, Some (header, p', additional), _, _) ->
           (* delegation if authoritative is not set! *)
@@ -239,7 +239,7 @@ let handle_primary t now ts proto sender sport header question p additional edns
             let max_size, edns = Edns.reply edns in
             Logs.debug (fun m -> m "authoritative reply %a %a" Packet.Header.pp header Packet.pp p) ;
             let out = Packet.encode ?max_size ?additional ?edns proto header question p' in
-            `Reply (t, out)
+            `Reply (t, (header, question, out))
           end else begin
             s := { !s with delegation = succ !s.delegation } ;
             `Delegation (p', additional)
@@ -249,17 +249,17 @@ let handle_primary t now ts proto sender sport header question p additional edns
         `No
   in
   match Udns_server.handle_tsig (Udns_server.Primary.server t) now header question tsig buf with
-  | Error (Some data) -> `Reply (t, (data, 0))
+  | Error (Some data) -> `Reply (t, (header, question, (data, 0)))
   | Error None -> `None
   | Ok None -> handle_inner None
   | Ok (Some (name, tsig, mac, key)) ->
     match handle_inner (Some name) with
-    | `Reply (t, (buf, max_size)) ->
-      begin match Udns_server.((Primary.server t).tsig_sign) ~max_size ~mac name tsig ~key buf with
+    | `Reply (t, (header, question, (buf, max_size))) ->
+      begin match Udns_server.((Primary.server t).tsig_sign) ~max_size ~mac name tsig ~key header question buf with
         | None ->
           Logs.warn (fun m -> m "couldn't use %a to tsig sign, using unsigned reply" Domain_name.pp name) ;
-          `Reply (t, (buf, max_size))
-        | Some (buf, _) -> `Reply (t, (buf, 0))
+          `Reply (t, (header, question, (buf, max_size)))
+        | Some (buf, _) -> `Reply (t, (header, question, (buf, 0)))
       end
     | x -> x
 
@@ -468,7 +468,7 @@ let handle t now ts query proto sender sport buf =
     | true, true ->
       begin
         match handle_primary t.primary now ts proto sender sport header question p additional edns tsig buf with
-        | `Reply (primary, (pkt, _)) ->
+        | `Reply (primary, (_, _, (pkt, _))) ->
           { t with primary }, [ (proto, sender, sport, pkt) ], []
         | `Delegation dele ->
           handle_delegation t ts proto sender sport header question p additional edns dele

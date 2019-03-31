@@ -21,15 +21,14 @@ let s_header h =
   let flags = FS.remove `Authentic_data (FS.remove `Recursion_available flags) in
   { h with query = false ; flags }
 
-let err header v rcode =
+let err header rcode =
   let header =
     let hdr = s_header header in
     let flags = hdr.Packet.Header.flags in
     let flags = if rcode = Udns_enum.NotAuth then Packet.Header.FS.remove `Authoritative flags else flags in
     { hdr with flags }
   in
-  Packet.error header v rcode
-
+  header
 
 module Authentication = struct
 
@@ -602,33 +601,6 @@ let handle_update t l ts proto key (zone, _) ((_prereq, update) as u) =
    end else
      Error Udns_enum.NotAuth
 
-let raw_server_error buf rcode =
-  (* copy id from header, retain opcode, set rcode to ServFail
-     if we receive a fragment < 12 bytes, it's not worth bothering *)
-  if Cstruct.len buf < 12 then
-    None
-  else
-    let query = Cstruct.get_uint8 buf 2 lsr 7 = 0 in
-    if not query then (* never reply to an answer! *)
-      None
-    else
-      let hdr = Cstruct.create 12 in
-      (* manually copy the id from the incoming buf *)
-      Cstruct.BE.set_uint16 hdr 0 (Cstruct.BE.get_uint16 buf 0) ;
-      (* manually copy the opcode from the incoming buf, and set response *)
-      Cstruct.set_uint8 hdr 2 (0x80 lor ((Cstruct.get_uint8 buf 2) land 0x78)) ;
-      (* set rcode *)
-      Cstruct.set_uint8 hdr 3 ((Udns_enum.rcode_to_int rcode) land 0xF) ;
-      let extended_rcode = Udns_enum.rcode_to_int rcode lsr 4 in
-      if extended_rcode = 0 then
-        Some hdr
-      else
-        (* need an edns! *)
-        let edns = Edns.create ~extended_rcode () in
-        let buf = Edns.allocate_and_encode edns in
-        Cstruct.BE.set_uint16 hdr 10 1 ;
-        Some (Cstruct.append hdr buf)
-
 let handle_tsig ?mac t now header question tsig buf =
   match tsig with
   | None -> Ok None
@@ -682,7 +654,7 @@ module Primary = struct
     | `Tcp, Udns_enum.SOA -> Ok name
     | _ -> Error ()
 
-  let handle_frame (t, l, ns) ts ip port proto key header question p _additional =
+  let handle_frame (t, l, ns) ts proto ip port header question p _additional key =
     match p, header.Packet.Header.query with
     | `Query _, true ->
       handle_question t proto key header question >>= fun answer ->
@@ -743,34 +715,41 @@ module Primary = struct
       res
     with
     | Error rcode ->
-      let answer = raw_server_error buf rcode in
+      let answer = Packet.raw_error buf rcode in
       Log.warn (fun m -> m "error %a while %a sent %a, answering with %a"
                    Udns_enum.pp_rcode rcode Ipaddr.V4.pp ip Cstruct.hexdump_pp buf
                    Fmt.(option ~none:(unit "no") Cstruct.hexdump_pp) answer) ;
       (t, l, ns), answer, [], None
     | Ok (header, question, p, additional, edns, tsig) ->
       let handle_inner keyname =
-        match handle_frame (t, l, ns) ts ip port proto keyname header question p additional with
+        match handle_frame (t, l, ns) ts proto ip port header question p additional keyname with
         | Ok (t, Some (header, answer, additional), out, notify) ->
-          let max_size, edns = Edns.reply edns in
-          (* be aware, this may be truncated... here's where AXFR is assembled! *)
-          (t, Some (Packet.encode ?max_size ?edns ?additional proto header question answer), out, notify)
+           let max_size, edns = Edns.reply edns in
+           (* be aware, this may be truncated... here's where AXFR is assembled! *)
+           let data = Packet.encode ?max_size ?edns ?additional proto header question answer in
+           (t, Some (header, question, data), out, notify)
         | Ok (t, None, out, notify) -> (t, None, out, notify)
-        | Error rcode -> ((t, l, ns), err header question rcode, [], None)
+        | Error rcode ->
+          let header = err header rcode in
+          let res = match Packet.error header question rcode with
+            | None -> None
+            | Some cs -> Some (header, question, cs)
+          in
+          ((t, l, ns), res, [], None)
       in
       match handle_tsig t now header question tsig buf with
       | Error data -> ((t, l, ns), data, [], None)
       | Ok None ->
         begin match handle_inner None with
           | t, None, out, notify -> t, None, out, notify
-          | t, Some (cs, _), out, notify -> t, Some cs, out, notify
+          | t, Some (_, _, (cs, _)), out, notify -> t, Some cs, out, notify
         end
       | Ok (Some (name, tsig, mac, key)) ->
         let n = function Some `Notify -> Some `Signed_notify | x -> x in
         match handle_inner (Some name) with
         | (a, None, out, notify) -> (a, None, out, n notify)
-        | (a, Some (buf, max_size), out, notify) ->
-          match t.tsig_sign ~max_size ~mac name tsig ~key buf with
+        | (a, Some (hdr, question, (buf, max_size)), out, notify) ->
+          match t.tsig_sign ~max_size ~mac name tsig ~key hdr question buf with
           | None ->
             Log.warn (fun m -> m "couldn't use %a to tsig sign" Domain_name.pp name) ;
             (a, None, out, n notify)
@@ -877,14 +856,14 @@ module Secondary = struct
     in
     (create Udns_trie.empty (keys, a) rng tsig_verify tsig_sign, zones)
 
-  let maybe_sign ?max_size t name signed original_id buf =
+  let maybe_sign ?max_size t name signed original_id header question buf =
     match Authentication.find_key t.auth name with
     | Some key ->
       begin match Tsig.dnskey_to_tsig_algo key with
         | Some algorithm ->
           begin match Tsig.tsig ~algorithm ~original_id ~signed () with
             | None -> Log.err (fun m -> m "creation of tsig failed") ; None
-            | Some tsig -> match t.tsig_sign ?mac:None ?max_size name tsig ~key buf with
+            | Some tsig -> match t.tsig_sign ?mac:None ?max_size name tsig ~key header question buf with
               | None -> Log.err (fun m -> m "signing failed") ; None
               | Some res -> Some res
           end
@@ -902,7 +881,7 @@ module Secondary = struct
     and question = (q_name, Udns_enum.AXFR)
     in
     let buf, max_size = Packet.encode proto header question (`Axfr None) in
-    match maybe_sign ~max_size t name now id buf with
+    match maybe_sign ~max_size t name now id header question buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_axfr (ts, id, mac), buf)
 
@@ -911,7 +890,7 @@ module Secondary = struct
     and question = (q_name, Udns_enum.SOA)
     in
     let buf, max_size = Packet.encode proto header question (`Query Packet.Query.empty) in
-    match maybe_sign ~max_size t name now id buf with
+    match maybe_sign ~max_size t name now id header question buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_soa (ts, id, retry, mac), buf)
 
@@ -1213,15 +1192,21 @@ module Secondary = struct
       Log.debug (fun m -> m "received a packet from %a: %a" Ipaddr.V4.pp ip Packet.pp_res res) ;
       res
     with
-    | Error rcode -> ((t, zones), raw_server_error buf rcode, [])
+    | Error rcode -> ((t, zones), Packet.raw_error buf rcode, [])
     | Ok (header, question, p, additional, edns, tsig) ->
       let handle_inner name =
         match handle_frame (t, zones) now ts ip proto name header question p additional with
         | Ok (t, Some (header, answer, additional), out) ->
           let max_size, edns = Edns.reply edns in
-          (t, Some (Packet.encode ?max_size ?additional ?edns proto header question answer), out)
+          (t, Some (header, question, Packet.encode ?max_size ?additional ?edns proto header question answer), out)
         | Ok (t, None, out) -> (t, None, out)
-        | Error rcode -> ((t, zones), err header question rcode, [])
+        | Error rcode ->
+          let header = err header rcode in
+          let res = match Packet.error header question rcode with
+            | None -> None
+            | Some cs -> Some (header, question, cs)
+          in
+          ((t, zones), res, [])
       in
       let mac = find_mac zones question in
       match handle_tsig ?mac t now header question tsig buf with
@@ -1229,12 +1214,12 @@ module Secondary = struct
       | Ok None ->
         begin match handle_inner None with
           | (t, None, out) -> (t, None, out)
-          | (t, Some (buf, _), out) -> (t, Some buf, out)
+          | (t, Some (_, _, (buf, _)), out) -> (t, Some buf, out)
         end
       | Ok (Some (name, tsig, mac, key)) ->
         match handle_inner (Some name) with
-        | (a, Some (buf, max_size), out) ->
-          begin match t.tsig_sign ~max_size ~mac name tsig ~key buf with
+        | (a, Some (header, question, (buf, max_size)), out) ->
+          begin match t.tsig_sign ~max_size ~mac name tsig ~key header question buf with
             | None ->
               Log.warn (fun m -> m "couldn't use %a to tsig sign"
                            Domain_name.pp name) ;

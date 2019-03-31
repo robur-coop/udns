@@ -1794,8 +1794,6 @@ module Packet = struct
 
   let pp_err = Name.pp_err
 
-  module Name = Name
-
   module Header = struct
     module Flags = struct
       type t = [
@@ -2441,9 +2439,14 @@ module Packet = struct
       hdr.Header.operation = hdr'.Header.operation,
       (if not_error then hdr'.Header.rcode = Udns_enum.NoError else true),
       (if not_truncated then not (Header.FS.mem `Truncation hdr'.Header.flags) else true),
-      Question.compare q q' = 0 (* TODO here we should in most cases be happy to do _case-sensitive_ comparison! *)
+      Question.compare q q' = 0
     with
-    | true, false, true, true, true, true -> true
+    | true, false, true, true, true, true ->
+      (* TODO: make this strict? configurable? *)
+      if not (Domain_name.equal ~case_sensitive:true (fst q) (fst q')) then
+        Logs.warn (fun m -> m "question is not case sensitive equal %a = %a"
+                      Domain_name.pp (fst q) Domain_name.pp (fst q')) ;
+      true
     | false, _ ,_, _, _, _ ->
       Logs.warn (fun m -> m "header id mismatch, expected %d got %d in %a"
                     hdr.Header.id hdr'.Header.id pp_res res) ;
@@ -2551,6 +2554,33 @@ module Packet = struct
       Some (Cstruct.sub errbuf 0 off, max_reply_udp)
     else
       None
+
+  let raw_error buf rcode =
+    (* copy id from header, retain opcode, set rcode to ServFail
+       if we receive a fragment < 12 bytes, it's not worth bothering *)
+    if Cstruct.len buf < 12 then
+      None
+    else
+      let query = Cstruct.get_uint8 buf 2 lsr 7 = 0 in
+      if not query then (* never reply to an answer! *)
+        None
+      else
+        let hdr = Cstruct.create 12 in
+        (* manually copy the id from the incoming buf *)
+        Cstruct.BE.set_uint16 hdr 0 (Cstruct.BE.get_uint16 buf 0) ;
+        (* manually copy the opcode from the incoming buf, and set response *)
+        Cstruct.set_uint8 hdr 2 (0x80 lor ((Cstruct.get_uint8 buf 2) land 0x78)) ;
+        (* set rcode *)
+        Cstruct.set_uint8 hdr 3 ((Udns_enum.rcode_to_int rcode) land 0xF) ;
+        let extended_rcode = Udns_enum.rcode_to_int rcode lsr 4 in
+        if extended_rcode = 0 then
+          Some hdr
+        else
+          (* need an edns! *)
+          let edns = Edns.create ~extended_rcode () in
+          let buf = Edns.allocate_and_encode edns in
+          Cstruct.BE.set_uint16 hdr 10 1 ;
+          Some (Cstruct.append hdr buf)
 end
 
 module Tsig_op = struct
@@ -2559,6 +2589,7 @@ module Tsig_op = struct
     (Tsig.t * Cstruct.t * Dnskey.t, Cstruct.t option) result
 
   type sign = ?mac:Cstruct.t -> ?max_size:int -> Domain_name.t -> Tsig.t ->
-    key:Dnskey.t -> Cstruct.t -> (Cstruct.t * Cstruct.t) option
+    key:Dnskey.t -> Packet.Header.t -> Packet.Question.t -> Cstruct.t ->
+    (Cstruct.t * Cstruct.t) option
 end
 
