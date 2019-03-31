@@ -2053,7 +2053,6 @@ module Packet = struct
         match Domain_name.Map.find name map with
         | None -> (names, off), count
         | Some rrmap ->
-          Logs.warn (fun m -> m "found an rrmap %a" Rr_map.pp rrmap) ;
           let (names, off), count, alias =
             Rr_map.fold (fun (Rr_map.B (k, v)) ((names, off), count, alias) ->
                 let alias' = match k, v with
@@ -2065,12 +2064,8 @@ module Packet = struct
               rrmap ((names, off), count, None)
           in
           match alias with
-          | None ->
-            Logs.info (fun m -> m "returning %d" count) ;
-            (names, off), count
-          | Some n ->
-            Logs.info (fun m -> m "continuing with %a" Domain_name.pp n) ;
-            encode_one names off count n
+          | None -> (names, off), count
+          | Some n -> encode_one names off count n
       in
       encode_one names off 0 qname
 
