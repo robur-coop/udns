@@ -225,11 +225,11 @@ type t = {
   tsig_sign : Tsig_op.sign ;
 }
 
-let text name t =
+let text name data =
   let buf = Buffer.create 1024 in
   (* first, find the start of authority (if any) *)
   let origin, default_ttl =
-    match Udns_trie.lookup name Rr_map.Soa t.data with
+    match Udns_trie.lookup name Rr_map.Soa data with
     | Error e ->
       Log.err (fun m -> m "couldn't find SOA when serialising zone for %a: %a"
                   Domain_name.pp name Udns_trie.pp_e e) ;
@@ -244,7 +244,7 @@ let text name t =
   in
   Rresult.R.reword_error
     (Fmt.to_to_string Udns_trie.pp_e)
-    (Udns_trie.fold name t.data
+    (Udns_trie.fold name data
        (fun name v () ->
           Buffer.add_string buf (Rr_map.text_b ?origin ?default_ttl name v) ;
           Buffer.add_char buf '\n')

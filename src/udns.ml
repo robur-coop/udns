@@ -1504,7 +1504,7 @@ module Rr_map = struct
           keys []
       | Caa, (ttl, caas) ->
         Caa_set.fold (fun caa acc ->
-            Fmt.strf "%s\t%aCAA\t%s\t%s\t%s"
+            Fmt.strf "%s\t%aCAA\t%s\t%s\t\"%s\""
               str_name ttl_fmt (ttl_opt ttl)
               (if caa.critical then "128" else "0")
               caa.tag (String.concat ";" caa.value) :: acc)

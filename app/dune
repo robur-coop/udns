@@ -28,6 +28,13 @@
   (libraries udns udns-tsig udns-cli ptime ptime.clock.os nocrypto nocrypto.unix))
 
 (executable
+  (name ozone)
+  (public_name ozone)
+  (package udns-cli)
+  (modules ozone)
+  (libraries udns udns-cli udns-zonefile udns-server bos))
+
+(executable
   (name         odns)
   (public_name  odns)
   (modules      odns)
