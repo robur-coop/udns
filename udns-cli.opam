@@ -13,6 +13,7 @@ depends: [
   "udns"
   "udns-tsig"
   "udns-client-lwt"
+  "udns-zonefile"
   "rresult"
   "randomconv"
   "duration"
