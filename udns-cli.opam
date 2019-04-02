@@ -14,15 +14,17 @@ depends: [
   "udns-tsig"
   "udns-client-lwt"
   "udns-zonefile"
+  "udns-server"
   "rresult"
-  "randomconv"
-  "duration"
   "bos"
   "cmdliner"
   "fpath"
   "x509"
   "nocrypto"
   "hex"
+  "ptime"
+  "logs"
+  "fmt"
   "ipaddr" {>= "3.0.0"}
   "alcotest" {with-test}
 ]
