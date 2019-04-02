@@ -1,7 +1,5 @@
 (* (c) 2018 Hannes Mehnert, all rights reserved *)
 
-open Udns
-
 open Lwt.Infix
 
 let src = Logs.Src.create "dns_mirage_resolver" ~doc:"effectful DNS certify"
@@ -67,100 +65,36 @@ PfZ+G6Z6h7mjem0Y+iWlkYcV4PIWL1iwBi8saCbGS5jN2p8M+X+Q7UNKEkROb3N6
 KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
 -----END CERTIFICATE-----|}
 
-  let dns_header () =
-    let id = Randomconv.int16 R.generate in
-    { Packet.Header.id ; query = true ; operation = Udns_enum.Query ;
-      rcode = Udns_enum.NoError ; flags = Packet.Header.FS.empty }
-
-  let nsupdate_csr flow hostname keyname zone dnskey csr =
-    let tlsa =
-      { Tlsa.cert_usage = Domain_issued_certificate ;
-        selector = Private ;
-        matching_type = No_hash ;
-        data = X509.Encoding.cs_of_signing_request csr ;
-      }
-    in
-    let zone = (zone, Udns_enum.SOA)
-    and update =
-      let up =
-        Domain_name.Map.singleton hostname
-          [
-            Packet.Update.Remove Udns_enum.TLSA ;
-            Packet.Update.Add Rr_map.(B (Tlsa, (600l, Tlsa_set.singleton tlsa)))
-          ]
-      in
-      (Domain_name.Map.empty, up)
-    and header =
-      let hdr = dns_header () in
-      { hdr with operation = Udns_enum.Update }
-    in
-    let now = Ptime.v (P.now_d_ps ()) in
-    match Udns_tsig.encode_and_sign ~proto:`Tcp header zone (`Update update) now dnskey keyname with
+  let nsupdate_csr flow host keyname zone dnskey csr =
+    match
+      Udns_certify.nsupdate R.generate (fun () -> Ptime.v (P.now_d_ps ()))
+        ~host ~keyname ~zone dnskey csr
+    with
     | Error msg -> Lwt.return_error msg
-    | Ok (data, mac) ->
-      Dns.send_tcp (Dns.flow flow) data >>= function
+    | Ok (out, cb) ->
+      Dns.send_tcp (Dns.flow flow) out >>= function
       | Error () -> Lwt.return_error "tcp send err"
-      | Ok () -> Dns.read_tcp flow >>= function
-        | Error () -> Lwt.return_error "tcp recv err"
-        | Ok data ->
-          match Udns_tsig.decode_and_verify now dnskey keyname ~mac data with
-          | Error e -> Lwt.return_error ("nsupdate reply " ^ e)
-          | Ok (res, _, _) when Packet.is_reply header zone res -> Lwt.return_ok ()
-          | Ok (res, _, _) ->
-            Lwt.return_error (Fmt.strf "nsupdate invalid reply %a" Packet.pp_res res)
+      | Ok () -> Dns.read_tcp flow >|= function
+        | Error () -> Error "tcp recv err"
+        | Ok data -> match cb data with
+          | Error e -> Error ("nsupdate reply " ^ e)
+          | Ok () -> Ok ()
 
   let query_certificate flow public_key name =
-    let good_tlsa tlsa =
-      tlsa.Tlsa.cert_usage = Domain_issued_certificate
-      && tlsa.selector = Full_certificate
-      && tlsa.matching_type = No_hash
-    and parse tlsa =
-      match X509.Encoding.parse tlsa.Tlsa.data with
-      | Some cert ->
-        let keys_equal a b =
-          Cstruct.equal (X509.key_id a) (X509.key_id b)
-        in
-        if keys_equal (X509.public_key cert) public_key then
-          Some cert
-        else
-          None
-      | _ -> None
-    in
-    let header = dns_header ()
-    and question = (name, Udns_enum.TLSA)
-    in
-    let buf, _ = Packet.encode `Tcp header question (`Query Packet.Query.empty) in
-    Dns.send_tcp (Dns.flow flow) buf >>= function
+    let out, cb = Udns_certify.query R.generate public_key name in
+    Dns.send_tcp (Dns.flow flow) out >>= function
     | Error () -> Lwt.fail_with "couldn't send tcp"
     | Ok () ->
-      Dns.read_tcp flow >>= function
-      | Error () -> Lwt.fail_with "couldn't read tcp"
+      Dns.read_tcp flow >|= function
+      | Error () ->
+        Log.err (fun m -> m "error while reading answer") ;
+        None
       | Ok data ->
-        match Packet.decode data with
-        | Ok ((_, _, `Query (answer, _), _, _, _) as res)
-          when Packet.is_reply header question res ->
-          (* collect TLSA pems *)
-          let tlsa =
-            match Domain_name.Map.find name answer with
-            | None -> None
-            | Some rrmap ->
-              match Rr_map.(find Tlsa rrmap) with
-              | None -> None
-              | Some (_, tlsas) ->
-                Rr_map.Tlsa_set.fold (fun tlsa acc ->
-                    match parse tlsa, acc with
-                    | None, acc -> acc
-                    | Some tlsa, _ -> Some tlsa)
-                  Rr_map.Tlsa_set.(filter good_tlsa tlsas)
-                  None
-          in
-          Lwt.return tlsa
-        | Ok res ->
-          Log.err (fun m -> m "expected a response, but got %a" Packet.pp_res res) ;
-          Lwt.return None
+        match cb data with
+        | Ok cert -> Some cert
         | Error e ->
-          Log.err (fun m -> m "error %a while decoding answer" Packet.pp_err e) ;
-          Lwt.return None
+          Log.err (fun m -> m "error %s while decoding answer" e) ;
+          None
 
   let initialise_csr hostname additionals seed =
     let private_key =

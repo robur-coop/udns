@@ -11,7 +11,7 @@
   (public_name ocertify)
   (package udns-cli)
   (modules ocertify)
-  (libraries udns udns-tsig udns-cli bos fpath x509 ptime ptime.clock.os nocrypto nocrypto.unix))
+  (libraries udns udns-certify udns-tsig udns-cli bos fpath x509 ptime ptime.clock.os nocrypto nocrypto.unix))
 
 (executable
   (name oupdate)
