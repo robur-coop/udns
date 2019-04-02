@@ -386,18 +386,10 @@ let safe_decode buf =
     Log.err (fun m -> m "bad edns version error %u while decoding@.%a"
                  i Cstruct.hexdump_pp buf) ;
     Error Udns_enum.BadVersOrSig
-(*  | Error (`UnsupportedRRTyp _ | `UnsupportedClass _ as e) ->
-    Log.err (fun m -> m "refusing %a while decoding@.%a"
-                 Packet.pp_err e Cstruct.hexdump_pp buf) ;
-    Error Udns_enum.Refused
-  | Error (`BadRRTyp _ | `BadClass _ | `UnsupportedOpcode _ as e) ->
-    Log.err (fun m -> m "not implemented %a while decoding@.%a"
-                 Packet.pp_err e Cstruct.hexdump_pp buf) ;
+  | Error (`Not_implemented (off, msg)) ->
+    Log.err (fun m -> m "not implemented at %d: %s while decoding@.%a"
+                off msg Cstruct.hexdump_pp buf) ;
     Error Udns_enum.NotImp
-  | Error (`BadContent x) ->
-    Log.err (fun m -> m "bad content error %s while decoding@.%a"
-                 x Cstruct.hexdump_pp buf) ;
-    Error Udns_enum.FormErr *)
   | Error e ->
     Log.err (fun m -> m "error %a while decoding@.%a"
                  Packet.pp_err e Cstruct.hexdump_pp buf) ;

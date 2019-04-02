@@ -584,8 +584,7 @@ end
 module Packet : sig
 
   type err = [
-    | `Invalid of int * string * int
-    | `Invalids of int * string * string
+    | `Not_implemented of int * string
     | `Leftover of int * string
     | `Malformed of int * string
     | `Partial

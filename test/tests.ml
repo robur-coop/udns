@@ -32,8 +32,7 @@ let p_err =
     type t = err
     let pp = pp_err
     let equal a b = match a, b with
-      | `Invalid _, `Invalid _
-      | `Invalids _, `Invalids _
+      | `Not_implemented _, `Not_implemented _
       | `Leftover _, `Leftover _
       | `Malformed _, `Malformed _
       | `Partial, `Partial
@@ -101,10 +100,10 @@ module Packet = struct
     Alcotest.(check (result h_ok p_err) "fifth encoded header can be decoded"
                 (Ok hdr') (Header.decode cs)) ;
     Alcotest.(check (result h_ok p_err) "header with bad opcode"
-                (Error (`Invalid (0, "opcode", 14)))
+                (Error (`Not_implemented (0, "opcode 14")))
                 (Header.decode (of_hex "0000 7000 0000 0000 0000 0000"))) ;
     Alcotest.(check (result h_ok p_err) "header with bad rcode"
-                (Error (`Invalid (0, "opcode", 14)))
+                (Error (`Malformed (0, "rcode 14")))
                 (Header.decode (of_hex "0000 000e 0000 0000 0000 0000"))) ;
     let hdr' =
       let flags = Header.FS.singleton `Authoritative in
@@ -149,23 +148,23 @@ module Packet = struct
   let bad_query () =
     let cs = of_hex "0000 0000 0001 0000 0000 0000 0000 0100 02" in
     Alcotest.(check (result q_ok p_err) "query with bad class"
-                (Error (`Invalid (0, "BadClass", 2)))
+                (Error (`Not_implemented (0, "BadClass 2")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 0100 03" in
     Alcotest.(check (result q_ok p_err) "query with unsupported class"
-                (Error (`Invalid (0, "UnsupportedClass", 0)))
+                (Error (`Not_implemented (0, "UnsupportedClass 0")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 0000 01" in
     Alcotest.(check (result q_ok p_err) "question with unsupported typ"
-                (Error (`Invalid (0, "typ", 0)))
+                (Error (`Not_implemented (0, "typ 0")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 2100 01" in
     Alcotest.(check (result q_ok p_err) "question with bad SRV"
-                (Error (`Invalids (0, "BadContent", "")))
+                (Error (`Malformed (0, "BadContent")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0102 0000 0200 01" in
     Alcotest.(check (result q_ok p_err) "question with bad hostname"
-                (Error (`Invalids (0, "BadContent", "")))
+                (Error (`Malformed (0, "BadContent")))
                 (decode cs))
 
   let regression0 () =

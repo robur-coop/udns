@@ -17,8 +17,7 @@ module Name = struct
   type name_offset_map = int Domain_name.Map.t
 
   type err = [
-    | `Invalid of int * string * int
-    | `Invalids of int * string * string
+    | `Not_implemented of int * string
     | `Leftover of int * string
     | `Malformed of int * string
     | `Partial
@@ -26,10 +25,9 @@ module Name = struct
   ]
 
   let pp_err ppf = function
-    | `Invalid (off, n, v) -> Fmt.pf ppf "invalid field %s at %d: %d" n off v
-    | `Invalids (off, n, v) -> Fmt.pf ppf "invalid field %s at %d: %s" n off v
+    | `Not_implemented (off, msg) -> Fmt.pf ppf "not implemented at %d: %s" off msg
     | `Leftover (off, n) -> Fmt.pf ppf "leftover %s at %d" n off
-    | `Malformed (off, n) -> Fmt.pf ppf "malformed packet at %d: %s" off n
+    | `Malformed (off, n) -> Fmt.pf ppf "malformed at %d: %s" off n
     | `Partial -> Fmt.string ppf "partial"
     | `Bad_edns_version version -> Fmt.pf ppf "bad edns version %d" version
 
@@ -44,7 +42,7 @@ module Name = struct
       | i when i >= ptr_tag ->
         let ptr = (i - ptr_tag) lsl 8 + Cstruct.get_uint8 buf (succ off) in
         Ok ((`P ptr, off), offsets, off + 2)
-      | i when i >= 64 -> Error (`Invalid (off, "label tag", i)) (* bit patterns starting with 10 or 01 *)
+      | i when i >= 64 -> Error (`Malformed (off, Fmt.strf "label tag 0x%x" i)) (* bit patterns starting with 10 or 01 *)
       | i -> (* this is clearly < 64! *)
         let name = Cstruct.to_string (Cstruct.sub buf (succ off) i) in
         aux ((name, off) :: offsets) (succ off + i)
@@ -74,7 +72,7 @@ module Name = struct
     if size > 255 then
       Error (`Malformed (off, "name too long"))
     else if hostname && not (Domain_name.is_hostname t) then
-      Error (`Invalids (off, "name is not a hostname", Domain_name.to_string t))
+      Error (`Malformed (off, Fmt.strf "name is not a hostname %a" Domain_name.pp t))
     else
       Ok (t, names, foff)
 
@@ -550,9 +548,9 @@ module Dnskey = struct
     and proto = Cstruct.get_uint8 buf (off + 2)
     and algo = Cstruct.get_uint8 buf (off + 3)
     in
-    guard (proto = 3) (`Invalid (off + 2, "dnskey protocol", proto)) >>= fun () ->
+    guard (proto = 3) (`Not_implemented (off + 2, Fmt.strf "dnskey protocol 0x%x" proto)) >>= fun () ->
     match int_to_algorithm algo with
-    | None -> Error (`Invalid (off + 3, "dnskey algorithm", algo))
+    | None -> Error (`Not_implemented (off + 3, Fmt.strf "dnskey algorithm 0x%x" algo))
     | Some algorithm ->
       let len = algorithm_b64_len algorithm in
       let key = Cstruct.sub buf (off + 4) len in
@@ -614,7 +612,7 @@ module Caa = struct
     let critical = Cstruct.get_uint8 buf off = 0x80
     and tl = Cstruct.get_uint8 buf (succ off)
     in
-    guard (tl > 0 && tl < 16) (`Invalid (succ off, "caa tag", tl)) >>= fun () ->
+    guard (tl > 0 && tl < 16) (`Not_implemented (succ off, Fmt.strf "caa tag 0x%x" tl)) >>= fun () ->
     let tag = Cstruct.sub buf (off + 2) tl in
     let tag = Cstruct.to_string tag in
     let vs = 2 + tl in
@@ -737,9 +735,9 @@ module Tlsa = struct
     | Some cert_usage, Some selector, Some matching_type ->
       let tlsa = { cert_usage ; selector ; matching_type ; data } in
       Ok (tlsa, names, off + len)
-    | None, _, _ -> Error (`Invalid (off, "tlsa cert usage", usage))
-    | _, None, _ -> Error (`Invalid (off + 1, "tlsa selector", selector))
-    | _, _, None -> Error (`Invalid (off + 2, "tlsa matching type", matching_type))
+    | None, _, _ -> Error (`Not_implemented (off, Fmt.strf "tlsa cert usage 0x%x" usage))
+    | _, None, _ -> Error (`Not_implemented (off + 1, Fmt.strf "tlsa selector 0x%x" selector))
+    | _, _, None -> Error (`Not_implemented (off + 2, Fmt.strf "tlsa matching type 0x%x" matching_type))
 
   let encode tlsa names buf off =
     Cstruct.set_uint8 buf off (cert_usage_to_int tlsa.cert_usage) ;
@@ -825,8 +823,8 @@ module Sshfp = struct
     | Some algorithm, Some typ ->
       let sshfp = { algorithm ; typ ; fingerprint } in
       Ok (sshfp, names, off + len)
-    | None, _ -> Error (`Invalid (off, "sshfp algorithm", algo))
-    | _, None -> Error (`Invalid (off + 1, "sshfp type", typ))
+    | None, _ -> Error (`Not_implemented (off, Fmt.strf "sshfp algorithm 0x%x" algo))
+    | _, None -> Error (`Not_implemented (off + 1, Fmt.strf "sshfp type 0x%x" typ))
 
   let encode sshfp names buf off =
     Cstruct.set_uint8 buf off (algorithm_to_int sshfp.algorithm) ;
@@ -993,7 +991,7 @@ module Tsig = struct
     let open Rresult.R.Infix in
     guard (Cstruct.len buf - off >= 6) `Partial >>= fun () ->
     let ttl = Cstruct.BE.get_uint32 buf off in
-    guard (ttl = 0l) (`Invalid (off, "tsig ttl is not zero", Int32.to_int ttl)) >>= fun () ->
+    guard (ttl = 0l) (`Malformed (off, Fmt.strf "tsig ttl is not zero %lu" ttl)) >>= fun () ->
     let len = Cstruct.BE.get_uint16 buf (off + 4) in
     let rdata_start = off + 6 in
     guard (Cstruct.len buf - rdata_start >= len) `Partial >>= fun () ->
@@ -1014,16 +1012,16 @@ module Tsig = struct
     guard (Cstruct.len buf >= rdata_end) `Partial >>= fun () ->
     guard (other_len = 0 || other_len = 6) `Partial >>= fun () -> (* TODO: better error! *)
     match algorithm_of_name algorithm, ptime_of_int64 signed, Udns_enum.int_to_rcode error with
-    | None, _, _ -> Error (`Invalids (off, "tsig algorithm", Domain_name.to_string algorithm))
-    | _, None, _ -> Error (`Invalid (off, "tsig timestamp", Int64.to_int signed))
-    | _, _, None -> Error (`Invalid (off, "tsig rcode", error))
+    | None, _, _ -> Error (`Not_implemented (off, Fmt.strf "tsig algorithm %a" Domain_name.pp algorithm))
+    | _, None, _ -> Error (`Malformed (off, Fmt.strf "tsig timestamp %Lu" signed))
+    | _, _, None -> Error (`Not_implemented (off, Fmt.strf "tsig rcode 0x%x" error))
     | Some algorithm, Some signed, Some error ->
       (if other_len = 0 then
          Ok None
        else
          let other = decode_48bit_time buf (off + 16 + mac_len) in
          match ptime_of_int64 other with
-         | None -> Error (`Invalid (off, "tsig other timestamp", Int64.to_int other))
+         | None -> Error (`Malformed (off, Fmt.strf "tsig other timestamp %Lu" other))
          | Some x -> Ok (Some x)) >>= fun other ->
       let fudge = Ptime.Span.of_int_s fudge in
       Ok ({ algorithm ; signed ; fudge ; mac ; original_id ; error ; other },
@@ -1226,7 +1224,7 @@ module Edns = struct
       (begin match tl with
          | 0 -> Ok None
          | 2 -> Ok (Some (Cstruct.BE.get_uint16 v 0))
-         | _ -> Error (`Invalid (off, "edns keepalive", tl))
+         | _ -> Error (`Not_implemented (off, Fmt.strf "edns keepalive 0x%x" tl))
        end >>= fun i ->
        Ok (Tcp_keepalive i, len))
     | Some `padding -> Ok (Padding tl, len)
@@ -1764,7 +1762,8 @@ module Rr_map = struct
     and len = Cstruct.BE.get_uint16 buf (off + 4)
     and rdata_start = off + 6
     in
-    guard (Int32.logand ttl 0x8000_0000l = 0l) (`Invalid (off, "bad TTL (high bit set)", Int32.to_int ttl)) >>= fun () ->
+    guard (Int32.logand ttl 0x8000_0000l = 0l)
+      (`Malformed (off, Fmt.strf "bad TTL (high bit set) %lu" ttl)) >>= fun () ->
     guard (Cstruct.len buf - rdata_start >= len) `Partial >>= fun () ->
     (match typ with
      | Udns_enum.SOA ->
@@ -1806,7 +1805,7 @@ module Rr_map = struct
      | Udns_enum.TXT ->
        Txt.decode names buf ~off:rdata_start ~len >>| fun (txt, names, off) ->
        (B (Txt, (ttl, Txt_set.of_list txt)), names, off)
-     | other -> Error (`Invalid (off, "unsupported RR typ", Udns_enum.rr_typ_to_int other))) >>= fun (b, names, rdata_end) ->
+     | other -> Error (`Not_implemented (off, Fmt.strf "unsupported RR typ %a" Udns_enum.pp_rr_typ other))) >>= fun (b, names, rdata_end) ->
     guard (len = rdata_end - rdata_start) (`Leftover (rdata_end, "rdata")) >>| fun () ->
     (b, names, rdata_end)
 
@@ -1861,17 +1860,17 @@ let decode_ntc names buf off =
   (* CLS is interpreted differently by OPT, thus no int_to_clas called here *)
   in
   match Udns_enum.int_to_rr_typ typ with
-  | None -> Error (`Invalid (off, "rrtyp", typ))
+  | None -> Error (`Not_implemented (off, Fmt.strf "rrtyp 0x%x" typ))
   | Some Udns_enum.(DNSKEY | TSIG | TXT | CNAME as t) ->
     Ok ((name, t, cls), names, off + 4)
   | Some Udns_enum.(TLSA | SRV as t) when Domain_name.is_service name ->
     Ok ((name, t, cls), names, off + 4)
   | Some Udns_enum.SRV -> (* MUST be service name *)
-    Error (`Invalids (off, "SRV must be a service name", Domain_name.to_string name))
+    Error (`Malformed (off, Fmt.strf "SRV must be a service name %a" Domain_name.pp name))
   | Some t when Domain_name.is_hostname name ->
     Ok ((name, t, cls), names, off + 4)
   | Some _ ->
-    Error (`Invalids (off, "must be a hostname", Domain_name.to_string name))
+    Error (`Malformed (off, Fmt.strf "record must be a hostname %a" Domain_name.pp name))
 
 module Packet = struct
 
@@ -1981,8 +1980,8 @@ module Packet = struct
       and rc = hdr land 0x000F
       in
       match Udns_enum.int_to_opcode op, Udns_enum.int_to_rcode rc with
-      | None, _ -> Error (`Invalid (2, "opcode", op))
-      | _, None -> Error (`Invalid (3, "rcode", rc))
+      | None, _ -> Error (`Not_implemented (2, Fmt.strf "opcode 0x%x" op))
+      | _, None -> Error (`Malformed (3, Fmt.strf "rcode %x" rc))
       | Some operation, Some rcode ->
         let id = Cstruct.BE.get_uint16 buf 0
         and query = hdr lsr 15 = 0
@@ -2026,7 +2025,7 @@ module Packet = struct
       decode_ntc names buf off >>= fun ((name, typ, c), names, off) ->
       match Udns_enum.int_to_clas c with
       | Some Udns_enum.IN -> Ok ((name, typ), names, off)
-      | _ -> Error (`Invalid (off, "bad class in question", c))
+      | _ -> Error (`Not_implemented (off, Fmt.strf "bad class in question 0x%x" c))
 
     let encode names buf off (name, typ) =
       encode_ntc names buf off (name, typ, Udns_enum.clas_to_int Udns_enum.IN)
@@ -2044,7 +2043,8 @@ module Packet = struct
   let decode_rr names buf off =
     let open Rresult.R.Infix in
     decode_ntc names buf off >>= fun ((name, typ, clas), names, off) ->
-    guard (clas = Udns_enum.clas_to_int Udns_enum.IN) (`Invalid (off, "rr class not IN", clas)) >>= fun () ->
+    guard (clas = Udns_enum.clas_to_int Udns_enum.IN)
+      (`Not_implemented (off, Fmt.strf "rr class not IN 0x%x" clas)) >>= fun () ->
     Rr_map.decode names buf off typ >>| fun (b, names, off) ->
     (name, b, names, off)
 
@@ -2078,11 +2078,13 @@ module Packet = struct
       Edns.decode buf ~off >>| fun (edns, off') ->
       (map, Some edns, None), names, off'
     | Udns_enum.TSIG when tsig ->
-      guard (clas = Udns_enum.(clas_to_int ANY_CLASS)) (`Invalid (off, "tsig class must be ANY", clas)) >>= fun () ->
+      guard (clas = Udns_enum.(clas_to_int ANY_CLASS))
+        (`Malformed (off, Fmt.strf "tsig class must be ANY 0x%x" clas)) >>= fun () ->
       Tsig.decode names buf ~off:off' >>| fun (tsig, names, off') ->
       (map, edns, Some (name, tsig, off)), names, off'
     | _ ->
-      guard (clas = Udns_enum.(clas_to_int IN)) (`Invalid (off, "additional class must be IN", clas)) >>= fun () ->
+      guard (clas = Udns_enum.(clas_to_int IN))
+        (`Malformed (off, Fmt.strf "additional class must be IN 0x%x" clas)) >>= fun () ->
       Rr_map.decode names buf off' typ >>| fun (b, names, off') ->
       (Name_rr_map.add name b map, edns, None), names, off'
 
@@ -2187,9 +2189,9 @@ module Packet = struct
       in
       guard (not (Header.FS.mem `Truncation hdr.Header.flags)) `Partial >>= fun () ->
       let empty = Domain_name.Map.empty in
-      guard (aucount = 0) (`Invalid (8,"AXFR with aucount > 0", aucount)) >>= fun () ->
+      guard (aucount = 0) (`Malformed (8, Fmt.strf "AXFR with aucount %d > 0" aucount)) >>= fun () ->
       if hdr.Header.query then begin
-        guard (ancount = 0) (`Invalid (6, "AXFR query with ancount > 0", ancount)) >>| fun () ->
+        guard (ancount = 0) (`Malformed (6, Fmt.strf "AXFR query with ancount %d > 0" ancount)) >>| fun () ->
         None, names, off
       end else begin
         (* TODO handle partial AXFR:
@@ -2197,7 +2199,7 @@ module Packet = struct
            - only first frame starts with SOA
            - last one ends with SOA *)
         guard (ancount >= 2)
-          (`Invalid (6, "AXFR needs at least two RRs in answer", ancount)) >>= fun () ->
+          (`Malformed (6, Fmt.strf "AXFR needs at least two RRs in answer %d" ancount)) >>= fun () ->
         decode_rr names buf off >>= fun (name, B (k, v), names, off) ->
         (* TODO: verify name == zname in question, also all RR sub of zname *)
         match k, v with
@@ -2261,9 +2263,9 @@ module Packet = struct
       let off' = off + 6 in
       guard (Cstruct.len buf >= off') `Partial >>= fun () ->
       let ttl = Cstruct.BE.get_uint32 buf off in
-      guard (ttl = 0l) (`Invalid (off, "prereq TTL not zero", Int32.to_int ttl)) >>= fun () ->
+      guard (ttl = 0l) (`Malformed (off, Fmt.strf "prereq TTL not zero %lu" ttl)) >>= fun () ->
       let rlen = Cstruct.BE.get_uint16 buf (off + 4) in
-      let r0 = guard (rlen = 0) (`Invalid (off + 4, "prereq rdlength must be zero", rlen)) in
+      let r0 = guard (rlen = 0) (`Malformed (off + 4, Fmt.strf "prereq rdlength must be zero %d" rlen)) in
       let open Udns_enum in
       match int_to_clas cls, typ with
       | Some ANY_CLASS, ANY -> r0 >>= fun () -> Ok (name, Name_inuse, names, off')
@@ -2273,7 +2275,7 @@ module Packet = struct
       | Some IN, _ ->
         Rr_map.decode names buf off typ >>= fun (rdata, names, off'') ->
         Ok (name, Exists_data rdata, names, off'')
-      | _ -> Error (`Invalid (off, "prereq bad class", cls))
+      | _ -> Error (`Malformed (off, Fmt.strf "prereq bad class 0x%x" cls))
 
     let encode_prereq names buf off count name = function
       | Exists typ ->
@@ -2330,8 +2332,8 @@ module Packet = struct
       guard (Cstruct.len buf >= off') `Partial >>= fun () ->
       let ttl = Cstruct.BE.get_uint32 buf off in
       let rlen = Cstruct.BE.get_uint16 buf (off + 4) in
-      let r0 = guard (rlen = 0) (`Invalid (off + 4, "update rdlength must be zero", rlen)) in
-      let ttl0 = guard (ttl = 0l) (`Invalid (off, "update ttl must be zero", Int32.to_int ttl)) in
+      let r0 = guard (rlen = 0) (`Malformed (off + 4, Fmt.strf "update rdlength must be zero %d" rlen)) in
+      let ttl0 = guard (ttl = 0l) (`Malformed (off, Fmt.strf "update ttl must be zero %lu" ttl)) in
       match Udns_enum.int_to_clas cls, typ with
       | Some Udns_enum.ANY_CLASS, Udns_enum.ANY ->
         ttl0 >>= fun () ->
@@ -2348,7 +2350,7 @@ module Packet = struct
       | Some Udns_enum.IN, _ ->
         Rr_map.decode names buf off typ >>= fun (rdata, names, off) ->
         Ok (name, Add rdata, names, off)
-      | _ -> Error (`Invalid (off, "bad update class", cls))
+      | _ -> Error (`Malformed (off, Fmt.strf "bad update class 0x%x" cls))
 
     let encode_update names buf off count name = function
       | Remove typ ->
@@ -2402,7 +2404,7 @@ module Packet = struct
         let base = match Domain_name.Map.find name map with None -> [] | Some x -> x in
         Domain_name.Map.add name (base @ [a]) map
       in
-      guard (snd question = Udns_enum.SOA) (`Invalid (off, "update question not SOA", Udns_enum.rr_typ_to_int (snd question))) >>= fun () ->
+      guard (snd question = Udns_enum.SOA) (`Malformed (off, Fmt.strf "update question not SOA %a" Udns_enum.pp_rr_typ (snd question))) >>= fun () ->
       decode_n add_to_list decode_prereq names buf off Domain_name.Map.empty prcount >>= fun (names, off, prereq) ->
       decode_n add_to_list decode_update names buf off Domain_name.Map.empty upcount >>= fun (names, off, update) ->
       Ok ((prereq, update), names, off)
@@ -2477,7 +2479,7 @@ module Packet = struct
           Udns_enum.rcode_to_int hdr.Header.rcode + e.extended_rcode lsl 4
         in
         match Udns_enum.int_to_rcode rcode with
-        | None -> Error (`Invalid (0, "extended rcode", rcode))
+        | None -> Error (`Malformed (0, Fmt.strf "extended rcode 0x%x" rcode))
         | Some rcode -> Ok ({ hdr with rcode })
       end
     | _ -> Ok hdr
@@ -2503,7 +2505,7 @@ module Packet = struct
       | Udns_enum.Update ->
         Update.decode hdr question buf names off >>| fun (update, names, off) ->
         `Update update, names, off, true, false
-      | x -> Error (`Invalid (2, "unsupported opcode", Udns_enum.opcode_to_int x))
+      | x -> Error (`Not_implemented (2, Fmt.strf "unsupported opcode %a" Udns_enum.pp_opcode x))
     end >>= fun (t, names, off, cont, allow_trunc) ->
     if cont then
       decode_additional names buf off allow_trunc >>= fun (additional, edns, tsig) ->
