@@ -45,30 +45,6 @@ let p_err =
 module Packet = struct
   let question_equal a b = Question.compare a b = 0
 
-(*  let prereq_equal a b = match a, b with
-    | Exists (name, typ), Exists (name', typ') ->
-      Domain_name.equal name name' && typ = typ'
-    | Exists_data (name, rd), Exists_data (name', rd') ->
-      Domain_name.equal name name' && compare_rdata rd rd' = 0
-    | Not_exists (name, typ), Not_exists (name', typ') ->
-      Domain_name.equal name name' && typ = typ'
-    | Name_inuse name, Name_inuse name' ->
-      Domain_name.equal name name'
-    | Not_name_inuse name, Not_name_inuse name' ->
-      Domain_name.equal name name'
-    | _ -> false
-
-  let update_equal a b = match a, b with
-    | Remove (name, typ), Remove (name', typ') ->
-      Domain_name.equal name name' && typ = typ'
-    | Remove_all name, Remove_all name' ->
-      Domain_name.equal name name'
-    | Remove_single (name, rd), Remove_single (name', rd') ->
-      Domain_name.equal name name' && compare_rdata rd rd' = 0
-    | Add rr, Add rr' ->
-      rr_equal rr rr'
-    | _ -> false
-*)
   let header_equal a b = Header.compare a b = 0
 
   let h_ok = Alcotest.testable Header.pp header_equal
