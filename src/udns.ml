@@ -1148,84 +1148,89 @@ end
 
 module Edns = struct
 
-  (* 16 bit *)
-  type edns_opt =
-    (* 0,Reserved,,[RFC6891] *)
-    | LLQ (* On-hold,[http://files.dns-sd.org/draft-sekar-dns-llq.txt] *)
-    | UL (* On-hold,[http://files.dns-sd.org/draft-sekar-dns-ul.txt] *)
-    | NSID (* NSID,Standard,[RFC5001] *)
-    (* 4,Reserved,,[draft-cheshire-edns0-owner-option] *)
-    | DAU (* DAU,Standard,[RFC6975] *)
-    | DHU (* DHU,Standard,[RFC6975] *)
-    | N3U (* N3U,Standard,[RFC6975] *)
-    | Client_subnet (* edns-client-subnet,Optional,[RFC7871] *)
-    | Expire (* Optional,[RFC7314] *)
-    | Cookie (* COOKIE,Standard,[RFC7873] *)
-    | TCP_keepalive (* edns-tcp-keepalive,Standard,[RFC7828] *)
-    | Padding (* Padding,Standard,[RFC7830] *)
-    | Chain (* CHAIN,Standard,[RFC7901] *)
-    | Key_tag (* edns-key-tag,Optional,[RFC8145] *)
-    (* 15-26945,Unassigned *)
-    | DeviceID (* DeviceID,Optional,[https://docs.umbrella.com/developer/networkdevices-api/identifying-dns-traffic2][Brian_Hartvigsen] *)
-  (* 26947-65000,Unassigned
-     65001-65534,Reserved for Local/Experimental Use,,[RFC6891]
-     65535,Reserved for future expansion,,[RFC6891] *)
-
-  let edns_opt_to_int = function
-    | LLQ -> 1
-    | UL -> 2
-    | NSID -> 3
-    | DAU -> 5
-    | DHU -> 6
-    | N3U -> 7
-    | Client_subnet -> 8
-    | Expire -> 9
-    | Cookie -> 10
-    | TCP_keepalive -> 11
-    | Padding -> 12
-    | Chain -> 13
-    | Key_tag -> 14
-    | DeviceID -> 26946
-  let int_to_edns_opt = function
-    | 1 -> Some LLQ
-    | 2 -> Some UL
-    | 3 -> Some NSID
-    | 5 -> Some DAU
-    | 6 -> Some DHU
-    | 7 -> Some N3U
-    | 8 -> Some Client_subnet
-    | 9 -> Some Expire
-    | 10 -> Some Cookie
-    | 11 -> Some TCP_keepalive
-    | 12 -> Some Padding
-    | 13 -> Some Chain
-    | 14 -> Some Key_tag
-    | 26946 -> Some DeviceID
-    | _ -> None
-  let edns_opt_to_string = function
-    | LLQ -> "LLQ"
-    | UL -> "UL"
-    | NSID -> "NSID"
-    | DAU -> "DAU"
-    | DHU -> "DHU"
-    | N3U -> "N3U"
-    | Client_subnet -> "Client subnet"
-    | Expire -> "Expire"
-    | Cookie -> "Cookie"
-    | TCP_keepalive -> "TCP keepalive"
-    | Padding -> "Padding"
-    | Chain -> "Chain"
-    | Key_tag -> "Key tag"
-    | DeviceID -> "Device ID"
-
-  let pp_edns_opt ppf t = Fmt.string ppf (edns_opt_to_string t)
-
   type extension =
     | Nsid of Cstruct.t
     | Cookie of Cstruct.t
     | Tcp_keepalive of int option
     | Padding of int
     | Extension of int * Cstruct.t
+
+  let pp_extension ppf = function
+    | Nsid cs -> Fmt.pf ppf "nsid %a" Cstruct.hexdump_pp cs
+    | Cookie cs -> Fmt.pf ppf "cookie %a" Cstruct.hexdump_pp cs
+    | Tcp_keepalive i -> Fmt.pf ppf "keepalive %a" Fmt.(option ~none:(unit "none") int) i
+    | Padding i -> Fmt.pf ppf "padding %d" i
+    | Extension (t, v) -> Fmt.pf ppf "unknown option %d: %a" t Cstruct.hexdump_pp v
+
+  let compare_extension a b = match a, b with
+    | Nsid a, Nsid b -> Cstruct.compare a b
+    | Nsid _, _ -> 1 | _, Nsid _ -> -1
+    | Cookie a, Cookie b -> Cstruct.compare a b
+    | Cookie _, _ -> 1 | _, Cookie _ -> -1
+    | Tcp_keepalive a, Tcp_keepalive b ->
+      begin match a, b with
+        | None, None -> 0
+        | None, Some _ -> -1
+        | Some _, None -> 1
+        | Some a, Some b -> int_compare a b
+      end
+    | Tcp_keepalive _, _ -> 1 | _, Tcp_keepalive _ -> -1
+    | Padding a, Padding b -> int_compare a b
+    | Padding _, _ -> 1 | _, Padding _ -> -1
+    | Extension (t, v), Extension (t', v') ->
+      andThen (int_compare t t') (Cstruct.compare v v')
+
+  (* tag is 16 bit, we don't support many *)
+  let extension_to_int = function
+    | Nsid _ -> 3
+    | Cookie _ -> 10
+    | Tcp_keepalive _ -> 11
+    | Padding _ -> 12
+    | Extension (tag, _) -> tag
+
+  let int_to_extension = function
+    | 3 -> Some `nsid
+    | 10 -> Some `cookie
+    | 11 -> Some `tcp_keepalive
+    | 12 -> Some `padding
+    | _ -> None
+
+  let extension_payload = function
+    | Nsid cs -> cs
+    | Cookie cs -> cs
+    | Tcp_keepalive i -> (match i with None -> Cstruct.create 0 | Some i -> let buf = Cstruct.create 2 in Cstruct.BE.set_uint16 buf 0 i ; buf)
+    | Padding i -> Cstruct.create i
+    | Extension (_, v) -> v
+
+  let encode_extension t buf off =
+    let code = extension_to_int t in
+    let v = extension_payload t in
+    let l = Cstruct.len v in
+    Cstruct.BE.set_uint16 buf off code ;
+    Cstruct.BE.set_uint16 buf (off + 2) l ;
+    Cstruct.blit v 0 buf (off + 4) l ;
+    off + 4 + l
+
+  let decode_extension buf ~off ~len =
+    let open Rresult.R.Infix in
+    let code = Cstruct.BE.get_uint16 buf off
+    and tl = Cstruct.BE.get_uint16 buf (off + 2)
+    in
+    let v = Cstruct.sub buf (off + 4) tl in
+    guard (len = tl + 4) (`Leftover (off, "edns extension")) >>= fun () ->
+    let len = tl + 4 in
+    match int_to_extension code with
+    | Some `nsid -> Ok (Nsid v, len)
+    | Some `cookie -> Ok (Cookie v, len)
+    | Some `tcp_keepalive ->
+      (begin match tl with
+         | 0 -> Ok None
+         | 2 -> Ok (Some (Cstruct.BE.get_uint16 v 0))
+         | _ -> Error (`Invalid (off, "edns keepalive", tl))
+       end >>= fun i ->
+       Ok (Tcp_keepalive i, len))
+    | Some `padding -> Ok (Padding tl, len)
+    | None -> Ok (Extension (code, v), len)
 
   type t = {
     extended_rcode : int ;
@@ -1246,24 +1251,6 @@ module Edns = struct
       let payload_size = opt.payload_size in
       Some payload_size, Some (create ~payload_size ())
 
-  let compare_extension a b = match a, b with
-    | Nsid a, Nsid b -> Cstruct.compare a b
-    | Nsid _, _ -> 1 | _, Nsid _ -> -1
-    | Cookie a, Cookie b -> Cstruct.compare a b
-    | Cookie _, _ -> 1 | _, Cookie _ -> -1
-    | Tcp_keepalive a, Tcp_keepalive b ->
-      begin match a, b with
-        | None, None -> 0
-        | None, Some _ -> -1
-        | Some _, None -> 1
-        | Some a, Some b -> int_compare a b
-      end
-    | Tcp_keepalive _, _ -> 1 | _, Tcp_keepalive _ -> -1
-    | Padding a, Padding b -> int_compare a b
-    | Padding _, _ -> 1 | _, Padding _ -> -1
-    | Extension (t, v), Extension (t', v') ->
-      andThen (int_compare t t') (Cstruct.compare v v')
-
   let compare a b =
     andThen (int_compare a.extended_rcode b.extended_rcode)
       (andThen (int_compare a.version b.version)
@@ -1274,38 +1261,10 @@ module Edns = struct
                   (compare (List.length a.extensions) (List.length b.extensions))
                   a.extensions b.extensions))))
 
-  let pp_extension ppf = function
-    | Nsid cs -> Fmt.pf ppf "nsid %a" Cstruct.hexdump_pp cs
-    | Cookie cs -> Fmt.pf ppf "cookie %a" Cstruct.hexdump_pp cs
-    | Tcp_keepalive i -> Fmt.pf ppf "keepalive %a" Fmt.(option ~none:(unit "none") int) i
-    | Padding i -> Fmt.pf ppf "padding %d" i
-    | Extension (t, v) -> Fmt.pf ppf "unknown option %d: %a" t Cstruct.hexdump_pp v
-
   let pp ppf opt =
     Fmt.(pf ppf "EDNS (ext %u version %u dnssec_ok %b payload_size %u extensions %a"
            opt.extended_rcode opt.version opt.dnssec_ok opt.payload_size
            (list ~sep:(unit ", ") pp_extension) opt.extensions)
-
-  let decode_extension buf ~off ~len =
-    let open Rresult.R.Infix in
-    let code = Cstruct.BE.get_uint16 buf off
-    and tl = Cstruct.BE.get_uint16 buf (off + 2)
-    in
-    let v = Cstruct.sub buf (off + 4) tl in
-    guard (len = tl + 4) (`Leftover (off, "edns extension")) >>= fun () ->
-    let len = tl + 4 in
-    match int_to_edns_opt code with
-    | Some NSID -> Ok (Nsid v, len)
-    | Some Cookie -> Ok (Cookie v, len)
-    | Some TCP_keepalive ->
-      (begin match tl with
-         | 0 -> Ok None
-         | 2 -> Ok (Some (Cstruct.BE.get_uint16 v 0))
-         | _ -> Error (`Invalid (off, "edns keepalive", tl))
-       end >>= fun i ->
-       Ok (Tcp_keepalive i, len))
-    | Some Padding -> Ok (Padding tl, len)
-    | _ -> Ok (Extension (code, v), len)
 
   let decode_extensions buf ~len =
     let open Rresult.R.Infix in
@@ -1339,21 +1298,6 @@ module Edns = struct
     (try decode_extensions exts_buf ~len with _ -> Error `Partial) >>= fun extensions ->
     let opt = { extended_rcode ; version ; dnssec_ok ; payload_size ; extensions } in
     Ok (opt, off + len)
-
-  let encode_extension t buf off =
-    let o_i = edns_opt_to_int in
-    let code, v = match t with
-      | Nsid cs -> o_i NSID, cs
-      | Cookie cs -> o_i Cookie, cs
-      | Tcp_keepalive i -> o_i TCP_keepalive, (match i with None -> Cstruct.create 0 | Some i -> let buf = Cstruct.create 2 in Cstruct.BE.set_uint16 buf 0 i ; buf)
-      | Padding i -> o_i Padding, Cstruct.create i
-      | Extension (t, v) -> t, v
-    in
-    let l = Cstruct.len v in
-    Cstruct.BE.set_uint16 buf off code ;
-    Cstruct.BE.set_uint16 buf (off + 2) l ;
-    Cstruct.blit v 0 buf (off + 4) l ;
-    off + 4 + l
 
   let encode_extensions t buf off =
     List.fold_left (fun off opt -> encode_extension opt buf off) off t
