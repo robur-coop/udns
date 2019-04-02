@@ -94,8 +94,9 @@ let do_txt nameserver domains _ =
                       Domain_name.pp domain msg))
 
 
-let do_any _nameserver _domains _ = assert false (* TODO *)
-
+let do_any _nameserver _domains _ =
+  (* TODO *)
+  Error (`Msg "ANY functionality is not present atm due to refactorings, come back later")
 
 let do_dkim nameserver (selector:string) domains _ =
   let domains = List.map (fun original_domain ->
