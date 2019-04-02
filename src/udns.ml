@@ -14,8 +14,7 @@ module Name = struct
       type t = int
       let compare = int_compare
     end)
-
-  open Domain_name
+  type name_offset_map = int Domain_name.Map.t
 
   type err = [
     | `Invalid of int * string * int
@@ -33,8 +32,6 @@ module Name = struct
     | `Malformed (off, n) -> Fmt.pf ppf "malformed packet at %d: %s" off n
     | `Partial -> Fmt.string ppf "partial"
     | `Bad_edns_version version -> Fmt.pf ppf "bad edns version %d" version
-
-  type offset_name_map = (Domain_name.t * int) Int_map.t
 
   let ptr_tag = 0xC0 (* = 1100 0000 *)
 
@@ -56,7 +53,7 @@ module Name = struct
     (try aux [] off with _ -> Error `Partial) >>= fun (l, offs, foff) ->
     (* treat last element special -- either Z or P *)
     (match l with
-     | `Z, off -> Ok (off, root, 1)
+     | `Z, off -> Ok (off, Domain_name.root, 1)
      | `P p, off -> match Int_map.find p names with
        | exception Not_found ->
          Error (`Malformed (off, "bad label offset: " ^ string_of_int p))
@@ -64,24 +61,22 @@ module Name = struct
     (* insert last label into names Map*)
     let names = Int_map.add off (name, size) names in
     (* fold over offs, insert into names Map, and reassemble the actual name *)
-    let t = Array.(append (to_array name) (make (List.length offs) "")) in
+    let t = Array.(append (Domain_name.to_array name) (make (List.length offs) "")) in
     let names, _, size =
       List.fold_left (fun (names, idx, size) (label, off) ->
           let s = succ size + String.length label in
           Array.set t idx label ;
-          let sub = of_array (Array.sub t 0 (succ idx)) in
+          let sub = Domain_name.of_array (Array.sub t 0 (succ idx)) in
           Int_map.add off (sub, s) names, succ idx, s)
-        (names, Array.length (to_array name), size) offs
+        (names, Array.length (Domain_name.to_array name), size) offs
     in
-    let t = of_array t in
+    let t = Domain_name.of_array t in
     if size > 255 then
       Error (`Malformed (off, "name too long"))
-    else if hostname && not (is_hostname t) then
-      Error (`Invalids (off, "name is not a hostname", to_string t))
+    else if hostname && not (Domain_name.is_hostname t) then
+      Error (`Invalids (off, "name is not a hostname", Domain_name.to_string t))
     else
       Ok (t, names, foff)
-
-  type name_offset_map = int Domain_name.Map.t
 
   let encode ?(compress = true) name names buf off =
     let encode_lbl lbl off =
@@ -96,18 +91,19 @@ module Name = struct
     let names, off =
       if compress then
         let rec one names off name =
-          let arr = to_array name in
+          let arr = Domain_name.to_array name in
           let l = Array.length arr in
           if l = 0 then
             names, z off
           else
-            match Map.find name names with
+            match Domain_name.Map.find name names with
             | None ->
               let last = Array.get arr (pred l)
               and rem = Array.sub arr 0 (pred l)
               in
               let l = encode_lbl last off in
-              one (Map.add name off names) l (of_array rem)
+              one (Domain_name.Map.add name off names) l
+                (Domain_name.of_array rem)
             | Some ptr ->
               let data = ptr_tag lsl 8 + ptr in
               Cstruct.BE.set_uint16 buf off data ;
@@ -116,7 +112,7 @@ module Name = struct
         one names off name
       else
         let rec one names off name =
-          let arr = to_array name in
+          let arr = Domain_name.to_array name in
           let l = Array.length arr in
           if l = 0 then
             names, z off
@@ -125,11 +121,156 @@ module Name = struct
             and rem = Array.sub arr 0 (pred l)
             in
             let l = encode_lbl last off in
-            one (Map.add name off names) l (of_array rem)
+            one (Domain_name.Map.add name off names) l
+              (Domain_name.of_array rem)
         in
         one names off name
     in
     names, off
+
+  let%expect_test "decode" =
+    let test ?hostname ?(map = Int_map.empty) ?(off = 0) data rmap roff =
+      match decode ?hostname map (Cstruct.of_string data) ~off with
+      | Error _ -> Format.printf "decode error"
+      | Ok (name, omap, ooff) ->
+        begin match Int_map.equal (fun (n, off) (n', off') ->
+            Domain_name.equal n n' && off = off') rmap omap, roff = ooff
+          with
+          | true, true -> Format.printf "%a" Domain_name.pp name
+          | false, _ -> Format.printf "map mismatch"
+          | _, false -> Format.printf "offset mismatch"
+        end
+    in
+    let test_err ?hostname ?(map = Int_map.empty) ?(off = 0) data =
+      match decode ?hostname map (Cstruct.of_string data) ~off with
+      | Error _ -> Format.printf "error (as expected)"
+      | Ok _ -> Format.printf "expected error, got ok"
+    in
+    let n_of_s = Domain_name.of_string_exn in
+    let map =
+      Int_map.add 0 (n_of_s "foo.com", 9)
+        (Int_map.add 4 (n_of_s "com", 5)
+           (Int_map.add 8 (Domain_name.root, 1) Int_map.empty))
+    in
+    test "\003foo\003com\000" map 9;
+    [%expect {|foo.com|}];
+    test ~map ~off:9 "\003foo\003com\000\xC0\000" (Int_map.add 9 (n_of_s "foo.com", 9) map) 11;
+    [%expect {|foo.com|}];
+    let map' =
+      Int_map.add 13 (n_of_s "foo.com", 9)
+        (Int_map.add 9 (n_of_s "bar.foo.com", 13) map)
+    in
+    test ~map ~off:9 "\003foo\003com\000\003bar\xC0\000" map' 15;
+    [%expect {|bar.foo.com|}];
+    let map' =
+      Int_map.add 14 (n_of_s "foo.com", 9)
+        (Int_map.add 9 (n_of_s "bar-.foo.com", 14) map)
+    in
+    test ~map ~off:9 "\003foo\003com\000\004bar-\xC0\000" map' 16;
+    [%expect {|bar-.foo.com|}];
+    let map' =
+      Int_map.add 0 (n_of_s "f23", 5) Int_map.(add 4 (Domain_name.root, 1) empty)
+    in
+    test "\003f23\000" map' 5;
+    [%expect {|f23|}];
+    let map' =
+      Int_map.add 0 (n_of_s ~hostname:false "23", 4)
+        (Int_map.add 3 (Domain_name.root, 1) Int_map.empty)
+    in
+    test ~hostname:false "\00223\000" map' 4;
+    [%expect {|23|}];
+    test_err "\003bar"; (* incomplete label *)
+    [%expect {|error (as expected)|}];
+    test_err "\xC0"; (* incomplete ptr *)
+    [%expect {|error (as expected)|}];
+    test_err "\005foo"; (* incomplete label *)
+    [%expect {|error (as expected)|}];
+    test_err "\xC0\x0A"; (* bad pointer *)
+    [%expect {|error (as expected)|}];
+    test_err "\xC0\x00"; (* cyclic pointer *)
+    [%expect {|error (as expected)|}];
+    test_err "\xC0\x01"; (* pointer to middle of pointer *)
+    [%expect {|error (as expected)|}];
+    test_err "\x40"; (* bad tag 0x40 *)
+    [%expect {|error (as expected)|}];
+    test_err "\x80"; (* bad tag 0x80 *)
+    [%expect {|error (as expected)|}];
+    test_err "\001-\000"; (* bad content "-" at start of label *)
+    [%expect {|error (as expected)|}];
+    test_err "\005foo-+\000"; (* bad content foo-+ in label *)
+    [%expect {|error (as expected)|}];
+    test_err "\00223\000"; (* bad content 23 in label *)
+    [%expect {|error (as expected)|}];
+    (* longest allowed domain name *)
+    let open Astring in
+    let max = "s23456789012345678901234567890123456789012345678901234567890123" in
+    let lst, _ = String.span ~max:61 max in
+    let full = n_of_s (String.concat ~sep:"." [ max ; max ; max ; lst ]) in
+    let map' =
+      Int_map.add 0 (full, 255)
+        (Int_map.add 64 (n_of_s (String.concat ~sep:"." [ max ; max ; lst ]), 191)
+           (Int_map.add 128 (n_of_s (String.concat ~sep:"." [ max ; lst ]), 127)
+              (Int_map.add 192 (n_of_s lst, 63)
+                 (Int_map.add 254 (Domain_name.root, 1) Int_map.empty))))
+    in
+    test ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3D" ^ lst ^ "\000")
+      map' 255 ;
+    [%expect {|s23456789012345678901234567890123456789012345678901234567890123.s23456789012345678901234567890123456789012345678901234567890123.s23456789012345678901234567890123456789012345678901234567890123.s234567890123456789012345678901234567890123456789012345678901|}];
+    test_err ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3E" ^ lst ^ "1\000"); (* name too long *)
+    [%expect {|error (as expected)|}];
+    test_err ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\000"); (* domain name really too long *)
+    [%expect {|error (as expected)|}]
+
+  let%expect_test "encode" =
+    let cs = Cstruct.create 30 in
+    let test_cs ?(off = 0) len =
+      Format.printf "%a" Cstruct.hexdump_pp (Cstruct.sub cs off len)
+    in
+    let test ?compress ?(map = Domain_name.Map.empty) ?(off = 0) name rmap roff =
+      let omap, ooff = encode ?compress name map cs off in
+      if Domain_name.Map.equal (fun a b -> int_compare a b = 0) rmap omap && roff = ooff then
+        Format.printf "ok"
+      else
+        Format.printf "error"
+    in
+    let n_of_s = Domain_name.of_string_exn in
+    test Domain_name.root Domain_name.Map.empty 1; (* compressed encode of root is good *)
+    [%expect {|ok|}];
+    test_cs 1;
+    [%expect {|00|}];
+    test ~compress:false Domain_name.root Domain_name.Map.empty 1;
+    [%expect {|ok|}];
+    test_cs 1;
+    [%expect {|00|}];
+    let map =
+      Domain_name.Map.add (n_of_s "foo.bar") 0
+        (Domain_name.Map.add (n_of_s "bar") 4 Domain_name.Map.empty)
+    in
+    test (n_of_s "foo.bar") map 9; (* encode of foo.bar is good *)
+    [%expect {|ok|}];
+    test_cs 9;
+    [%expect {|03 66 6f 6f 03 62 61 72  00|}];
+    test ~compress:false (n_of_s "foo.bar") map 9; (* uncompressed foo.bar is good *)
+    [%expect {|ok|}];
+    test_cs 9;
+    [%expect {|03 66 6f 6f 03 62 61 72  00|}];
+    let emap = Domain_name.Map.add (n_of_s "baz.foo.bar") 9 map in
+    test ~map ~off:9 (n_of_s "baz.foo.bar") emap 15; (* encode of baz.foo.bar is good *)
+    [%expect {|ok|}];
+    test_cs 15;
+    [%expect {|03 66 6f 6f 03 62 61 72  00 03 62 61 7a c0 00|}];
+    let map' =
+      Domain_name.Map.add (n_of_s "baz.foo.bar") 9
+        (Domain_name.Map.add (n_of_s "foo.bar") 13
+           (Domain_name.Map.add (n_of_s "bar") 17 Domain_name.Map.empty))
+    in
+    test ~compress:false ~map ~off:9 (n_of_s "baz.foo.bar") map' 22;
+    [%expect {|ok|}];
+    test_cs 22;
+    [%expect {|
+03 66 6f 6f 03 62 61 72  00 03 62 61 7a 03 66 6f
+6f 03 62 61 72 00|}]
+
 end
 
 (* start of authority *)
