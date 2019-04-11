@@ -111,14 +111,7 @@ let pp_stats pf s =
 
 let stats () = !s
 
-(* this could be improved:
-   lookup : t -> Domain_name.t -> Udns_enum.rr_typ -> int64 ->
-            (Dns_map.B, [ `NoErr | `NoDom | `ServFail | `Timeout ]) result
-
-   a bit more types for Dns_map (by providing some more type parameters)
-
-   or ask someone who knows more about GADT to help me fixing that data
-   structure properly. *)
+(* this could need a `Timeout error result *)
 
 let empty = LRU.empty
 
@@ -374,11 +367,6 @@ let find_nearest_ns rng ts t name =
     | [ x ] -> Some x
     | xs -> Some (List.nth xs (Randomconv.int ~bound:(List.length xs) rng))
   in
-  let root =
-    match pick (snd (List.split Udns_resolver_root.root_servers)) with
-    | None -> invalid_arg "not possible"
-    | Some ip -> ip
-  in
   let find_ns name = match cached t ts Udns_enum.NS name with
     | Ok (`Entry Rr_map.(B (Ns, (_, names))), _) -> Domain_name.Set.elements names
     | _ -> []
@@ -387,18 +375,19 @@ let find_nearest_ns rng ts t name =
     | _ -> []
   in
   let rec go nam =
-    if Domain_name.equal nam Domain_name.root then
-      `HaveIP (Domain_name.root, root)
-    else match pick (find_ns nam) with
-      | None -> go (Domain_name.drop_labels_exn nam)
-      | Some ns -> match pick (find_a ns) with
-        | None ->
-          if Domain_name.sub ~subdomain:ns ~domain:nam then
-            (* we actually need glue *)
+    match pick (find_ns nam) with
+    | None -> go (Domain_name.drop_labels_exn nam)
+    | Some ns -> match pick (find_a ns) with
+      | None ->
+        if Domain_name.sub ~subdomain:ns ~domain:nam then
+          (* we actually need glue *)
+          if Domain_name.(equal root nam) then begin
+            Logs.err (fun m -> m "couldn't find root server"); assert false
+          end else
             go (Domain_name.drop_labels_exn nam)
-          else
-            `NeedA ns
-        | Some ip -> `HaveIP (nam, ip)
+        else
+          `NeedA ns
+      | Some ip -> `HaveIP (nam, ip)
   in
   go name
 
