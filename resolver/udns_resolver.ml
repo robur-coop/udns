@@ -496,23 +496,34 @@ let handle t now ts query proto sender sport buf =
       t, [], []
 
 let query_root t now proto =
-  let q_name = Domain_name.root
-  and q_type = Udns_enum.NS
+  let root_ip () =
+    match pick t.rng (snd (List.split Udns_resolver_root.root_servers)) with
+    | None -> assert false
+    | Some x -> x
   in
-  let ip, cache =
-(*    match Udns_resolver_cache.find_ns t.cache t.rng now Domain_name.Set.empty q_name with
-    | `HaveIP ip, cache -> ip, cache
-      | _ ->*)
-      let roots = snd (List.split Udns_resolver_root.root_servers) in
-      (List.nth roots (Randomconv.int ~bound:(List.length roots) t.rng),
-       t.cache)
+  let ip =
+    match Udns_resolver_cache.cached t.cache now Udns_enum.NS Domain_name.root with
+    | Ok (`Entry Rr_map.(B (Ns, (_, names))), _) ->
+      let ips =
+        Domain_name.Set.fold (fun name acc ->
+            match Udns_resolver_cache.cached t.cache now Udns_enum.A name with
+            | Ok (`Entry Rr_map.(B (A, (_, ips))), _) ->
+              Rr_map.Ipv4_set.union ips acc
+            | _ -> acc)
+          names Rr_map.Ipv4_set.empty
+      in
+      begin match pick t.rng (Rr_map.Ipv4_set.elements ips) with
+        | Some ip -> ip
+        | None -> root_ip ()
+      end
+    | _ -> root_ip ()
   in
-  let q = (q_name, q_type)
+  let q = (Domain_name.root, Udns_enum.NS)
   and id = Randomconv.int16 t.rng
   in
   let edns = Some (Edns.create ()) in
   let el = (now, 0, proto, Domain_name.root, edns, ip, 53, q, id) in
-  let t = { t with transit = QM.add q el t.transit ; cache } in
+  let t = { t with transit = QM.add q el t.transit } in
   let cs, _ = Packet.encode ?edns proto (header id) q (`Query Packet.Query.empty) in
   t, (proto, ip, cs)
 
