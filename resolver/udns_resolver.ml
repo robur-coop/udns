@@ -436,12 +436,14 @@ let handle_delegation t ts proto sender sport header question p additional edns 
     error Udns_enum.FormErr
 
 let handle_error ?(error = Udns_enum.FormErr) proto sender sport buf =
+  assert false
+    (* TODO cleanup
   match Packet.Header.decode buf with
   | Error e ->
     Logs.err (fun m -> m "couldn't parse header %a:@.%a"
                  Packet.pp_err e Cstruct.hexdump_pp buf) ;
     []
-  | Ok header -> []
+       | Ok header -> [] *)
 (* attempt to parse first question and reply with it
    let empty =
       `Query { question = [] ; answer = [] ;

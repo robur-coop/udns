@@ -586,11 +586,20 @@ end
 module Packet : sig
 
   type err = [
-    | `Not_implemented of int * string
+    | `Bad_edns_version of int
     | `Leftover of int * string
     | `Malformed of int * string
+    | `Not_implemented of int * string
+    | `Notify_ack_answer_count of int
+    | `Notify_ack_authority_count of int
+    | `Notify_answer_count of int
+    | `Notify_authority_count of int
     | `Partial
-    | `Bad_edns_version of int
+    | `Query_answer_count of int
+    | `Query_authority_count of int
+    | `Request_rcode of Udns_enum.rcode
+    | `Update_ack_answer_count of int
+    | `Update_ack_authority_count of int
   ]
 
   val pp_err : err Fmt.t
@@ -613,21 +622,9 @@ module Packet : sig
 
     module FS : Set.S with type elt = Flags.t
 
-    type t = {
-      id : int ;
-      query : bool ;
-      operation : Udns_enum.opcode ;
-      rcode : Udns_enum.rcode ;
-      flags : FS.t
-    }
+    type t = int * FS.t
 
     val compare : t -> t -> int
-
-    val pp : t Fmt.t
-
-    val decode : Cstruct.t -> (t, err) result
-
-    val encode : Cstruct.t -> t -> unit
   end
 
   module Question : sig
@@ -645,8 +642,7 @@ module Packet : sig
   end
 
   module Axfr : sig
-    type t = (Soa.t * Name_rr_map.t) option
-    val empty : t
+    type t = Soa.t * Name_rr_map.t
     val pp : t Fmt.t
     val equal : t -> t -> bool
   end
@@ -675,43 +671,61 @@ module Packet : sig
     val equal : t -> t -> bool
   end
 
-  type t = [
-    | `Query of Query.t
-    | `Notify of Query.t
-    | `Axfr of Axfr.t
+  module Footer : sig
+    type t = Name_rr_map.t * Edns.t option * (Domain_name.t * Tsig.t * int) option
+  end
+
+  type request = [
+    | `Query
+    | `Notify of Soa.t option
+    | `Axfr_request
     | `Update of Update.t
   ]
 
+  type reply = [
+    | `Answer of Query.t
+    | `Notify_ack
+    | `Axfr_reply of Axfr.t
+    | `Update_ack
+  ]
+
+  type request_or_reply = [ request | reply ]
+
+  type t = Header.t * Udns_enum.rcode * Question.t * request_or_reply * Footer.t
+
   val pp : t Fmt.t
+
+  val pp_header : t Fmt.t
 
   val equal : t -> t -> bool
 
-  type res = Header.t * Question.t * t * Name_rr_map.t * Edns.t option * (Domain_name.t * Tsig.t * int) option
+  val decode : Cstruct.t -> (t, err) result
 
-  val pp_res : res Fmt.t
+  type reply_err = [ `Not_a_reply of request
+                   | `Id_mismatch of int * int
+                   | `Operation_mismatch of request * reply
+                   | `Question_mismatch of Question.t * Question.t ]
 
-  val equal_res : res -> res -> bool
+  val pp_reply_err : reply_err Fmt.t
 
-  val decode : Cstruct.t -> (res, err) result
-
-  val is_reply : ?not_error:bool -> ?not_truncated:bool -> Header.t -> Question.t -> res -> bool
-  (** [is_reply ~not_error ~not_truncated header question response] validates the reply, and returns either
-      [true] or [false] and logs the failure. The following basic checks are
+  val is_reply : Header.t -> Question.t -> request -> t ->
+    (unit, reply_err) result
+  (** [is_reply header question request reply] validates
+      that the [reply] match the [request], and returns either
+      [Ok ()] or an [Error]. The following basic checks are
       performed:
       {ul
-      {- Is the header identifier of [header] and [response] equal?}
-      {- Is [res] a reply (first bit set)?}
-      {- Is the operation of [header] and [res] the same?}
-      {- If [not_error] is [true] (the default): is the rcode of [header] NoError?}
-      {- If [not_truncated] is [true] (the default): is the [truncation] flag not set?}
-      {- Is the [question] and the question of [response] equal?}} *)
+      {- Is the header identifier of [request] and [reply] equal?}
+      {- Does the [request] operation match the [reply] operation?}
+      {- Is [question] and the question of [response] equal?}} *)
 
   val size_edns : int option -> Edns.t option -> proto -> bool -> int * Edns.t option
 
   val encode : ?max_size:int -> ?additional:Name_rr_map.t -> ?edns:Edns.t ->
-    proto -> Header.t -> Question.t -> t -> Cstruct.t * int
+    proto -> Header.t -> Question.t -> request_or_reply -> Cstruct.t * int
 
-  val error : Header.t -> Question.t -> Udns_enum.rcode -> (Cstruct.t * int) option
+  (* TODO : error and edns! *)
+  val error : Header.t -> Question.t -> request_or_reply -> Udns_enum.rcode -> (Cstruct.t * int) option
 
   val raw_error : Cstruct.t -> Udns_enum.rcode -> Cstruct.t option
 end

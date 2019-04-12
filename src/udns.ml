@@ -24,19 +24,37 @@ module Name = struct
   type name_offset_map = int Domain_name.Map.t
 
   type err = [
-    | `Not_implemented of int * string
+    | `Bad_edns_version of int
     | `Leftover of int * string
     | `Malformed of int * string
+    | `Not_implemented of int * string
+    | `Notify_ack_answer_count of int
+    | `Notify_ack_authority_count of int
+    | `Notify_answer_count of int
+    | `Notify_authority_count of int
     | `Partial
-    | `Bad_edns_version of int
+    | `Query_answer_count of int
+    | `Query_authority_count of int
+    | `Request_rcode of Udns_enum.rcode
+    | `Update_ack_answer_count of int
+    | `Update_ack_authority_count of int
   ]
 
   let pp_err ppf = function
-    | `Not_implemented (off, msg) -> Fmt.pf ppf "not implemented at %d: %s" off msg
+    | `Bad_edns_version version -> Fmt.pf ppf "bad edns version %d" version
     | `Leftover (off, n) -> Fmt.pf ppf "leftover %s at %d" n off
     | `Malformed (off, n) -> Fmt.pf ppf "malformed at %d: %s" off n
+    | `Not_implemented (off, msg) -> Fmt.pf ppf "not implemented at %d: %s" off msg
+    | `Notify_ack_answer_count an -> Fmt.pf ppf "notify ack answer count is %d" an
+    | `Notify_ack_authority_count au -> Fmt.pf ppf "notify ack authority count is %d" au
+    | `Notify_answer_count an -> Fmt.pf ppf "notify answer count is %d" an
+    | `Notify_authority_count au -> Fmt.pf ppf "notify authority count is %d" au
     | `Partial -> Fmt.string ppf "partial"
-    | `Bad_edns_version version -> Fmt.pf ppf "bad edns version %d" version
+    | `Query_answer_count an -> Fmt.pf ppf "query answer count is %d" an
+    | `Query_authority_count au -> Fmt.pf ppf "query authority count is %d" au
+    | `Request_rcode rc -> Fmt.pf ppf "query with rcode %a (must be noerr)" Udns_enum.pp_rcode rc
+    | `Update_ack_answer_count an -> Fmt.pf ppf "update ack answer count is %d" an
+    | `Update_ack_authority_count au -> Fmt.pf ppf "update ack authority count is %d" au
 
   let ptr_tag = 0xC0 (* = 1100 0000 *)
 
@@ -133,8 +151,8 @@ module Name = struct
     in
     names, off
 
-  (* enable once https://github.com/ocaml/dune/issues/897 is resolved
-  let%expect_test "decode" =
+  (* enable once https://github.com/ocaml/dune/issues/897 is resolved *)
+  let%expect_test "decode_name" =
     let test ?hostname ?(map = Int_map.empty) ?(off = 0) data rmap roff =
       match decode ?hostname map (Cstruct.of_string data) ~off with
       | Error _ -> Format.printf "decode error"
@@ -227,7 +245,7 @@ module Name = struct
     test_err ("\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\x3F" ^ max ^ "\000"); (* domain name really too long *)
     [%expect {|error (as expected)|}]
 
-  let%expect_test "encode" =
+  let%expect_test "encode_name" =
     let cs = Cstruct.create 30 in
     let test_cs ?(off = 0) len =
       Format.printf "%a" Cstruct.hexdump_pp (Cstruct.sub cs off len)
@@ -276,7 +294,7 @@ module Name = struct
     [%expect {|
 03 66 6f 6f 03 62 61 72  00 03 62 61 7a 03 66 6f
 6f 03 62 61 72 00|}]
-*)
+
 end
 
 (* start of authority *)
@@ -1972,20 +1990,21 @@ module Packet = struct
 
     module FS = Set.Make(Flags)
 
-    type t = {
-      id : int ;
-      query : bool ;
-      operation : Udns_enum.opcode ;
-      rcode : Udns_enum.rcode ;
-      flags : FS.t
-    }
+    type t = int * FS.t
 
-    let compare a b =
-      andThen (int_compare a.id b.id)
-        (andThen (compare a.query b.query)
-           (andThen (int_compare (Udns_enum.opcode_to_int a.operation) (Udns_enum.opcode_to_int b.operation))
-              (andThen (int_compare (Udns_enum.rcode_to_int a.rcode) (Udns_enum.rcode_to_int b.rcode))
-                 (FS.compare a.flags b.flags))))
+    let compare (id, flags) (id', flags') =
+      andThen (int_compare id id')
+        (FS.compare flags flags')
+
+    let pp ppf ((id, flags), query, operation, rcode) =
+      Fmt.pf ppf "%04X (%s) operation %a rcode @[%a@] flags: @[%a@]"
+        id (if query then "query" else "response")
+        Udns_enum.pp_opcode operation
+        Udns_enum.pp_rcode rcode
+        Fmt.(list ~sep:(unit ", ") Flags.pp) (FS.elements flags)
+
+    let eq (hdr, query, op, rc) (hdr', query', op', rc') =
+      compare hdr hdr' = 0 && rc = rc' && query = query' && op = op'
 
     let len = 12
 
@@ -2022,26 +2041,96 @@ module Packet = struct
         and query = hdr lsr 15 = 0
         and flags = decode_flags hdr
         in
-        Ok { id ; query ; operation ; rcode ; flags }
+        Ok ((id, flags), query, operation, rcode)
 
-    let encode_flags hdr =
-      FS.fold (fun f acc -> acc + Flags.number f) hdr.flags 0
+    let encode_flags flags =
+      FS.fold (fun f acc -> acc + Flags.number f) flags 0
 
-    let encode buf hdr =
-      let query = if hdr.query then 0x0000 else 0x8000 in
-      let flags = encode_flags hdr in
-      let op = (Udns_enum.opcode_to_int hdr.operation) lsl 11 in
-      let rcode = (Udns_enum.rcode_to_int hdr.rcode) land 0x000F in
+    let encode buf ((id, flags), query, operation, rcode) =
+      let query = if query then 0x0000 else 0x8000 in
+      let flags = encode_flags flags in
+      let op = (Udns_enum.opcode_to_int operation) lsl 11 in
+      let rcode = (Udns_enum.rcode_to_int rcode) land 0x000F in
       let header = query lor flags lor op lor rcode in
-      Cstruct.BE.set_uint16 buf 0 hdr.id ;
+      Cstruct.BE.set_uint16 buf 0 id ;
       Cstruct.BE.set_uint16 buf 2 header
 
-    let pp ppf hdr =
-      Fmt.pf ppf "%04X (%s) operation %a rcode @[%a@] flags: @[%a@]"
-        hdr.id (if hdr.query then "query" else "response")
-        Udns_enum.pp_opcode hdr.operation
-        Udns_enum.pp_rcode hdr.rcode
-        Fmt.(list ~sep:(unit ", ") Flags.pp) (FS.elements hdr.flags)
+    let%expect_test "encode_decode_header" =
+      let cs = Cstruct.create 12 in
+      let test_cs ?(off = 0) len =
+        Format.printf "%a" Cstruct.hexdump_pp (Cstruct.sub cs off len)
+      and test_hdr a b =
+        match b with
+        | Error e -> Format.printf "%a" pp_err e
+        | Ok b -> if eq a b then Format.printf "ok" else Format.printf "not ok"
+      in
+      let hdr = (1, FS.empty), true, Udns_enum.Query, Udns_enum.NoError in
+      encode cs hdr; (* basic query encoding works *)
+      test_cs 4;
+      [%expect {|00 01 00 00|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let hdr = (0x1010, FS.empty), false, Udns_enum.Query, Udns_enum.NXDomain in
+      encode cs hdr; (* second encoded header works *)
+      test_cs 4;
+      [%expect {|10 10 80 03|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let hdr = (0x0101, FS.singleton `Authentic_data), true, Udns_enum.Update, Udns_enum.NoError in
+      encode cs hdr; (* flags look nice *)
+      test_cs 4;
+      [%expect {|01 01 28 20|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let hdr = (0x0080, FS.singleton `Truncation), true, Udns_enum.Query, Udns_enum.NoError in
+      encode cs hdr; (* truncation flag *)
+      test_cs 4;
+      [%expect {|00 80 02 00|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let hdr = (0x8080, FS.singleton `Checking_disabled), true, Udns_enum.Query, Udns_enum.NoError in
+      encode cs hdr; (* checking disabled flag *)
+      test_cs 4;
+      [%expect {|80 80 00 10|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let hdr = (0x1234, FS.singleton `Authoritative), true, Udns_enum.Query, Udns_enum.NoError in
+      encode cs hdr; (* authoritative flag *)
+      test_cs 4;
+      [%expect {|12 34 04 00|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let hdr = (0xFFFF, FS.singleton `Recursion_desired), true, Udns_enum.Query, Udns_enum.NoError in
+      encode cs hdr; (* rd flag *)
+      test_cs 4;
+      [%expect {|ff ff 01 00|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let hdr =
+        let flags = FS.(add `Recursion_desired (singleton `Authoritative)) in
+        (0xE0E0, flags), true, Udns_enum.Query, Udns_enum.NoError
+      in
+      encode cs hdr; (* rd + auth *)
+      test_cs 4;
+      [%expect {|e0 e0 05 00|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let hdr = (0xAA00, FS.singleton `Recursion_available), true, Udns_enum.Query, Udns_enum.NoError in
+      encode cs hdr; (* ra *)
+      test_cs 4;
+      [%expect {|aa 00 00 80|}];
+      test_hdr hdr (decode cs);
+      [%expect {|ok|}];
+      let test_err = function
+        | Ok _ -> Format.printf "ok, expected error"
+        | Error _ -> Format.printf "ok"
+      in
+      let data = Cstruct.of_hex "0000 7000 0000 0000 0000 0000" in
+      test_err (decode data);
+      [%expect {|ok|}];
+      let data = Cstruct.of_hex "0000 000e 0000 0000 0000 0000" in
+      test_err (decode data);
+      [%expect {|ok|}]
   end
 
   module Question = struct
@@ -2064,6 +2153,7 @@ module Packet = struct
 
     let encode names buf off (name, typ) =
       encode_ntc names buf off (name, typ, Udns_enum.clas_to_int Udns_enum.IN)
+
   end
 
 
@@ -2131,13 +2221,6 @@ module Packet = struct
       | Ok ((map, edns, tsig), names, off') ->
         decode_n_additional names buf off' map edns tsig (pred n)
 
-  let decode_question buf =
-    let open Rresult.R.Infix in
-    guard (Cstruct.len buf >= 12) `Partial >>= fun () ->
-    let qcount = Cstruct.BE.get_uint16 buf 4 in
-    guard (qcount = 1) (`Malformed (4, "question count not one")) >>= fun () ->
-    Question.decode buf
-
   module Query = struct
 
     type t = Name_rr_map.t * Name_rr_map.t
@@ -2152,9 +2235,9 @@ module Packet = struct
       Fmt.pf ppf "answer %a@ authority %a"
         Name_rr_map.pp answer Name_rr_map.pp authority
 
-    let decode hdr _question buf names off =
+    let decode (_, flags) buf names off =
       let open Rresult.R.Infix in
-      let truncated = Header.FS.mem `Truncation hdr.Header.flags in
+      let truncated = Header.FS.mem `Truncation flags in
       let ancount = Cstruct.BE.get_uint16 buf 6
       and aucount = Cstruct.BE.get_uint16 buf 8
       in
@@ -2200,69 +2283,52 @@ module Packet = struct
 
   module Axfr = struct
 
-    type t = (Soa.t * Name_rr_map.t) option
+    type t = Soa.t * Name_rr_map.t
 
-    let empty = None
+    let equal (soa, entries) (soa', entries') =
+      Soa.compare soa soa' = 0 && Name_rr_map.equal entries entries'
 
-    let equal = opt_eq
-        (fun (soa, entries) (soa', entries') ->
-           Soa.compare soa soa' = 0 &&
-           Name_rr_map.equal entries entries')
-
-    let pp ppf = function
-      | None -> Fmt.string ppf "none"
-      | Some (soa, entries) ->
+    let pp ppf (soa, entries) =
         Fmt.pf ppf "soa %a data %a" Soa.pp soa Name_rr_map.pp entries
 
-    let decode hdr _question buf names off =
+    let decode (_, flags) buf names off ancount =
       let open Rresult.R.Infix in
-      let ancount = Cstruct.BE.get_uint16 buf 6
-      and aucount = Cstruct.BE.get_uint16 buf 8
-      in
-      guard (not (Header.FS.mem `Truncation hdr.Header.flags)) `Partial >>= fun () ->
+      guard (not (Header.FS.mem `Truncation flags)) `Partial >>= fun () ->
       let empty = Domain_name.Map.empty in
-      guard (aucount = 0) (`Malformed (8, Fmt.strf "AXFR with aucount %d > 0" aucount)) >>= fun () ->
-      if hdr.Header.query then begin
-        guard (ancount = 0) (`Malformed (6, Fmt.strf "AXFR query with ancount %d > 0" ancount)) >>| fun () ->
-        None, names, off
-      end else begin
-        (* TODO handle partial AXFR:
-           - only first frame must have the question, subsequent may have empty questions
-           - only first frame starts with SOA
-           - last one ends with SOA *)
-        guard (ancount >= 2)
-          (`Malformed (6, Fmt.strf "AXFR needs at least two RRs in answer %d" ancount)) >>= fun () ->
-        decode_rr names buf off >>= fun (name, B (k, v), names, off) ->
-        (* TODO: verify name == zname in question, also all RR sub of zname *)
-        match k, v with
-        | Soa, soa ->
-          decode_n Name_rr_map.add decode_rr names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
-          decode_rr names buf off >>= fun (name', B (k', v'), names, off) ->
-          begin
-            match k', v' with
-            | Soa, soa' ->
-              (* TODO: verify that answer does not contain a SOA!? *)
-              guard (Domain_name.equal name name')
-                (`Malformed (off, "AXFR SOA RRs do not use the same name")) >>= fun () ->
-              guard (Soa.compare soa soa' = 0)
-                (`Malformed (off, "AXFR SOA RRs are not equal")) >>| fun () ->
-              (Some ((soa, answer) : Soa.t * Name_rr_map.t)), names, off
-            | _ -> Error (`Malformed (off, "AXFR last RR in answer must be SOA"))
-          end
-        | _ -> Error (`Malformed (off, "AXFR first RR in answer must be SOA"))
-      end
+      (* TODO handle partial AXFR:
+         - only first frame must have the question, subsequent may have empty questions
+         - only first frame starts with SOA
+         - last one ends with SOA *)
+      guard (ancount >= 2)
+        (`Malformed (6, Fmt.strf "AXFR needs at least two RRs in answer %d" ancount)) >>= fun () ->
+      decode_rr names buf off >>= fun (name, B (k, v), names, off) ->
+      (* TODO: verify name == zname in question, also all RR sub of zname *)
+      match k, v with
+      | Soa, soa ->
+        decode_n Name_rr_map.add decode_rr names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
+        decode_rr names buf off >>= fun (name', B (k', v'), names, off) ->
+        begin
+          match k', v' with
+          | Soa, soa' ->
+            (* TODO: verify that answer does not contain a SOA!? *)
+            guard (Domain_name.equal name name')
+              (`Malformed (off, "AXFR SOA RRs do not use the same name")) >>= fun () ->
+            guard (Soa.compare soa soa' = 0)
+              (`Malformed (off, "AXFR SOA RRs are not equal")) >>| fun () ->
+            ((soa, answer) : Soa.t * Name_rr_map.t), names, off
+          | _ -> Error (`Malformed (off, "AXFR last RR in answer must be SOA"))
+        end
+      | _ -> Error (`Malformed (off, "AXFR first RR in answer must be SOA"))
 
-    let encode names buf off question = function
-      | None -> names, off
-      | Some (soa, entries) ->
-        (* TODO if this would truncate, should create another packet --
-           how does this interact with TSIG, is each individual packet signed? *)
-        (* serialise: SOA .. other data .. SOA *)
-        let (names, off), _ = Rr_map.encode (fst question) Soa soa names buf off in
-        let (names, off), count = encode_data entries names buf off in
-        let (names, off), _ = Rr_map.encode (fst question) Soa soa names buf off in
-        Cstruct.BE.set_uint16 buf 6 (count + 2) ;
-        names, off
+    let encode names buf off question (soa, entries) =
+      (* TODO if this would truncate, should create another packet --
+         how does this interact with TSIG, is each individual packet signed? *)
+      (* serialise: SOA .. other data .. SOA *)
+      let (names, off), _ = Rr_map.encode (fst question) Soa soa names buf off in
+      let (names, off), count = encode_data entries names buf off in
+      let (names, off), _ = Rr_map.encode (fst question) Soa soa names buf off in
+      Cstruct.BE.set_uint16 buf 6 (count + 2) ;
+      names, off
   end
 
   module Update = struct
@@ -2455,54 +2521,110 @@ module Packet = struct
       names, off
   end
 
-  type t = [
-    | `Query of Query.t
-    | `Notify of Query.t
-    | `Axfr of Axfr.t
+  module Footer = struct
+    type t = Name_rr_map.t * Edns.t option * (Domain_name.t * Tsig.t * int) option
+
+    let pp_tsig ppf (name, tsig, off) =
+      Fmt.pf ppf "tsig %a %a %d" Domain_name.pp name Tsig.pp tsig off
+
+    let pp ppf (add, edns, tsig) =
+      Fmt.pf ppf "additional %a@ EDNS %a@ TSIG %a"
+        Name_rr_map.pp add
+        Fmt.(option ~none:(unit "no") Edns.pp) edns
+        Fmt.(option ~none:(unit "no") pp_tsig) tsig
+
+    let eq_tsig (name, tsig, off) (name', tsig', off') =
+      Domain_name.equal name name' && Tsig.equal tsig tsig' && off = off'
+
+    let equal (add, edns, tsig) (add', edns', tsig') =
+      Name_rr_map.equal add add' &&
+      opt_eq (fun a b -> Edns.compare a b = 0) edns edns' &&
+      opt_eq eq_tsig tsig tsig'
+  end
+
+  type request = [
+    | `Query
+    | `Notify of Soa.t option
+    | `Axfr_request
     | `Update of Update.t
   ]
 
-  let equal a b = match a, b with
+  let equal_request a b = match a, b with
+    | `Query, `Query -> true
+    | `Notify soa, `Notify soa' -> opt_eq (fun a b -> Soa.compare a b = 0) soa soa'
+    | `Axfr_request, `Axfr_request -> true
     | `Update u, `Update u' -> Update.equal u u'
-    | `Query q, `Query q' -> Query.equal q q'
-    | `Notify n, `Notify n' -> Query.equal n n'
-    | `Axfr a, `Axfr a' -> Axfr.equal a a'
     | _ -> false
 
-  let pp ppf = function
-    | `Query q -> Query.pp ppf q
-    | `Notify n -> Query.pp ppf n
-    | `Axfr a -> Axfr.pp ppf a
-    | `Update u -> Update.pp ppf u
+  let pp_request ppf = function
+    | `Query -> Fmt.string ppf "query"
+    | `Notify soa -> Fmt.pf ppf "notify %a" Fmt.(option ~none:(unit "no") Soa.pp) soa
+    | `Axfr_request -> Fmt.string ppf "axfr request"
+    | `Update u -> Fmt.pf ppf "update %a" Update.pp u
 
-  type res = Header.t * Question.t * t * Name_rr_map.t * Edns.t option * (Domain_name.t * Tsig.t * int) option
+  type reply = [
+    | `Answer of Query.t
+    | `Notify_ack
+    | `Axfr_reply of Axfr.t
+    | `Update_ack
+  ]
 
-  let pp_tsig ppf (name, tsig, off) =
-    Fmt.pf ppf "tsig %a %a %d" Domain_name.pp name Tsig.pp tsig off
+  let equal_reply a b = match a, b with
+    | `Answer q, `Answer q' -> Query.equal q q'
+    | `Notify_ack, `Notify_ack -> true
+    | `Axfr_reply a, `Axfr_reply b -> Axfr.equal a b
+    | `Update_ack, `Update_ack -> true
+    | _ -> false
 
-  let pp_res ppf (header, question, t, additional, edns, tsig) =
-    Fmt.pf ppf "header %a@.question %a@.data %a@.additional %a@.edns %a@ tsig %a@ "
-      Header.pp header
-      Question.pp question
-      pp t
-      Name_rr_map.pp additional
-      Fmt.(option ~none:(unit "no") Edns.pp) edns
-      Fmt.(option ~none:(unit "no") pp_tsig) tsig
+  let pp_reply ppf = function
+    | `Answer a -> Fmt.pf ppf "answer %a" Query.pp a
+    | `Notify_ack -> Fmt.string ppf "notify ack"
+    | `Axfr_reply a -> Fmt.pf ppf "AXFR %a" Axfr.pp a
+    | `Update_ack -> Fmt.string ppf "update ack"
 
-  let equal_res (hdr, q, t, add, edns, tsig) (hdr', q', t', add', edns', tsig') =
+  type request_or_reply = [ request | reply ]
+
+  let req_rep_opcode = function
+    | `Query | `Axfr_request | `Answer _ | `Axfr_reply _ -> Udns_enum.Query
+    | `Notify _ | `Notify_ack -> Udns_enum.Notify
+    | `Update _ | `Update_ack -> Udns_enum.Update
+
+  let pp_req_rep ppf = function
+    | #request as r -> pp_request ppf r
+    | #reply as r -> pp_reply ppf r
+
+  type t = Header.t * Udns_enum.rcode * Question.t * request_or_reply * Footer.t
+
+  let pp_header ppf (hdr, rcode, _, req_rep, _) =
+    let opcode = req_rep_opcode req_rep in
+    let query = match req_rep with #request -> true | #reply -> false in
+    Header.pp ppf (hdr, query, opcode, rcode)
+
+  let equal (hdr, rcode, q, rr, foot) (hdr', rcode', q', rr', foot') =
     Header.compare hdr hdr' = 0 &&
+    rcode = rcode' &&
     Question.compare q q' = 0 &&
-    equal t t' &&
-    Name_rr_map.equal add add' &&
-    opt_eq (fun a b -> Edns.compare a b = 0) edns edns' &&
-    opt_eq (fun (name, tsig, off) (name', tsig', off') ->
-        Domain_name.equal name name' &&
-        Tsig.equal tsig tsig' &&
-        off = off') tsig tsig'
+    Footer.equal foot foot' &&
+    match rr with
+    | #request as a ->
+      begin match rr' with
+        | #request as b -> equal_request a b
+        | _ -> false
+      end
+    | #reply as a ->
+      match rr' with
+      | #reply as b -> equal_reply a b
+      | _ -> false
 
-  let decode_additional names buf off allow_trunc =
+  let pp ppf ((_, _, question, t, foot) as res) =
+    Fmt.pf ppf "header %a@ question %a@ data %a@ %a"
+      pp_header res
+      Question.pp question
+      pp_req_rep t
+      Footer.pp foot
+
+  let decode_additional names buf off allow_trunc adcount =
     let open Rresult.R.Infix in
-    let adcount = Cstruct.BE.get_uint16 buf 10 in
     decode_n_additional names buf off Domain_name.Map.empty None None adcount >>= function
     | `Partial (additional, edns, tsig) ->
       Log.warn (fun m -> m "truncated packet (allowed? %B)" allow_trunc) ;
@@ -2515,87 +2637,120 @@ module Packet = struct
                        n Cstruct.hexdump_pp (Cstruct.sub buf off n))) ;
       Ok (additional, edns, tsig)
 
-  let ext_rcode hdr = function
+  let ext_rcode rcode = function
     | Some e when e.Edns.extended_rcode > 0 ->
       begin
-        let rcode =
-          Udns_enum.rcode_to_int hdr.Header.rcode + e.extended_rcode lsl 4
+        let rcode' =
+          Udns_enum.rcode_to_int rcode + e.extended_rcode lsl 4
         in
-        match Udns_enum.int_to_rcode rcode with
-        | None -> Error (`Malformed (0, Fmt.strf "extended rcode 0x%x" rcode))
-        | Some rcode -> Ok ({ hdr with rcode })
+        match Udns_enum.int_to_rcode rcode' with
+        | None -> Error (`Malformed (0, Fmt.strf "extended rcode 0x%x" rcode'))
+        | Some rcode -> Ok rcode
       end
-    | _ -> Ok hdr
+    | _ -> Ok rcode
 
   let decode buf =
     let open Rresult.R.Infix in
-    Header.decode buf >>= fun hdr ->
-    decode_question buf >>= fun (question, names, off) ->
-    begin match hdr.Header.operation with
-      | Udns_enum.Query ->
-        begin match snd question with
-          | Udns_enum.AXFR ->
-            Axfr.decode hdr question buf names off >>| fun (axfr, names, off) ->
-            `Axfr axfr, names, off, true, false
-          | _ ->
-            Query.decode hdr question buf names off >>| fun (query, names, off, cont, allow_trunc) ->
-            `Query query, names, off, cont, allow_trunc
-        end
-      | Udns_enum.Notify ->
-        (* TODO notify has some restrictions: Q=1, AN>=0 (must be SOA) *)
-        Query.decode hdr question buf names off >>| fun (notify, names, off, cont, allow_trunc) ->
-        `Notify notify, names, off, cont, allow_trunc
-      | Udns_enum.Update ->
-        Update.decode hdr question buf names off >>| fun (update, names, off) ->
-        `Update update, names, off, true, false
-      | x -> Error (`Not_implemented (2, Fmt.strf "unsupported opcode %a" Udns_enum.pp_opcode x))
+    Header.decode buf >>= fun (hdr, query, operation, rcode) ->
+    let q_count = Cstruct.BE.get_uint16 buf 4
+    and an_count = Cstruct.BE.get_uint16 buf 6
+    and au_count = Cstruct.BE.get_uint16 buf 8
+    and ad_count = Cstruct.BE.get_uint16 buf 10
+    in
+    guard (q_count = 1) (`Malformed (4, "question count not one")) >>= fun () ->
+    Question.decode buf >>= fun (question, names, off) ->
+    begin
+      if query then begin
+        (* guard noerror - what's the point in handling error requests *)
+        guard (rcode = Udns_enum.NoError) (`Request_rcode rcode) >>= fun () ->
+        (* also guard for it not being truncated!? *)
+        begin match operation with
+          | Udns_enum.Query ->
+            guard (an_count = 0) (`Query_answer_count an_count) >>= fun () ->
+            guard (au_count = 0) (`Query_authority_count au_count) >>| fun () ->
+            begin match snd question with
+             | Udns_enum.AXFR -> `Axfr_request, names, off
+             | _ -> `Query, names, off
+            end
+          | Udns_enum.Notify ->
+            (* TODO notify has some restrictions: Q=1, AN>=0 (must be SOA) *)
+            guard (an_count = 0 || an_count = 1) (`Notify_answer_count an_count) >>= fun () ->
+            guard (au_count = 0) (`Notify_authority_count au_count) >>= fun () ->
+            Query.decode hdr buf names off >>| fun ((ans, _), names, off, _, _) ->
+            let soa = Name_rr_map.find (fst question) Rr_map.Soa ans in
+            `Notify soa, names, off
+          | Udns_enum.Update ->
+            Update.decode hdr question buf names off >>| fun (update, names, off) ->
+            `Update update, names, off
+          | x -> Error (`Not_implemented (2, Fmt.strf "unsupported opcode %a" Udns_enum.pp_opcode x))
+        end >>| fun (request, names, off) ->
+        request, names, off, true, false
+      end else begin match operation with
+        | Udns_enum.Query -> begin match snd question with
+            | Udns_enum.AXFR ->
+              guard (au_count = 0) (`Malformed (8, Fmt.strf "AXFR with aucount %d > 0" au_count)) >>= fun () ->
+              Axfr.decode hdr buf names off an_count >>| fun (axfr, names, off) ->
+              `Axfr_reply axfr, names, off, true, false
+            | _ ->
+              Query.decode hdr buf names off >>| fun (answer, names, off, cont, allow_trunc) ->
+              `Answer answer, names, off, cont, allow_trunc
+          end
+        | Udns_enum.Notify ->
+          guard (an_count = 0) (`Notify_ack_answer_count an_count) >>= fun () ->
+          guard (au_count = 0) (`Notify_ack_authority_count au_count) >>| fun () ->
+          `Notify_ack, names, off, true, false
+        | Udns_enum.Update ->
+          guard (an_count = 0) (`Update_ack_answer_count an_count) >>= fun () ->
+          guard (au_count = 0) (`Update_ack_authority_count au_count) >>| fun () ->
+          `Update_ack, names, off, true, false
+        | x -> Error (`Not_implemented (2, Fmt.strf "unsupported opcode %a"
+                                          Udns_enum.pp_opcode x))
+      end >>| fun (reply, names, off, cont, allow_trunc) ->
+        reply, names, off, cont, allow_trunc
     end >>= fun (t, names, off, cont, allow_trunc) ->
     if cont then
-      decode_additional names buf off allow_trunc >>= fun (additional, edns, tsig) ->
-      ext_rcode hdr edns >>| fun hdr' ->
-      (hdr', question, t, additional, edns, tsig)
+      decode_additional names buf off allow_trunc ad_count >>= fun (additional, edns, tsig) ->
+      ext_rcode rcode edns >>| fun rcode ->
+      (hdr, rcode, question, t, (additional, edns, tsig))
     else
-      Ok (hdr, question, t, Domain_name.Map.empty, None, None)
+      Ok (hdr, rcode, question, t, (Domain_name.Map.empty, None, None))
 
-  let is_reply ?(not_error = true) ?(not_truncated = true) hdr q ((hdr', q', _, _, _, _) as res) =
-    match
-      hdr.Header.id = hdr.Header.id,
-      hdr'.Header.query,
-      hdr.Header.operation = hdr'.Header.operation,
-      (if not_error then hdr'.Header.rcode = Udns_enum.NoError else true),
-      (if not_truncated then not (Header.FS.mem `Truncation hdr'.Header.flags) else true),
-      Question.compare q q' = 0
-    with
-    | true, false, true, true, true, true ->
-      (* TODO: make this strict? configurable? *)
-      if not (Domain_name.equal ~case_sensitive:true (fst q) (fst q')) then
-        Log.warn (fun m -> m "question is not case sensitive equal %a = %a"
-                      Domain_name.pp (fst q) Domain_name.pp (fst q')) ;
-      true
-    | false, _ ,_, _, _, _ ->
-      Log.warn (fun m -> m "header id mismatch, expected %d got %d in %a"
-                    hdr.Header.id hdr'.Header.id pp_res res) ;
-      false
-    | _, true, _, _, _, _ ->
-      Log.warn (fun m -> m "expected reply to %a, got a query %a"
-                    Question.pp q pp_res res);
-      false
-    | _, _, false, _, _, _ ->
-      Log.warn (fun m -> m "expected opcode %a to %a, but got %a"
-                    Header.pp hdr Question.pp q pp_res res) ;
-      false
-    | _, _, _, false, _, _ ->
-      Log.warn (fun m -> m "expected rcode noerror to %a %a, got %a"
-                    Header.pp hdr Question.pp q pp_res res) ;
-      false
-    | _, _, _, _, false, _ ->
-      Log.warn (fun m -> m "expected not truncated answer to %a %a, got %a"
-                    Header.pp hdr Question.pp q pp_res res) ;
-      false
-    | _, _, _, _, _, false ->
-      Log.warn (fun m -> m "question mismatch: expected reply to %a, got %a"
-                    Question.pp q pp_res res) ;
-      false
+  let op_match request reply = match request, reply with
+    | `Query, `Answer _ -> true
+    | `Notify _, `Notify_ack -> true
+    | `Axfr_request, `Axfr_reply _ -> true
+    | `Update _, `Update_ack -> true
+    | _ -> false
+
+  type reply_err = [ `Not_a_reply of request
+                   | `Id_mismatch of int * int
+                   | `Operation_mismatch of request * reply
+                   | `Question_mismatch of Question.t * Question.t ]
+
+  let pp_reply_err ppf = function
+    | `Not_a_reply req ->
+      Fmt.pf ppf "expected a reply, got a request %a" pp_request req
+    | `Id_mismatch (id, id') ->
+      Fmt.pf ppf "id mismatch, expected %04X got %04X" id id'
+    | `Operation_mismatch (req, reply) ->
+      Fmt.pf ppf "operation mismatch, request %a reply %a" pp_request req pp_reply reply
+    | `Question_mismatch (q, q') ->
+      Fmt.pf ppf "question mismatch, expected %a got %a" Question.pp q Question.pp  q'
+
+  let is_reply (id, _) q req ((id',_), _, q', req_rep, _) =
+    match req_rep with
+    | #request as r -> Error (`Not_a_reply r)
+    | #reply as reply ->
+      match id = id', op_match req reply, Question.compare q q' = 0 with
+      | true, true, true ->
+        (* TODO: make this strict? configurable? *)
+        if not (Domain_name.equal ~case_sensitive:true (fst q) (fst q')) then
+          Log.warn (fun m -> m "question is not case sensitive equal %a = %a"
+                       Domain_name.pp (fst q) Domain_name.pp (fst q'));
+        Ok ()
+      | false, _ ,_ -> Error (`Id_mismatch (id, id'))
+      | _, false, _ -> Error (`Operation_mismatch (req, reply))
+      | _, _, false -> Error (`Question_mismatch (q, q'))
 
   let max_udp = 1484 (* in MirageOS. using IPv4 this is max UDP payload via ethernet *)
   let max_reply_udp = 400 (* we don't want anyone to amplify! *)
@@ -2616,26 +2771,37 @@ module Packet = struct
     maximum, edns
 
   let encode_t names buf off question = function
-    | `Query q -> Query.encode names buf off question q
-    | `Notify n -> Query.encode names buf off question n
-    | `Axfr data -> Axfr.encode names buf off question data
+    | `Query | `Axfr_request
+    | `Notify_ack | `Update_ack -> names, off
+    | `Notify soa ->
+      begin match soa with
+        | None -> names, off
+        | Some soa ->
+          Cstruct.BE.set_uint16 buf 6 1;
+          let query = Domain_name.Map.singleton (fst question) Rr_map.(singleton Soa soa) in
+          Query.encode names buf off question (query, Name_rr_map.empty)
+      end
     | `Update u -> Update.encode names buf off question u
+    | `Answer q -> Query.encode names buf off question q
+    | `Axfr_reply data -> Axfr.encode names buf off question data
 
-  let encode_edns hdr edns buf off = match edns with
+  let encode_edns rcode edns buf off = match edns with
     | None -> off
     | Some edns ->
-      let extended_rcode = (Udns_enum.rcode_to_int hdr.Header.rcode) lsr 4 in
+      let extended_rcode = (Udns_enum.rcode_to_int rcode) lsr 4 in
       let adcount = Cstruct.BE.get_uint16 buf 10 in
       let off = Edns.encode { edns with Edns.extended_rcode } buf off in
       Cstruct.BE.set_uint16 buf 10 (adcount + 1) ;
       off
 
   let encode ?max_size ?(additional = Domain_name.Map.empty) ?edns protocol hdr question t =
-    let max, edns = size_edns max_size edns protocol hdr.Header.query in
+    let query = match t with #request -> true | #reply -> false in
+    let max, edns = size_edns max_size edns protocol query in
     let try_encoding buf =
       let off, trunc =
         try
-          Header.encode buf hdr ;
+          let opcode = req_rep_opcode t in
+          Header.encode buf (hdr, query, opcode, Udns_enum.NoError);
           let names, off = Question.encode Domain_name.Map.empty buf Header.len question in
           Cstruct.BE.set_uint16 buf 4 1 ;
           let names, off = encode_t names buf off question t in
@@ -2644,7 +2810,7 @@ module Packet = struct
           Cstruct.BE.set_uint16 buf 10 adcount ;
           (* TODO if edns embedding would truncate, we used to drop all other additionals and only encode EDNS *)
           (* TODO if additional would truncate, drop them (do not set truncation) *)
-          encode_edns hdr edns buf off, false
+          encode_edns Udns_enum.NoError edns buf off, false
         with Invalid_argument _ -> (* set truncated *)
           (* if we failed to store data into buf, set truncation bit! *)
           Cstruct.set_uint8 buf 2 (0x02 lor (Cstruct.get_uint8 buf 2)) ;
@@ -2665,17 +2831,17 @@ module Packet = struct
     in
     doit (min max 4000) (* (mainly for TCP) we use a page as initial allocation *)
 
-  let error header question rcode =
-    if not header.Header.query then
-      let header = { header with rcode } in
+  let error header question request_or_reply rcode =
+    match request_or_reply with
+    | #reply -> None
+    | #request ->
+      let opcode = req_rep_opcode request_or_reply in
       let errbuf = Cstruct.create max_reply_udp in
-      Header.encode errbuf header ;
+      Header.encode errbuf (header, false, opcode, rcode) ;
       let _names, off = Question.encode Domain_name.Map.empty errbuf Header.len question in
       Cstruct.BE.set_uint16 errbuf 4 1;
-      let off = encode_edns header (Some (Edns.create ())) errbuf off in
+      let off = encode_edns rcode (Some (Edns.create ())) errbuf off in
       Some (Cstruct.sub errbuf 0 off, max_reply_udp)
-    else
-      None
 
   let raw_error buf rcode =
     (* copy id from header, retain opcode, set rcode to ServFail
@@ -2727,4 +2893,3 @@ module Tsig_op = struct
     key:Dnskey.t -> Packet.Header.t -> Packet.Question.t -> Cstruct.t ->
     (Cstruct.t * Cstruct.t) option
 end
-

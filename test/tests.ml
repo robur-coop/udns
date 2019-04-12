@@ -42,122 +42,29 @@ let p_err =
   (module M: Alcotest.TESTABLE with type t = M.t)
 
 module Packet = struct
-  let question_equal a b = Question.compare a b = 0
-
-  let header_equal a b = Header.compare a b = 0
-
-  let h_ok = Alcotest.testable Header.pp header_equal
-
-  let q_ok =
-    let module M = struct
-      type t = res
-      let pp = pp_res
-      let equal = equal_res
-    end in
-    (module M: Alcotest.TESTABLE with type t = M.t)
-
-  let basic_header () =
-    let hdr = { Header.id = 1 ; query = true ; operation = Udns_enum.Query ;
-                rcode = Udns_enum.NoError ; flags = Header.FS.empty }
-    in
-    let cs = Cstruct.create 12 in
-    Header.encode cs hdr ;
-    Alcotest.check p_cs "first encoded header is good"
-      (of_hex "00 01 00 00") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "first encoded header can be decoded"
-                (Ok hdr) (Header.decode cs)) ;
-    let hdr' = { hdr with query = false ; rcode = Udns_enum.NXDomain } in
-    Header.encode cs hdr' ;
-    Alcotest.check p_cs "second encoded header' is good"
-      (of_hex "00 01 80 03") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "second encoded header can be decoded"
-                (Ok hdr') (Header.decode cs)) ;
-    let hdr' =
-      let flags = Header.FS.singleton `Authentic_data in
-      { hdr with Header.operation = Udns_enum.Update ; flags }
-    in
-    Header.encode cs hdr' ;
-    Alcotest.check p_cs "third encoded header' is good"
-      (of_hex "00 01 28 20") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "third encoded header can be decoded"
-                (Ok hdr') (Header.decode cs)) ;
-    let hdr' =
-      let flags = Header.FS.singleton `Truncation in
-      { hdr with Header.flags }
-    in
-    Header.encode cs hdr' ;
-    Alcotest.check p_cs "fourth encoded header' is good"
-      (of_hex "00 01 02 00") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "fourth encoded header can be decoded"
-                (Ok hdr') (Header.decode cs)) ;
-    let hdr' =
-      let flags = Header.FS.singleton `Checking_disabled in
-      { hdr with Header.flags } in
-    Header.encode cs hdr' ;
-    Alcotest.check p_cs "fifth encoded header' is good"
-      (of_hex "00 01 00 10") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "fifth encoded header can be decoded"
-                (Ok hdr') (Header.decode cs)) ;
-    Alcotest.(check (result h_ok p_err) "header with bad opcode"
-                (Error (`Not_implemented (0, "opcode 14")))
-                (Header.decode (of_hex "0000 7000 0000 0000 0000 0000"))) ;
-    Alcotest.(check (result h_ok p_err) "header with bad rcode"
-                (Error (`Malformed (0, "rcode 14")))
-                (Header.decode (of_hex "0000 000e 0000 0000 0000 0000"))) ;
-    let hdr' =
-      let flags = Header.FS.singleton `Authoritative in
-      { hdr with Header.flags }
-    in
-    Header.encode cs hdr' ;
-    Alcotest.check p_cs "sixth encoded header' is good"
-      (of_hex "00 01 04 00") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "sixth encoded header can be decoded"
-                (Ok hdr') (Header.decode cs)) ;
-    let hdr' =
-      let flags = Header.FS.singleton `Recursion_desired in
-      { hdr with Header.flags } in
-    Header.encode cs hdr' ;
-    Alcotest.check p_cs "seventh encoded header' is good"
-      (of_hex "00 01 01 00") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "seventh encoded header can be decoded"
-                (Ok hdr') (Header.decode cs)) ;
-    let hdr' =
-      let flags = Header.FS.(add `Recursion_desired (singleton `Authoritative)) in
-      { hdr with Header.flags }
-    in
-    Header.encode cs hdr' ;
-    Alcotest.check p_cs "eigth encoded header' is good"
-      (of_hex "00 01 05 00") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "eigth encoded header can be decoded"
-                (Ok hdr') (Header.decode cs)) ;
-    let hdr' =
-      let flags = Header.FS.singleton `Recursion_available in
-      { hdr with Header.flags } in
-    Header.encode cs hdr' ;
-    Alcotest.check p_cs "nineth encoded header' is good"
-      (of_hex "00 01 00 80") (Cstruct.sub cs 0 4) ;
-    Alcotest.(check (result h_ok p_err) "nineth encoded header can be decoded"
-                (Ok hdr') (Header.decode cs))
+  let t_ok =
+    let module M = Packet in
+    (module Packet: Alcotest.TESTABLE with type t = M.t)
 
   let bad_query () =
     let cs = of_hex "0000 0000 0001 0000 0000 0000 0000 0100 02" in
-    Alcotest.(check (result q_ok p_err) "query with bad class"
+    Alcotest.(check (result t_ok p_err) "query with bad class"
                 (Error (`Not_implemented (0, "BadClass 2")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 0100 03" in
-    Alcotest.(check (result q_ok p_err) "query with unsupported class"
+    Alcotest.(check (result t_ok p_err) "query with unsupported class"
                 (Error (`Not_implemented (0, "UnsupportedClass 0")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 0000 01" in
-    Alcotest.(check (result q_ok p_err) "question with unsupported typ"
+    Alcotest.(check (result t_ok p_err) "question with unsupported typ"
                 (Error (`Not_implemented (0, "typ 0")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 2100 01" in
-    Alcotest.(check (result q_ok p_err) "question with bad SRV"
+    Alcotest.(check (result t_ok p_err) "question with bad SRV"
                 (Error (`Malformed (0, "BadContent")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0102 0000 0200 01" in
-    Alcotest.(check (result q_ok p_err) "question with bad hostname"
+    Alcotest.(check (result t_ok p_err) "question with bad hostname"
                 (Error (`Malformed (0, "BadContent")))
                 (decode cs))
 
@@ -173,10 +80,7 @@ module Packet = struct
              4d 41 49 4c c0 56 78 39 c3 d1 00 00 2a 30 00 00
              03 84 00 12 75 00 00 00 2a 30|___}
     in
-    let header =
-      let flags = Header.FS.(add `Authoritative (add `Recursion_desired (singleton `Recursion_available))) in
-      { Header.id = 0xD4E4 ; query = false ; operation = Udns_enum.Query ;
-        rcode = Udns_enum.NXDomain ; flags }
+    let flags = Header.FS.(add `Authoritative (add `Recursion_desired (singleton `Recursion_available)))
     and soa = {
       Soa.nameserver = n_of_s "CON1R.NIPR.MIL" ;
       hostmaster =
@@ -187,13 +91,14 @@ module Packet = struct
     }
     in
     let res =
-      header, (n_of_s "6.16.150.138.in-addr.arpa", Udns_enum.PTR),
-      `Query (Domain_name.Map.empty,
-              Domain_name.Map.singleton (n_of_s "150.138.in-addr.arpa")
-                Rr_map.(singleton Soa soa)),
-      Name_rr_map.empty, None, None
+      (0xD4E4, flags), Udns_enum.NXDomain,
+      (n_of_s "6.16.150.138.in-addr.arpa", Udns_enum.PTR),
+      `Answer (Domain_name.Map.empty,
+               Domain_name.Map.singleton (n_of_s "150.138.in-addr.arpa")
+                 Rr_map.(singleton Soa soa)),
+      (Name_rr_map.empty, None, None)
     in
-    Alcotest.(check (result q_ok p_err) "regression 0 decodes"
+    Alcotest.(check (result t_ok p_err) "regression 0 decodes"
                 (Ok res) (decode data))
 
   let regression1 () =
@@ -201,16 +106,12 @@ module Packet = struct
                            73 06 72 69 73 65 75 70 03 6e 65 74 00 00 1c 00
                            01|___}
     in
-    let header =
-      let flags = Header.FS.singleton `Recursion_desired in
-      { Header.id = 0x83D9 ; query = true ; operation = Udns_enum.Query ;
-        rcode = Udns_enum.NoError ; flags }
-    in
+    let flags = Header.FS.singleton `Recursion_desired in
     let res =
-      header, (n_of_s "keys.riseup.net", Udns_enum.AAAA),
-      `Query Packet.Query.empty, Name_rr_map.empty, None, None
+      (0x83D9, flags), Udns_enum.NoError, (n_of_s "keys.riseup.net", Udns_enum.AAAA),
+      `Query, (Name_rr_map.empty, None, None)
     in
-    Alcotest.(check (result q_ok p_err) "regression 1 decodes"
+    Alcotest.(check (result t_ok p_err) "regression 1 decodes"
                 (Ok res) (decode data))
 
   let regression2 () =
@@ -222,12 +123,8 @@ module Packet = struct
                            02 63 6f 02 75 6b 00 59 5c bd ce 00 01 51 80 00
                            01 51 80 00 01 51 80 00 00 01 2c|___}
     in
-    let header =
-      let rcode = Udns_enum.NXDomain
-      and flags = Header.FS.singleton `Authoritative
-      in
-      { Header.query = false ; id = 0xAE00 ; operation = Udns_enum.Query ;
-        rcode ; flags }
+    let rcode = Udns_enum.NXDomain
+    and flags = Header.FS.singleton `Authoritative
     and soa = {
       Soa.nameserver = n_of_s ~hostname:false "212.58.230.200" ;
       hostmaster = n_of_s "bofh.bbc.co.uk" ;
@@ -235,13 +132,12 @@ module Packet = struct
       expiry = 0x00015180l ; minimum = 0x0000012cl
     } in
     let res =
-      header, (n_of_s "news.bbc.net.uk", Udns_enum.NS),
-      `Query (Domain_name.Map.empty,
-              Domain_name.Map.singleton (n_of_s "bbc.net.uk")
-                Rr_map.(singleton Soa soa)),
-      Name_rr_map.empty, None, None
+      (0xAE00, flags), rcode, (n_of_s "news.bbc.net.uk", Udns_enum.NS),
+      `Answer (Domain_name.Map.empty,
+               Domain_name.Map.singleton (n_of_s "bbc.net.uk") Rr_map.(singleton Soa soa)),
+      (Name_rr_map.empty, None, None)
     in
-    Alcotest.(check (result q_ok p_err) "regression 2 decodes"
+    Alcotest.(check (result t_ok p_err) "regression 2 decodes"
                 (Ok res) (decode data))
 
   let regression3 () =
@@ -251,12 +147,8 @@ module Packet = struct
         e801 3001 3001 3001 3000 0000 2901 c2 00
         0000 0000 00|___}
     in
-    let header =
-      let rcode = Udns_enum.NoError
-      and flags = Header.FS.(add `Recursion_desired (singleton `Recursion_available))
-      in
-      { Header.query = false ; id = 0xe213 ; operation = Udns_enum.Query ;
-        rcode ; flags }
+    let rcode = Udns_enum.NoError
+    and flags = Header.FS.(add `Recursion_desired (singleton `Recursion_available))
     and question =
       (Domain_name.of_string_exn ~hostname:false "foo.com", Udns_enum.MX)
     and answer =
@@ -269,10 +161,11 @@ module Packet = struct
     and edns = Edns.create ~payload_size:450 ()
     in
     let res =
-      header, question, `Query (answer, Domain_name.Map.empty),
-      Name_rr_map.empty, Some edns, None
+      (0xe213, flags), rcode, question,
+      `Answer (answer, Domain_name.Map.empty),
+      (Name_rr_map.empty, Some edns, None)
     in
-    Alcotest.(check (result q_ok p_err) "regression 4 decodes"
+    Alcotest.(check (result t_ok p_err) "regression 4 decodes"
                 (Ok res) (decode data))
 
   (* still not sure whether to allow this or not... -- since the resolver code
@@ -286,11 +179,7 @@ module Packet = struct
                            20 00 00 0e 10 00 12 75  00 00 00 01 2c 00 00 29
                            10 00 00 00 00 00 00 00|___}
     in
-    let header =
-      let rcode = Udns_enum.NXDomain in
-      { Header.query = false ; id = 0x9FCA ; operation = Udns_enum.Query ;
-        rcode ; flags = Header.FS.empty }
-    and question =
+    let question =
       (Domain_name.of_string_exn ~hostname:false "_tcp.keys.riseup.net", Udns_enum.NS)
     and authority =
       let soa = { Soa.nameserver = Domain_name.of_string_exn "primary.riseup.net" ;
@@ -303,11 +192,11 @@ module Packet = struct
     and edns = Edns.create ~payload_size:4096 ()
     in
     let res =
-      header, question,
-      `Query (Name_rr_map.empty, authority),
-      Name_rr_map.empty, Some edns, None
+      (0x9FCA, Header.FS.empty), Udns_enum.NXDomain, question,
+      `Answer (Name_rr_map.empty, authority),
+      (Name_rr_map.empty, Some edns, None)
     in
-    Alcotest.(check (result q_ok p_err) "regression 4 decodes"
+    Alcotest.(check (result t_ok p_err) "regression 4 decodes"
                 (Ok res) (decode data))
 
   let regression5 () =
@@ -316,20 +205,16 @@ module Packet = struct
                            03 62 62 63 03 6e 65 74  02 75 6b 00 00 02 00 01
                            00 00 29 05 cc 00 00 00  00 00 00|___}
     in
-    let header =
-      let rcode = Udns_enum.FormErr
-      and flags = Header.FS.singleton `Authoritative
-      in
-      { Header.query = false ; id = 0x5B12 ; operation = Udns_enum.Query ;
-        rcode ; flags }
+    let rcode = Udns_enum.FormErr
+    and flags = Header.FS.singleton `Authoritative
     and question =
       (Domain_name.of_string_exn "ns4.bbc.net.uk", Udns_enum.NS)
     in
     let res =
-      header, question, `Query Query.empty,
-      Name_rr_map.empty, None, None
+      (0x5B12, flags), rcode, question,
+      `Answer Query.empty, (Name_rr_map.empty, None, None)
     in
-    Alcotest.(check (result q_ok p_err) "regression 5 decodes"
+    Alcotest.(check (result t_ok p_err) "regression 5 decodes"
                 (Ok res) (decode data))
 
   let regression6 () =
@@ -556,10 +441,8 @@ module Packet = struct
 
   let regression7 () =
     (* encoding a remove_single in an update frame lead to wrong rdlength (off by 2) *)
-    let header =
-      let rcode = Udns_enum.NoError in
-      { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
-        rcode ; flags = Header.FS.empty }
+    let header = 0xAE00, Header.FS.empty
+    and rcode = Udns_enum.NoError
     and update =
       let up =
         Domain_name.Map.singleton
@@ -570,20 +453,19 @@ module Packet = struct
     and zone = n_of_s "example.com", Udns_enum.SOA
     in
     let res =
-      header, zone, `Update update,
-      Name_rr_map.empty, None, None
+      header, rcode, zone,
+      `Update update, (Name_rr_map.empty, None, None)
     in
+    let encoded = fst @@ Packet.encode `Udp header zone (`Update update) in
+    Cstruct.hexdump encoded;
     (* encode followed by decode should lead to same data *)
-    Alcotest.(check (result q_ok p_err) "regression 7 decode encode works"
-                (Ok res)
-                (decode @@ fst @@ Packet.encode `Udp header zone (`Update update)))
+    Alcotest.(check (result t_ok p_err) "regression 7 decode encode works"
+                (Ok res) (decode @@ encoded))
 
   let regression8 () =
     (* encoding a exists_data in an update frame lead to wrong rdlength (off by 2) *)
-    let header =
-      let rcode = Udns_enum.NoError in
-      { Header.query = true ; id = 0xAE00 ; operation = Udns_enum.Update ;
-        rcode ; flags = Header.FS.empty }
+    let header = 0xAE00, Header.FS.empty
+    and rcode = Udns_enum.NoError
     and prereq =
       let pre =
         Domain_name.Map.singleton (n_of_s "www.example.com")
@@ -592,9 +474,11 @@ module Packet = struct
       (pre, Domain_name.Map.empty)
     and zone = (n_of_s "example.com", Udns_enum.SOA)
     in
-    let res = header, zone, `Update prereq, Name_rr_map.empty, None, None in
+    let res = header, rcode, zone, `Update prereq,
+              (Name_rr_map.empty, None, None)
+    in
     (* encode followed by decode should lead to same data *)
-    Alcotest.(check (result q_ok p_err) "regression 8 decode encode works"
+    Alcotest.(check (result t_ok p_err) "regression 8 decode encode works"
                 (Ok res)
                 (decode @@ fst @@ Packet.encode `Udp header zone (`Update prereq)))
 
@@ -607,10 +491,8 @@ a8 6c 00 00 00 01 00 00  00 00 00 01 04 6e 71 73
 00 0a 00 08 c8 9a 2a f8  aa 77 31 af 00 09 00 00
 |}
     in
-    let header =
-      { Header.query = true ; id = 0xa86c ; operation = Udns_enum.Query ;
-                   rcode = Udns_enum.NoError ;
-        flags = Header.FS.empty }
+    let header = 0xa86c, Header.FS.empty
+    and rcode = Udns_enum.NoError
     and question = (n_of_s "nqsb.io", Udns_enum.A)
     and edns =
       let extensions = [
@@ -622,14 +504,13 @@ a8 6c 00 00 00 01 00 00  00 00 00 01 04 6e 71 73
       Edns.create ~payload_size:4096 ~extensions ()
     in
     let res =
-      header, question, `Query Query.empty,
-      Name_rr_map.empty, Some edns, None
+      header, rcode, question, `Query,
+      (Name_rr_map.empty, Some edns, None)
     in
-    Alcotest.(check (result q_ok p_err) "regression 9 decodes"
+    Alcotest.(check (result t_ok p_err) "regression 9 decodes"
                 (Ok res) (decode data))
 
   let code_tests = [
-    "basic header", `Quick, basic_header ;
     "bad query", `Quick, bad_query ;
     "regression0", `Quick, regression0 ;
     "regression1", `Quick, regression1 ;

@@ -13,23 +13,6 @@ let guard p err = if p then Ok () else Error err
 
 type proto = [ `Tcp | `Udp ]
 
-let authoritative = Packet.Header.FS.singleton `Authoritative
-
-let s_header h =
-  let open Packet.Header in
-  let flags = FS.union h.flags authoritative in
-  let flags = FS.remove `Authentic_data (FS.remove `Recursion_available flags) in
-  { h with query = false ; flags }
-
-let err header rcode =
-  let header =
-    let hdr = s_header header in
-    let flags = hdr.Packet.Header.flags in
-    let flags = if rcode = Udns_enum.NotAuth then Packet.Header.FS.remove `Authoritative flags else flags in
-    { hdr with flags }
-  in
-  header
-
 module Authentication = struct
 
   type operation = [
@@ -258,11 +241,28 @@ let find_glue trie typ name names =
         insert_rr map Udns_enum.AAAA name)
     names Domain_name.Map.empty
 
+let authoritative = Packet.Header.FS.singleton `Authoritative
+
+let reply_header (id, flags) =
+  let open Packet.Header in
+  let flags = FS.union flags authoritative in
+  let flags = FS.remove `Authentic_data (FS.remove `Recursion_available flags) in
+  (id, flags)
+
+(*let err header rcode =
+  let header =
+    let hdr = s_header header in
+    let flags = hdr.Packet.Header.flags in
+    let flags = if rcode = Udns_enum.NotAuth then Packet.Header.FS.remove `Authoritative flags else flags in
+    { hdr with flags }
+  in
+  header
+*)
+
 let lookup trie hdr name typ =
   (* TODO: should randomize answers + ad? *)
-  let hdr =
-    let hdr = s_header hdr in
-    { hdr with rcode = Udns_enum.NoError }
+  let hdr = s_header hdr
+  and rcode = Udns_enum.NoError
   in
   let r = match typ with
     | Udns_enum.ANY -> Udns_trie.lookup_any name trie
