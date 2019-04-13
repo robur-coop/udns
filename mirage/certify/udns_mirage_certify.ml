@@ -128,7 +128,7 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
     | Error (`Msg msg) ->
       Log.err (fun m -> m "error %s" msg) ;
       Lwt.return (Error (`Msg msg))
-    | Error ((`Decode _ | `Bad_reply _ | `Rcode _) as e) ->
+    | Error ((`Decode _ | `Bad_reply _ | `Unexpected_reply _) as e) ->
       Log.err (fun m -> m "query error %a, giving up" Udns_certify.pp_q_err e);
       Lwt.return (Error (`Msg "query error"))
     | Error `No_tlsa ->

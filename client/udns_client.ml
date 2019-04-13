@@ -14,7 +14,8 @@ let make_query protocol hostname
   fun record_type ->
   let question = (hostname, Rr_map.k_to_rr_typ record_type) in
   let header = Random.int 0xffff (* TODO *), Packet.Header.FS.singleton `Recursion_desired in
-  let cs , _ = Packet.encode protocol header question `Query in
+  let query = Packet.create header question `Query in
+  let cs , _ = Packet.encode protocol query in
   begin match protocol with
     | `Udp -> cs
     | `Tcp ->
@@ -43,41 +44,45 @@ let parse_response (type requested)
           Ok (Cstruct.sub buf 2 pkt_len)
       end
   end >>= fun buf ->
-  let to_msg = function Ok a -> Ok a | Error e -> Error (`Msg (Fmt.to_to_string Packet.pp_reply_err e)) in
-  match Packet.decode buf with
-  | Ok ((_, rcode, _, `Answer (answer, _), _) as res) when rcode = Udns_enum.NoError ->
-    to_msg (Packet.is_reply state.header state.question `Query res) >>= fun () ->
-    let rec follow_cname counter q_name =
-      if counter <= 0 then Error (`Msg "CNAME recursion too deep")
-      else
-        Domain_name.Map.find_opt q_name answer
-        |> R.of_option ~none:(fun () ->
-            R.error_msgf "Can't find relevant map in response:@ \
-                          %a in [%a]"
-              Domain_name.pp q_name
-              Name_rr_map.pp answer
-          ) >>= fun relevant_map ->
-        begin match Rr_map.find state.key relevant_map with
-          | Some response -> Ok response
-          | None ->
-            begin match Rr_map.(find Cname relevant_map) with
-              | None -> Error (`Msg "Invalid DNS response")
-              | Some (_ttl, redirected_host) ->
-                follow_cname (pred counter) redirected_host
-            end
-        end
-    in
-    follow_cname 20 (fst state.question)
-  | Ok (((id, _), _, question, `Answer a, (_additional, edns, tsig)) as res) ->
+  let to_msg t = function Ok a -> Ok a | Error e ->
     R.error_msgf
-      "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a%a  opt:%a tsig:%B@,@]"
-      Packet.pp_header res
-      id (fst state.header)
-      (Packet.Question.compare question state.question = 0)
-      Packet.Question.pp question
-      Packet.Query.pp a
-      (Fmt.option Udns.Edns.pp) edns
-      (match tsig with None -> false | Some _ -> true)
-  | Ok t -> Error (`Msg (Fmt.strf "Ok %a" Packet.pp t))
+      "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a%a  opt:%a tsig:%B@,failed: %a@,@]"
+      Packet.pp_header t
+      (fst t.header) (fst state.header)
+      (Packet.Question.compare t.question state.question = 0)
+      Packet.Question.pp t.question
+      Packet.pp_data t.data
+      (Fmt.option Udns.Edns.pp) t.edns
+      (match t.tsig with None -> false | Some _ -> true)
+      Packet.pp_reply_err e
+  in
+  match Packet.decode buf with
+  | Ok t ->
+    begin
+      to_msg t (Packet.is_reply state.header state.question `Query t) >>= function
+      | `Answer (answer, _) ->
+        let rec follow_cname counter q_name =
+          if counter <= 0 then Error (`Msg "CNAME recursion too deep")
+          else
+            Domain_name.Map.find_opt q_name answer
+            |> R.of_option ~none:(fun () ->
+                R.error_msgf "Can't find relevant map in response:@ \
+                              %a in [%a]"
+                  Domain_name.pp q_name
+                  Name_rr_map.pp answer
+              ) >>= fun relevant_map ->
+            begin match Rr_map.find state.key relevant_map with
+              | Some response -> Ok response
+              | None ->
+                begin match Rr_map.(find Cname relevant_map) with
+                  | None -> Error (`Msg "Invalid DNS response")
+                  | Some (_ttl, redirected_host) ->
+                    follow_cname (pred counter) redirected_host
+                end
+            end
+        in
+        follow_cname 20 (fst state.question)
+      | r -> Error (`Msg (Fmt.strf "Ok %a, expected answer" Packet.pp_reply r))
+    end
   | Error `Partial as err -> err
   | Error err -> R.error_msgf "Error parsing response: %a" Packet.pp_err err

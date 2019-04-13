@@ -45,7 +45,7 @@ val insertb : Domain_name.t -> Rr_map.b -> t -> t
 (** [insertb k b t] insert [b] under [k] in [t].  The type is already included in
     [b].  Existing entries are replaced. *)
 
-val remove_rr : Domain_name.t -> Udns_enum.rr_typ -> t -> t
+val remove_rr : Domain_name.t -> Rr.t -> t -> t
 (** [remove_rr k ty t] removes [k, ty] from [t].  If [ty] is {!Udns_enum.ANY}, all
     entries of [k] are removed.  Beware, this may lead to a [t] where the
     initially mentioned invariants are violated. *)
@@ -64,7 +64,7 @@ type err = [ `Missing_soa of Domain_name.t
            | `Cname_other of Domain_name.t
            | `Any_not_allowed of Domain_name.t
            | `Bad_ttl of Domain_name.t * Rr_map.b
-           | `Empty of Domain_name.t * Udns_enum.rr_typ
+           | `Empty of Domain_name.t * Rr.t
            | `Missing_address of Domain_name.t
            | `Soa_not_ns of Domain_name.t ]
 
@@ -89,7 +89,7 @@ val zone : Domain_name.t -> t ->
    | `NotAuthoritative
    | `NotFound of Domain_name.t * Soa.t ]) result
 
-val lookupb : Domain_name.t -> Udns_enum.rr_typ -> t ->
+val lookupb : Domain_name.t -> Rr.t -> t ->
   (Rr_map.b * (Domain_name.t * int32 * Domain_name.Set.t),
    [> `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
    | `EmptyNonTerminal of Domain_name.t * Soa.t
@@ -112,7 +112,7 @@ val lookup_any : Domain_name.t -> t ->
    | `NotAuthoritative
    | `NotFound of Domain_name.t * Soa.t ]) result
 
-val lookup_ignore : Domain_name.t -> Udns_enum.rr_typ -> t ->
+val lookup_ignore : Domain_name.t -> Rr.t -> t ->
   (Rr_map.b, unit) result
 (** [lookup_ignore k ty t] finds a [k, ty] in [t], which may lead to an error.
     It ignores potential DNS invariants, e.g. that there is no surrounding zone. *)

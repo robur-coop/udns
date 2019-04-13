@@ -200,7 +200,7 @@ type err = [ `Missing_soa of Domain_name.t
            | `Cname_other of Domain_name.t
            | `Any_not_allowed of Domain_name.t
            | `Bad_ttl of Domain_name.t * Rr_map.b
-           | `Empty of Domain_name.t * Udns_enum.rr_typ
+           | `Empty of Domain_name.t * Rr.t
            | `Missing_address of Domain_name.t
            | `Soa_not_ns of Domain_name.t ]
 
@@ -233,12 +233,12 @@ let check trie =
         | B (Dnskey, (ttl, keys)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Dnskey_set.is_empty keys then
-            Error (`Empty (name, Udns_enum.DNSKEY))
+            Error (`Empty (name, Rr.DNSKEY))
           else Ok ()
         | B (Ns, (ttl, names)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Domain_name.Set.cardinal names = 0 then
-            Error (`Empty (name, Udns_enum.NS))
+            Error (`Empty (name, Rr.NS))
           else
             let domain = match state' with `None -> name | `Soa zone -> zone in
             Domain_name.Set.fold (fun name r ->
@@ -253,7 +253,7 @@ let check trie =
           if ttl < 0l then
             Error (`Bad_ttl (name, v))
           else if Mx_set.is_empty mxs then
-            Error (`Empty (name, Udns_enum.MX))
+            Error (`Empty (name, Rr.MX))
           else
             let domain = match state' with `None -> name | `Soa zone -> zone in
             Mx_set.fold (fun { mail_exchange ; _ } r ->
@@ -277,42 +277,42 @@ let check trie =
         | B (Txt, (ttl, txts)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Txt_set.is_empty txts then
-            Error (`Empty (name, Udns_enum.TXT))
+            Error (`Empty (name, Rr.TXT))
           else if
             Txt_set.exists (fun s -> String.length s > 0) txts
           then
             Ok ()
           else
-            Error (`Empty (name, Udns_enum.TXT))
+            Error (`Empty (name, Rr.TXT))
         | B (A, (ttl, a)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Ipv4_set.is_empty a then
-            Error (`Empty (name, Udns_enum.A))
+            Error (`Empty (name, Rr.A))
           else Ok ()
         | B (Aaaa, (ttl, aaaa)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Ipv6_set.is_empty aaaa then
-            Error (`Empty (name, Udns_enum.AAAA))
+            Error (`Empty (name, Rr.AAAA))
           else Ok ()
         | B (Srv, (ttl, srvs)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Srv_set.is_empty srvs then
-            Error (`Empty (name, Udns_enum.SRV))
+            Error (`Empty (name, Rr.SRV))
           else Ok ()
         | B (Caa, (ttl, caas)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Caa_set.is_empty caas then
-            Error (`Empty (name, Udns_enum.CAA))
+            Error (`Empty (name, Rr.CAA))
           else Ok ()
         | B (Tlsa, (ttl, tlsas)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Tlsa_set.is_empty tlsas then
-            Error (`Empty (name, Udns_enum.TLSA))
+            Error (`Empty (name, Rr.TLSA))
           else Ok ()
         | B (Sshfp, (ttl, sshfps)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Sshfp_set.is_empty sshfps then
-            Error (`Empty (name, Udns_enum.SSHFP))
+            Error (`Empty (name, Rr.SSHFP))
           else Ok ())
       map (Ok ()) >>= fun () ->
     M.fold (fun lbl (N (sub, map)) r ->
@@ -373,7 +373,7 @@ let remove k ty t =
 
 let remove_rr k ty t =
   let remove sub map =
-    if ty = Udns_enum.ANY then
+    if ty = Rr.ANY then
       N (sub, Rr_map.empty)
     else
       let map' = Rr_map.remove_rr ty map in
@@ -401,7 +401,7 @@ let pp_err ppf = function
   | `Cname_other name -> Fmt.pf ppf "%a contains a cname record, and also other entries" Domain_name.pp name
   | `Any_not_allowed name -> Fmt.pf ppf "resource type ANY is not allowed, but present for %a" Domain_name.pp name
   | `Bad_ttl (name, v) -> Fmt.pf ppf "bad TTL for %a %a" Domain_name.pp name Rr_map.pp_b v
-  | `Empty (name, typ) -> Fmt.pf ppf "%a empty %a" Domain_name.pp name Udns_enum.pp_rr_typ typ
+  | `Empty (name, typ) -> Fmt.pf ppf "%a empty %a" Domain_name.pp name Rr.pp typ
   | `Missing_address name -> Fmt.pf ppf "missing address record for %a" Domain_name.pp name
   | `Soa_not_ns name -> Fmt.pf ppf "%a nameserver of SOA is not in nameserver set" Domain_name.pp name
 

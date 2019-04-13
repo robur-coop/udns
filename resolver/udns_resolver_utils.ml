@@ -173,11 +173,15 @@ let find_soa name authority =
   in
   try Some (go name) with Invalid_argument _ -> None
 
-let nxdomain (name, _typ) hdr (answer, authority) =
+let nxdomain (_, flags) (name, _typ) data =
   (* we can't do much if authoritiative is not set (some auth dns do so) *)
   (* There are cases where answer is non-empty, but contains a CNAME *)
   (* RFC 2308 Sec 1 + 2.1 show that NXDomain is for the last QNAME! *)
   (* -> need to potentially extract CNAME(s) *)
+  let answer, authority = match data with
+    | None -> Name_rr_map.empty, Name_rr_map.empty
+    | Some x -> x
+  in
   let cname_opt =
     let rec go acc name =
       match Domain_name.Map.find name answer with
@@ -190,7 +194,7 @@ let nxdomain (name, _typ) hdr (answer, authority) =
   in
   let soa = find_soa name authority in
   (* since NXDomain have CNAME semantics, we store them as CNAME *)
-  let rank = if Packet.Header.FS.mem `Authoritative hdr.Packet.Header.flags then AuthoritativeAnswer else NonAuthoritativeAnswer in
+  let rank = if Packet.Header.FS.mem `Authoritative flags then AuthoritativeAnswer else NonAuthoritativeAnswer in
   (* we conclude NXDomain, there are 3 cases we care about:
      no soa in authority and no cname answer -> inject an invalid_soa (avoid loops)
      a matching soa, no cname -> NoDom q_name
@@ -209,7 +213,7 @@ let nxdomain (name, _typ) hdr (answer, authority) =
         rrs
   in
   (* the cname does not matter *)
-  List.map (fun (name, res) -> Udns_enum.CNAME, name, rank, res) entries
+  List.map (fun (name, res) -> Rr.CNAME, name, rank, res) entries
 
 let noerror_stub (name, typ) (answer, authority) =
   (* no glue, just answers - but get all the cnames *)
@@ -217,7 +221,7 @@ let noerror_stub (name, typ) (answer, authority) =
     match Domain_name.Map.find name answer with
     | None -> None
     | Some rrmap -> match typ with
-      | Udns_enum.ANY -> Some (`Entries rrmap)
+      | Rr.ANY -> Some (`Entries rrmap)
       | _ -> match Rr_map.lookup_rr typ rrmap with
         | Some b -> Some (`Entry b)
         | None -> match Rr_map.(find Cname rrmap) with
@@ -233,7 +237,7 @@ let noerror_stub (name, typ) (answer, authority) =
       (typ, name, NonAuthoritativeAnswer, `No_data (name, soa)) :: acc
     | Some (`Cname (ttl, alias)) ->
       let b = Rr_map.(B (Cname, (ttl, alias))) in
-      go ((Udns_enum.CNAME, name, NonAuthoritativeAnswer, `Entry b) :: acc) alias
+      go ((Rr.CNAME, name, NonAuthoritativeAnswer, `Entry b) :: acc) alias
     | Some (`Entry b) ->
       (typ, name, NonAuthoritativeAnswer, `Entry b) :: acc
     | Some (`Entries map) ->
@@ -244,16 +248,16 @@ let noerror_stub (name, typ) (answer, authority) =
   go [] name
 
 (* stub vs recursive: maybe sufficient to look into *)
-let scrub ?(mode = `Recursive) zone hdr q dns =
-  Logs.debug (fun m -> m "scrubbing (bailiwick %a) q %a rcode %a"
-                 Domain_name.pp zone Packet.Question.pp q
-                 Udns_enum.pp_rcode hdr.Packet.Header.rcode) ;
-  match mode, hdr.rcode with
+let scrub ?(mode = `Recursive) zone p =
+  Logs.debug (fun m -> m "scrubbing (bailiwick %a) data %a"
+                 Domain_name.pp zone Packet.pp p);
+  match mode, p.Packet.data with
   (*  | `Recursive, Udns_enum.NoError -> Ok (noerror zone q hdr dns) *)
-  | `Stub, Udns_enum.NoError -> Ok (noerror_stub q dns)
-  | _, Udns_enum.NXDomain -> Ok (nxdomain q hdr dns)
-  | `Stub, Udns_enum.ServFail ->
-    let name = fst q in
+  | `Stub, `Answer data -> Ok (noerror_stub p.question data)
+  | _, `Rcode_error (Rcode.NXDomain, _, data) ->
+    Ok (nxdomain p.Packet.header p.Packet.question data)
+  | `Stub, `Rcode_error (Rcode.ServFail, _, _) ->
+    let name = fst p.question in
     let soa = invalid_soa name in
-    Ok [ Udns_enum.CNAME, name, NonAuthoritativeAnswer, `Serv_fail (name, soa) ]
-  | _, e -> Error e
+    Ok [ Rr.CNAME, name, NonAuthoritativeAnswer, `Serv_fail (name, soa) ]
+  | _, e -> Error (Packet.rcode_data e)
