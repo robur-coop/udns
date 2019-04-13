@@ -1,6 +1,5 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
-[@@@ocaml.warning "-27"]
 open Udns
 
 (* The cache (a Map!?) for answers: once a specific type/name comes in, we know
@@ -9,8 +8,6 @@ module QM = Map.Make(Packet.Question)
 
 type awaiting =
   int64 * int * proto * Domain_name.t * Edns.t option * Ipaddr.V4.t * int * Packet.Question.t * int
-
-open Rresult.R.Infix
 
 let retry_interval = Duration.of_ms 500
 
@@ -215,17 +212,15 @@ let scrub_it mode t proto zone edns ts p =
     Logs.warn (fun m -> m "NS didn't like us %a" Rcode.pp e) ;
     `Try_another_ns
 
-let guard p err = if p then Ok () else Error (err ())
-
-let handle_primary t now ts proto sender sport packet request buf =
+let handle_primary t now ts proto sender sport packet _request buf =
   (* makes only sense to ask primary for query=true since we'll never issue questions from primary *)
   let handle_inner name =
     let t, answer, _, _ = Udns_server.Primary.handle_packet t ts proto sender sport packet name in
     match answer with
     | None -> `None (* TODO incoming ??? are never replied to - should be revised!? *)
-    | Some ({ header ; additional ; _ } as reply) ->
+    | Some reply ->
       (* delegation if authoritative is not set! *)
-      if Packet.Header.FS.mem `Authoritative (snd header) then begin
+      if Packet.Header.FS.mem `Authoritative (snd reply.header) then begin
         s := { !s with authoritative = succ !s.authoritative };
         Logs.debug (fun m -> m "authoritative reply %a" Packet.pp reply) ;
         let r = Packet.encode proto reply in
@@ -310,7 +305,7 @@ let resolve t ts proto sender sport req =
 let handle_reply t ts proto sender packet reply =
   let id = fst packet.Packet.header in
   match reply with
-  | `Answer query ->
+  | `Answer _ ->
     Logs.info (fun m -> m "handling reply %a" Packet.pp packet);
     (* (a) first check whether frame was in transit! *)
     let r, transit = was_in_transit t.transit packet.question id sender in

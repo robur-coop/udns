@@ -1,7 +1,5 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
-[@@@ocaml.warning "-27"]
-
 open Udns
 
 type rank =
@@ -187,7 +185,7 @@ let insert_lru t ?map name typ created rank res =
 
 let cached_any rrmap now =
   let rrs =
-    RRMap.fold (fun typ ((created, _), e) acc ->
+    RRMap.fold (fun _typ ((created, _), e) acc ->
         match e with
         | V.No_data _ | V.Serv_fail _ -> acc
         | V.Entry b ->
@@ -581,7 +579,7 @@ let additionals t ts rrs =
 *)
 
 let answer t ts (name, typ) =
-  let packet t add rcode answer authority =
+  let packet t _add rcode answer authority =
     (* TODO why was this RA + RD in here? should not be RD for recursive algorithm
        TODO should it be authoritative for recursive algorithm? *)
     let data = (answer, authority) in

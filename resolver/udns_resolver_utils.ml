@@ -1,7 +1,5 @@
 (* (c) 2017, 2018 Hannes Mehnert, all rights reserved *)
 
-[@@@ocaml.warning "-27-32"]
-
 open Udns
 open Udns_resolver_cache
 
@@ -25,10 +23,9 @@ let invalid_soa name =
 let soa_map name soa =
   Domain_name.Map.singleton name Rr_map.(singleton Soa soa)
 
-let invalid_soa_map name =
+let _invalid_soa_map name =
   let soa = invalid_soa name in
   soa_map name soa
-
 
 (*
 let noerror bailiwick { Question.q_type ; q_name } hdr dns =
@@ -241,7 +238,7 @@ let noerror_stub (name, typ) (answer, authority) =
     | Some (`Entry b) ->
       (typ, name, NonAuthoritativeAnswer, `Entry b) :: acc
     | Some (`Entries map) ->
-      Rr_map.fold (fun Rr_map.(B (k, v) as b) acc ->
+      Rr_map.fold (fun Rr_map.(B (k, _) as b) acc ->
           (Rr_map.k_to_rr_typ k, name, NonAuthoritativeAnswer, `Entry b) :: acc)
         map acc
   in
