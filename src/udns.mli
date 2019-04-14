@@ -468,7 +468,8 @@ module Tlsa : sig
     | Domain_issued_certificate
 
   val cert_usage_to_int : cert_usage -> int
-  val int_to_cert_usage : int -> cert_usage option
+  val int_to_cert_usage : ?off:int -> int ->
+    (cert_usage, [> `Not_implemented of int * string ]) result
   val pp_cert_usage : cert_usage Fmt.t
 
   type selector =
@@ -477,7 +478,8 @@ module Tlsa : sig
     | Private
 
   val selector_to_int : selector -> int
-  val int_to_selector : int -> selector option
+  val int_to_selector : ?off:int -> int ->
+    (selector, [> `Not_implemented of int * string ]) result
   val pp_selector : selector Fmt.t
 
   type matching_type =
@@ -486,7 +488,8 @@ module Tlsa : sig
     | SHA512
 
   val matching_type_to_int : matching_type -> int
-  val int_to_matching_type : int -> matching_type option
+  val int_to_matching_type : ?off:int -> int ->
+    (matching_type, [> `Not_implemented of int * string ]) result
   val pp_matching_type : matching_type Fmt.t
 
   type t = {
@@ -514,7 +517,8 @@ module Sshfp : sig
     | Ed25519
 
   val algorithm_to_int : algorithm -> int
-  val int_to_algorithm : int -> algorithm option
+  val int_to_algorithm : ?off:int -> int ->
+    (algorithm, [> `Not_implemented of int * string ]) result
   val pp_algorithm : algorithm Fmt.t
 
   type typ =
@@ -522,7 +526,8 @@ module Sshfp : sig
     | SHA256
 
   val typ_to_int : typ -> int
-  val int_to_typ : int -> typ option
+  val int_to_typ : ?off:int -> int ->
+    (typ, [> `Not_implemented of int * string ]) result
   val pp_typ : typ Fmt.t
 
   type t = {

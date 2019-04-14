@@ -136,7 +136,7 @@ rr:
          Tlsa.int_to_selector $5,
          Tlsa.int_to_matching_type $7
        with
-       | Some cert_usage, Some selector, Some matching_type ->
+       | Ok cert_usage, Ok selector, Ok matching_type ->
           let tlsa = { Tlsa.cert_usage ; selector ; matching_type ; data = $9 } in
           B (Tlsa, (0l, Rr_map.Tlsa_set.singleton tlsa ))
        | _ -> raise Parsing.Parse_error
@@ -146,7 +146,7 @@ rr:
          Sshfp.int_to_algorithm $3,
          Sshfp.int_to_typ $5
        with
-       | Some algorithm, Some typ ->
+       | Ok algorithm, Ok typ ->
           let sshfp = { Sshfp.algorithm ; typ ; fingerprint = $7 } in
           B (Sshfp, (0l, Rr_map.Sshfp_set.singleton sshfp))
        | _ -> raise Parsing.Parse_error

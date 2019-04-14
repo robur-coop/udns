@@ -989,12 +989,12 @@ module Tlsa = struct
     | Service_certificate_constraint -> 1
     | Trust_anchor_assertion -> 2
     | Domain_issued_certificate -> 3
-  let int_to_cert_usage = function
-    | 0 -> Some CA_constraint
-    | 1 -> Some Service_certificate_constraint
-    | 2 -> Some Trust_anchor_assertion
-    | 3 -> Some Domain_issued_certificate
-    | _ -> None
+  let int_to_cert_usage ?(off = 0) = function
+    | 0 -> Ok CA_constraint
+    | 1 -> Ok Service_certificate_constraint
+    | 2 -> Ok Trust_anchor_assertion
+    | 3 -> Ok Domain_issued_certificate
+    | x -> Error (`Not_implemented (off, Fmt.strf "TLSA cert usage %X" x))
   let cert_usage_to_string = function
     | CA_constraint -> "CA constraint"
     | Service_certificate_constraint -> "service certificate constraint"
@@ -1013,11 +1013,11 @@ module Tlsa = struct
     | Full_certificate -> 0
     | Subject_public_key_info -> 1
     | Private -> 255
-  let int_to_selector = function
-    | 0 -> Some Full_certificate
-    | 1 -> Some Subject_public_key_info
-    | 255 -> Some Private
-    | _ -> None
+  let int_to_selector ?(off = 0) = function
+    | 0 -> Ok Full_certificate
+    | 1 -> Ok Subject_public_key_info
+    | 255 -> Ok Private
+    | x -> Error (`Not_implemented (off, Fmt.strf "TLSA selector %x" x))
   let selector_to_string = function
     | Full_certificate -> "full certificate"
     | Subject_public_key_info -> "subject public key info"
@@ -1035,11 +1035,11 @@ module Tlsa = struct
     | No_hash -> 0
     | SHA256 -> 1
     | SHA512 -> 2
-  let int_to_matching_type = function
-    | 0 -> Some No_hash
-    | 1 -> Some SHA256
-    | 2 -> Some SHA512
-    | _ -> None
+  let int_to_matching_type ?(off = 0) = function
+    | 0 -> Ok No_hash
+    | 1 -> Ok SHA256
+    | 2 -> Ok SHA512
+    | x -> Error (`Not_implemented (off, Fmt.strf "TLSA matching type %X" x))
   let matching_type_to_string = function
     | No_hash -> "no hash"
     | SHA256 -> "SHA256"
@@ -1068,19 +1068,18 @@ module Tlsa = struct
             (Cstruct.compare t1.data t2.data)))
 
   let decode names buf ~off ~len =
+    let open Rresult.R.Infix in
     let usage, selector, matching_type =
       Cstruct.get_uint8 buf off,
       Cstruct.get_uint8 buf (off + 1),
       Cstruct.get_uint8 buf (off + 2)
     in
     let data = Cstruct.sub buf (off + 3) (len - 3) in
-    match int_to_cert_usage usage, int_to_selector selector, int_to_matching_type matching_type with
-    | Some cert_usage, Some selector, Some matching_type ->
-      let tlsa = { cert_usage ; selector ; matching_type ; data } in
-      Ok (tlsa, names, off + len)
-    | None, _, _ -> Error (`Not_implemented (off, Fmt.strf "tlsa cert usage 0x%x" usage))
-    | _, None, _ -> Error (`Not_implemented (off + 1, Fmt.strf "tlsa selector 0x%x" selector))
-    | _, _, None -> Error (`Not_implemented (off + 2, Fmt.strf "tlsa matching type 0x%x" matching_type))
+    int_to_cert_usage ~off usage >>= fun cert_usage ->
+    int_to_selector ~off:(off + 1) selector >>= fun selector ->
+    int_to_matching_type ~off:(off + 2) matching_type >>| fun matching_type ->
+    let tlsa = { cert_usage ; selector ; matching_type ; data } in
+    tlsa, names, off + len
 
   let encode tlsa names buf off =
     Cstruct.set_uint8 buf off (cert_usage_to_int tlsa.cert_usage) ;
@@ -1107,12 +1106,12 @@ module Sshfp = struct
     | Ecdsa -> 3
     | Ed25519 -> 4
 
-  let int_to_algorithm = function
-    | 1 -> Some Rsa
-    | 2 -> Some Dsa
-    | 3 -> Some Ecdsa
-    | 4 -> Some Ed25519
-    | _ -> None
+  let int_to_algorithm ?(off = 0) = function
+    | 1 -> Ok Rsa
+    | 2 -> Ok Dsa
+    | 3 -> Ok Ecdsa
+    | 4 -> Ok Ed25519
+    | x -> Error (`Not_implemented (off, Fmt.strf "SSHFP algorithm %X" x))
 
   let algorithm_to_string = function
     | Rsa -> "RSA"
@@ -1131,10 +1130,10 @@ module Sshfp = struct
     | SHA1 -> 1
     | SHA256 -> 2
 
-  let int_to_typ = function
-    | 1 -> Some SHA1
-    | 2 -> Some SHA256
-    | _ -> None
+  let int_to_typ ?(off = 0) = function
+    | 1 -> Ok SHA1
+    | 2 -> Ok SHA256
+    | x -> Error (`Not_implemented (off, Fmt.strf "SSHFP type %X" x))
 
   let typ_to_string = function
     | SHA1 -> "SHA1"
@@ -1160,14 +1159,13 @@ module Sshfp = struct
          (Cstruct.compare s1.fingerprint s2.fingerprint))
 
   let decode names buf ~off ~len =
+    let open Rresult.R.Infix in
     let algo, typ = Cstruct.get_uint8 buf off, Cstruct.get_uint8 buf (succ off) in
     let fingerprint = Cstruct.sub buf (off + 2) (len - 2) in
-    match int_to_algorithm algo, int_to_typ typ with
-    | Some algorithm, Some typ ->
-      let sshfp = { algorithm ; typ ; fingerprint } in
-      Ok (sshfp, names, off + len)
-    | None, _ -> Error (`Not_implemented (off, Fmt.strf "sshfp algorithm 0x%x" algo))
-    | _, None -> Error (`Not_implemented (off + 1, Fmt.strf "sshfp type 0x%x" typ))
+    int_to_algorithm ~off algo >>= fun algorithm ->
+    int_to_typ ~off:(succ off) typ >>| fun typ ->
+    let sshfp = { algorithm ; typ ; fingerprint } in
+    sshfp, names, off + len
 
   let encode sshfp names buf off =
     Cstruct.set_uint8 buf off (algorithm_to_int sshfp.algorithm) ;
