@@ -298,11 +298,9 @@ let axfr trie proto (zone, _) =
   end else
     match Udns_trie.entries zone trie with
     | Ok (soa, entries) -> Ok (soa, entries)
-    | Error `Delegation _
-    | Error `NotAuthoritative
-    | Error `NotFound _ ->
-      Log.err (fun m -> m "AXFR attempted on %a, where we're not authoritative"
-                  Domain_name.pp zone) ;
+    | Error e ->
+      Log.err (fun m -> m "AXFR attempted on %a, where we're not authoritative %a"
+                  Domain_name.pp zone Udns_trie.pp_e e) ;
       Error Rcode.NXDomain
 
 let axfr t proto key ((zone, _) as question) =
@@ -620,7 +618,7 @@ let update_data trie zone (prereq, update) =
   (match Udns_trie.check trie' with
    | Ok () -> Ok ()
    | Error e ->
-     Log.err (fun m -> m "check after update returned %a" Udns_trie.pp_err e) ;
+     Log.err (fun m -> m "check after update returned %a" Udns_trie.pp_zone_check e) ;
      Error Rcode.YXRRSet) >>= fun () ->
   if Udns_trie.equal trie trie' then
     (* should this error out? - RFC 2136 3.4.2.7 says NoError at the end *)
@@ -1078,7 +1076,7 @@ module Secondary = struct
                        Domain_name.pp zone Soa.pp fresh_soa)
         | Error err ->
           Log.warn (fun m -> m "check on transferred zone %a failed: %a"
-                       Domain_name.pp zone Udns_trie.pp_err err)) ;
+                       Domain_name.pp zone Udns_trie.pp_zone_check err)) ;
       let zones = Domain_name.Map.add zone (Transferred ts, ip, port, name) zones in
       Ok ({ t with data = trie' }, zones, [])
     | _ ->

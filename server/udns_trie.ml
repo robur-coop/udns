@@ -29,6 +29,21 @@ let pp ppf t =
 let rec equal (N (sub, map)) (N (sub', map')) =
   Rr_map.equal Rr_map.equal_b map map' && M.equal equal sub sub'
 
+type e = [ `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
+         | `EmptyNonTerminal of Domain_name.t * Soa.t
+         | `NotAuthoritative
+         | `NotFound of Domain_name.t * Soa.t ]
+
+let pp_e ppf = function
+  | `Delegation (name, (ttl, ns)) ->
+    Fmt.pf ppf "delegation %a to TTL %lu %a" Domain_name.pp name ttl
+      Fmt.(list ~sep:(unit ",@,") Domain_name.pp) (Domain_name.Set.elements ns)
+  | `EmptyNonTerminal (name, soa) ->
+    Fmt.pf ppf "empty non terminal %a SOA %a" Domain_name.pp name Soa.pp soa
+  | `NotAuthoritative -> Fmt.string ppf "not authoritative"
+  | `NotFound (name, soa) -> Fmt.pf ppf "not found %a soa %a" Domain_name.pp name Soa.pp soa
+
+
 open Rresult.R.Infix
 
 let guard p err = if p then Ok () else Error err
@@ -196,13 +211,22 @@ let entries name t =
     collect_entries name sub map
   | Some (`Soa (_, _)) -> Error `NotAuthoritative
 
-type err = [ `Missing_soa of Domain_name.t
-           | `Cname_other of Domain_name.t
-           | `Any_not_allowed of Domain_name.t
-           | `Bad_ttl of Domain_name.t * Rr_map.b
-           | `Empty of Domain_name.t * Rr.t
-           | `Missing_address of Domain_name.t
-           | `Soa_not_ns of Domain_name.t ]
+type zone_check = [ `Missing_soa of Domain_name.t
+                  | `Cname_other of Domain_name.t
+                  | `Any_not_allowed of Domain_name.t
+                  | `Bad_ttl of Domain_name.t * Rr_map.b
+                  | `Empty of Domain_name.t * Rr.t
+                  | `Missing_address of Domain_name.t
+                  | `Soa_not_ns of Domain_name.t ]
+
+let pp_zone_check ppf = function
+  | `Missing_soa name -> Fmt.pf ppf "missing soa for %a" Domain_name.pp name
+  | `Cname_other name -> Fmt.pf ppf "%a contains a cname record, and also other entries" Domain_name.pp name
+  | `Any_not_allowed name -> Fmt.pf ppf "resource type ANY is not allowed, but present for %a" Domain_name.pp name
+  | `Bad_ttl (name, v) -> Fmt.pf ppf "bad TTL for %a %a" Domain_name.pp name Rr_map.pp_b v
+  | `Empty (name, typ) -> Fmt.pf ppf "%a empty %a" Domain_name.pp name Rr.pp typ
+  | `Missing_address name -> Fmt.pf ppf "missing address record for %a" Domain_name.pp name
+  | `Soa_not_ns name -> Fmt.pf ppf "%a nameserver of SOA is not in nameserver set" Domain_name.pp name
 
 (* TODO: check for no cname loops? and dangling cname!? *)
 let check trie =
@@ -395,21 +419,3 @@ let remove_zone name t =
     N (go sub, Rr_map.empty)
   in
   remove_aux name t remove
-
-let pp_err ppf = function
-  | `Missing_soa name -> Fmt.pf ppf "missing soa for %a" Domain_name.pp name
-  | `Cname_other name -> Fmt.pf ppf "%a contains a cname record, and also other entries" Domain_name.pp name
-  | `Any_not_allowed name -> Fmt.pf ppf "resource type ANY is not allowed, but present for %a" Domain_name.pp name
-  | `Bad_ttl (name, v) -> Fmt.pf ppf "bad TTL for %a %a" Domain_name.pp name Rr_map.pp_b v
-  | `Empty (name, typ) -> Fmt.pf ppf "%a empty %a" Domain_name.pp name Rr.pp typ
-  | `Missing_address name -> Fmt.pf ppf "missing address record for %a" Domain_name.pp name
-  | `Soa_not_ns name -> Fmt.pf ppf "%a nameserver of SOA is not in nameserver set" Domain_name.pp name
-
-let pp_e ppf = function
-  | `Delegation (name, (ttl, ns)) ->
-    Fmt.pf ppf "delegation %a to TTL %lu %a" Domain_name.pp name ttl
-      Fmt.(list ~sep:(unit ",@,") Domain_name.pp) (Domain_name.Set.elements ns)
-  | `EmptyNonTerminal (name, soa) ->
-    Fmt.pf ppf "empty non terminal %a SOA %a" Domain_name.pp name Soa.pp soa
-  | `NotAuthoritative -> Fmt.string ppf "not authoritative"
-  | `NotFound (name, soa) -> Fmt.pf ppf "not found %a soa %a" Domain_name.pp name Soa.pp soa
