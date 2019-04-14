@@ -853,14 +853,12 @@ let scrub_authority_ns () =
   in
   let dns = Packet.create header q (`Answer (Name_rr_map.empty, authority)) in
   Alcotest.check res "NS in authority results in NoData foo.com and NoErr NS"
-    (Ok [ Rr.A, q_name, Additional, `No_data (q_name, invalid_soa q_name) ;
-          Rr.NS, q_name, Additional, `Entry ns ])
+    (Ok [ Rr.NS, q_name, Additional, `Entry ns ])
     (Udns_resolver_utils.scrub q_name dns) ;
   let hdr = (fst header, Packet.Header.FS.singleton `Authoritative) in
   let dns' = Packet.create hdr q (`Answer (Name_rr_map.empty, authority)) in
   Alcotest.check res "authoritative NS in authority results in NoData foo.com and NoErr NS"
-    (Ok [ Rr.A, q_name, Additional, `No_data (q_name, invalid_soa q_name) ;
-          Rr.NS, q_name, AuthoritativeAuthority, `Entry ns ])
+    (Ok [ Rr.NS, q_name, AuthoritativeAuthority, `Entry ns ])
     (Udns_resolver_utils.scrub q_name dns')
 
 let scrub_a_authority_ns () =
@@ -1030,17 +1028,14 @@ let scrub_authority_ns_add_a_bad () =
       (Domain_name.Map.singleton (name "ns1.foo.com") Rr_map.(addb ns' empty))
   in
   let dns = Packet.create ~additional header q (`Answer (Name_rr_map.empty, authority)) in
-  (* not clear whether this is desired *)
   Alcotest.check res "NS in authority, A and NS in additional results in NoErr NS, NoErr As"
-    (Ok [ Rr.A, q_name, Additional, `No_data (q_name, invalid_soa q_name) ;
-          Rr.NS, q_name, Additional, `Entry ns ;
+    (Ok [ Rr.NS, q_name, Additional, `Entry ns ;
           Rr.A, name "ns1.foo.com", Additional, `Entry a ])
     (Udns_resolver_utils.scrub q_name dns) ;
   let hdr = fst header, Packet.Header.FS.singleton `Authoritative in
   let dns' = Packet.create ~additional hdr q (`Answer (Name_rr_map.empty, authority)) in
   Alcotest.check res "authoritative NS in authority, A and NS in additional results in NoErr NS, NoErr As"
-    (Ok [ Rr.A, q_name, Additional, `No_data (q_name, invalid_soa q_name) ;
-          Rr.NS, q_name, AuthoritativeAuthority, `Entry ns ;
+    (Ok [ Rr.NS, q_name, AuthoritativeAuthority, `Entry ns ;
           Rr.A, name "ns1.foo.com", Additional, `Entry a ])
     (Udns_resolver_utils.scrub q_name dns')
 
@@ -1057,16 +1052,14 @@ let scrub_authority_ns_add_a_aaaa () =
   in
   let dns = Packet.create ~additional header q (`Answer (Name_rr_map.empty, authority)) in
   Alcotest.check res "NS in authority, A and AAAA in additional results in NoErr NS, NoErr A, NoErr AAAA"
-    (Ok [ Rr.A, q_name, Additional, `No_data (q_name, invalid_soa q_name) ;
-          Rr.NS, q_name, Additional, `Entry ns ;
+    (Ok [ Rr.NS, q_name, Additional, `Entry ns ;
           Rr.A, name "ns1.foo.com", Additional, `Entry a ;
           Rr.AAAA, name "ns1.foo.com", Additional, `Entry aaaa ])
     (Udns_resolver_utils.scrub q_name dns) ;
   let hdr = fst header, Packet.Header.FS.singleton `Authoritative in
   let dns' = Packet.create ~additional hdr q (`Answer (Name_rr_map.empty, authority)) in
   Alcotest.check res "authoritative NS in authority, A and AAAA in additional results in NoErr NS, NoErr A, NoErr AAAA"
-    (Ok [ Rr.A, q_name, Additional, `No_data (q_name, invalid_soa q_name) ;
-          Rr.NS, q_name, AuthoritativeAuthority, `Entry ns ;
+    (Ok [ Rr.NS, q_name, AuthoritativeAuthority, `Entry ns ;
           Rr.A, name "ns1.foo.com", Additional, `Entry a ;
           Rr.AAAA, name "ns1.foo.com", Additional, `Entry aaaa ])
     (Udns_resolver_utils.scrub q_name dns')

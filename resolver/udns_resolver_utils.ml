@@ -169,7 +169,7 @@ let nxdomain (_, flags) (name, _typ) data =
     | None -> Name_rr_map.empty, Name_rr_map.empty
     | Some x -> x
   in
-  let cname_opt =
+  let cnames =
     let rec go acc name =
       match Domain_name.Map.find name answer with
       | None -> acc
@@ -188,16 +188,13 @@ let nxdomain (_, flags) (name, _typ) data =
      _, a matching cname -> NoErr q_name with cname
   *)
   let entries =
-    match soa, cname_opt with
-    | None, [] ->
-      let soa = invalid_soa name in
-      [ name, `No_domain (name, soa) ]
-    | Some (name, soa), [] ->
-      [ name, `No_domain (name, soa) ]
-    | _, rrs ->
-      List.map (fun (name, cname) ->
-          name, `Alias cname)
-        rrs
+    let soa = match soa with
+      | None -> name, invalid_soa name
+      | Some x -> x
+    in
+    match cnames with
+    | [] -> [ name, `No_domain soa ]
+    | rrs -> List.map (fun (name, cname) -> (name, `Alias cname)) rrs
   in
   (* the cname does not matter *)
   List.map (fun (name, res) -> Rr.CNAME, name, rank, res) entries
@@ -240,8 +237,7 @@ let scrub ?(mode = `Recursive) zone p =
   match mode, p.Packet.data with
   | `Recursive, `Answer data -> Ok (noerror zone p.header p.question data p.additional)
   | `Stub, `Answer data -> Ok (noerror_stub p.question data)
-  | _, `Rcode_error (Rcode.NXDomain, _, data) ->
-    Ok (nxdomain p.Packet.header p.Packet.question data)
+  | _, `Rcode_error (Rcode.NXDomain, _, data) -> Ok (nxdomain p.Packet.header p.Packet.question data)
   | `Stub, `Rcode_error (Rcode.ServFail, _, _) ->
     let name = fst p.question in
     let soa = invalid_soa name in
