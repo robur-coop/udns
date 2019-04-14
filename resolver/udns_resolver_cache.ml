@@ -369,17 +369,22 @@ let find_nearest_ns rng ts t name =
     | Ok (`Entry Rr_map.(B (A, (_, ips))), _) -> Rr_map.Ipv4_set.elements ips
     | _ -> []
   in
+  let or_root f nam =
+    if Domain_name.(equal root nam) then
+      match pick (snd (List.split Udns_resolver_root.root_servers)) with
+      | None -> assert false
+      | Some ip -> `HaveIP (Domain_name.root, ip)
+    else
+      f (Domain_name.drop_labels_exn name)
+  in
   let rec go nam =
     match pick (find_ns nam) with
-    | None -> go (Domain_name.drop_labels_exn nam)
+    | None -> or_root go nam
     | Some ns -> match pick (find_a ns) with
       | None ->
         if Domain_name.sub ~subdomain:ns ~domain:nam then
           (* we actually need glue *)
-          if Domain_name.(equal root nam) then begin
-            Logs.err (fun m -> m "couldn't find root server"); assert false
-          end else
-            go (Domain_name.drop_labels_exn nam)
+          or_root go nam
         else
           `NeedA ns
       | Some ip -> `HaveIP (nam, ip)
