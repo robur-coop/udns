@@ -49,7 +49,7 @@ let jump _ serverip port (keyname, zone, dnskey) hostname ip_address =
         Error (`Msg (Fmt.strf "nsupdate expected update ack, received %a" Packet.pp_reply r))
       | Error e ->
         Error (`Msg (Fmt.strf "nsupdate error %a (reply %a does not match request %a)"
-                       Packet.pp_reply_err e Packet.pp reply Packet.pp p))
+                       Packet.pp_mismatch e Packet.pp reply Packet.pp p))
 
 open Cmdliner
 

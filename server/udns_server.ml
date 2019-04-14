@@ -603,7 +603,7 @@ module Notification = struct
               map'
             | Error e ->
               Log.warn (fun m -> m "notify reply didn't match our request %a (request %a, reply %a)"
-                           Packet.pp_reply_err e Packet.pp request Packet.pp reply);
+                           Packet.pp_mismatch e Packet.pp request Packet.pp reply);
               map
           end
         | _ -> map

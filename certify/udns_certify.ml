@@ -9,11 +9,11 @@ let letsencrypt_name name =
   | Ok name' -> Domain_name.prepend ~hostname:false name' "_letsencrypt"
   | Error e -> Error e
 
-type u_err = [ `Tsig of Udns_tsig.e | `Bad_reply of Packet.reply_err * Packet.t | `Unexpected_reply of Packet.reply ]
+type u_err = [ `Tsig of Udns_tsig.e | `Bad_reply of Packet.mismatch * Packet.t | `Unexpected_reply of Packet.reply ]
 
 let pp_u_err ppf = function
   | `Tsig e -> Fmt.pf ppf "tsig error %a" Udns_tsig.pp_e e
-  | `Bad_reply (e, res) -> Fmt.pf ppf "bad reply %a: %a" Packet.pp_reply_err e Packet.pp res
+  | `Bad_reply (e, res) -> Fmt.pf ppf "bad reply %a: %a" Packet.pp_mismatch e Packet.pp res
   | `Unexpected_reply r -> Fmt.pf ppf "unexpected reply %a" Packet.pp_reply r
 
 let nsupdate rng now ~host ~keyname ~zone dnskey csr =
@@ -55,14 +55,14 @@ let nsupdate rng now ~host ~keyname ~zone dnskey csr =
 
 type q_err = [
   | `Decode of Packet.err
-  | `Bad_reply of Packet.reply_err * Packet.t
+  | `Bad_reply of Packet.mismatch * Packet.t
   | `Unexpected_reply of Packet.reply
   | `No_tlsa
 ]
 
 let pp_q_err ppf = function
   | `Decode err -> Fmt.pf ppf "decoding failed %a" Packet.pp_err err
-  | `Bad_reply (e, res) -> Fmt.pf ppf "bad reply %a: %a" Packet.pp_reply_err e Packet.pp res
+  | `Bad_reply (e, res) -> Fmt.pf ppf "bad reply %a: %a" Packet.pp_mismatch e Packet.pp res
   | `Unexpected_reply r -> Fmt.pf ppf "unexpected reply %a" Packet.pp_reply r
   | `No_tlsa -> Fmt.pf ppf "No TLSA record found"
 

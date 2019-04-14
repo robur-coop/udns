@@ -42,7 +42,7 @@ let jump _ serverip port zone key serial =
               Ok ()
             | Ok r -> Error (`Msg (Fmt.strf "expected notify ack, got %a" Packet.pp_reply r))
             | Error e -> Error (`Msg (Fmt.strf "notify reply %a is not ok %a"
-                                        Packet.pp reply Packet.pp_reply_err e))
+                                        Packet.pp reply Packet.pp_mismatch e))
           end
         | Error e ->
           Error (`Msg (Fmt.strf "failed to decode notify reply! %a" Packet.pp_err e))
@@ -59,7 +59,7 @@ let jump _ serverip port zone key serial =
         | Ok r -> Error (`Msg (Fmt.strf "expected notify ack, got %a" Packet.pp_reply r))
         | Error e ->
           Error (`Msg (Fmt.strf "expected reply to %a %a, got %a!"
-                         Packet.pp_reply_err e
+                         Packet.pp_mismatch e
                          Packet.pp request Packet.pp reply))
 
 open Cmdliner

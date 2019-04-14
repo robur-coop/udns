@@ -897,26 +897,23 @@ module Packet : sig
 
   val decode : Cstruct.t -> (t, err) result
 
-  type reply_err = [ `Not_a_reply of request
-                   | `Id_mismatch of int * int
-                   | `Operation_mismatch of request * reply
-                   | `Question_mismatch of Question.t * Question.t
-                   | `Expected_request ]
+  type mismatch = [ `Not_a_reply of request
+                  | `Id_mismatch of int * int
+                  | `Operation_mismatch of request * reply
+                  | `Question_mismatch of Question.t * Question.t
+                  | `Expected_request ]
 
-  val pp_reply_err : reply_err Fmt.t
+  val pp_mismatch : mismatch Fmt.t
 
-  val is_reply : Header.t -> Question.t -> request -> t ->
-    (reply, reply_err) result
-  (** [is_reply header question request reply] validates
+  val reply_matches_request : request:t -> t -> (reply, mismatch) result
+  (** [reply_matches_request ~request reply] validates
       that the [reply] match the [request], and returns either
-      [Ok ()] or an [Error]. The following basic checks are
+      [Ok data] or an [Error]. The following basic checks are
       performed:
       {ul
       {- Is the header identifier of [request] and [reply] equal?}
       {- Does the [request] operation match the [reply] operation?}
       {- Is [question] and the question of [response] equal?}} *)
-
-  val reply_matches_request : request:t -> t -> (reply, reply_err) result
 
   val size_edns : int option -> Edns.t option -> proto -> bool -> int * Edns.t option
 

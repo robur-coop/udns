@@ -3061,13 +3061,13 @@ module Packet = struct
     in
     Opcode.compare opa opb = 0
 
-  type reply_err = [ `Not_a_reply of request
-                   | `Id_mismatch of int * int
-                   | `Operation_mismatch of request * reply
-                   | `Question_mismatch of Question.t * Question.t
-                   | `Expected_request ]
+  type mismatch = [ `Not_a_reply of request
+                  | `Id_mismatch of int * int
+                  | `Operation_mismatch of request * reply
+                  | `Question_mismatch of Question.t * Question.t
+                  | `Expected_request ]
 
-  let pp_reply_err ppf = function
+  let pp_mismatch ppf = function
     | `Not_a_reply req ->
       Fmt.pf ppf "expected a reply, got a request %a" pp_request req
     | `Id_mismatch (id, id') ->
@@ -3078,25 +3078,26 @@ module Packet = struct
       Fmt.pf ppf "question mismatch, expected %a got %a" Question.pp q Question.pp  q'
     | `Expected_request -> Fmt.string ppf "expected request"
 
-  let is_reply header question request reply =
-    match reply.data with
-    | #request as r -> Error (`Not_a_reply r)
-    | #reply as data ->
-      match Header.compare_id header reply.header = 0, opcode_match request data, Question.compare question reply.question = 0 with
-      | true, true, true ->
-        (* TODO: make this strict? configurable? *)
-        if not (Domain_name.equal ~case_sensitive:true (fst question) (fst reply.question)) then
-          Log.warn (fun m -> m "question is not case sensitive equal %a = %a"
-                       Domain_name.pp (fst question) Domain_name.pp (fst reply.question));
-        Ok data
-      | false, _ ,_ -> Error (`Id_mismatch (fst header, fst reply.header))
-      | _, false, _ -> Error (`Operation_mismatch (request, data))
-      | _, _, false -> Error (`Question_mismatch (question, reply.question))
-
   let reply_matches_request ~request reply =
     match request.data with
-    | #request as r -> is_reply request.header request.question r reply
     | #reply -> Error `Expected_request
+    | #request as req -> match reply.data with
+      | #request as r -> Error (`Not_a_reply r)
+      | #reply as data ->
+        match
+          Header.compare_id request.header reply.header = 0,
+          opcode_match req data,
+          Question.compare request.question reply.question = 0
+        with
+      | true, true, true ->
+        (* TODO: make this strict? configurable? *)
+        if not (Domain_name.equal ~case_sensitive:true (fst request.question) (fst reply.question)) then
+          Log.warn (fun m -> m "question is not case sensitive equal %a = %a"
+                       Domain_name.pp (fst request.question) Domain_name.pp (fst reply.question));
+        Ok data
+      | false, _ ,_ -> Error (`Id_mismatch (fst request.header, fst reply.header))
+      | _, false, _ -> Error (`Operation_mismatch (req, data))
+      | _, _, false -> Error (`Question_mismatch (request.question, reply.question))
 
   let max_udp = 1484 (* in MirageOS. using IPv4 this is max UDP payload via ethernet *)
   let max_reply_udp = 400 (* we don't want anyone to amplify! *)

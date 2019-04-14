@@ -3,8 +3,7 @@ open Udns
 type 'key query_state =
   { protocol : Udns.proto ;
     key: 'key ;
-    header : Packet.Header.t ;
-    question : Packet.Question.t ; (* we only handle one *)
+    query : Packet.t ;
   } constraint 'key = 'a Rr_map.key
 
 let make_query protocol hostname
@@ -22,7 +21,7 @@ let make_query protocol hostname
       let len_field = Cstruct.create 2 in
       Cstruct.BE.set_uint16 len_field 0 (Cstruct.len cs) ;
       Cstruct.concat [len_field ; cs]
-  end, { protocol ; header; question ; key = record_type }
+  end, { protocol ; query ; key = record_type }
 
 let parse_response (type requested)
   : requested Rr_map.k query_state -> Cstruct.t ->
@@ -48,18 +47,18 @@ let parse_response (type requested)
     R.error_msgf
       "QUERY: @[<v>hdr:%a (id: %d = %d) (q=q: %B)@ query:%a%a  opt:%a tsig:%B@,failed: %a@,@]"
       Packet.pp_header t
-      (fst t.header) (fst state.header)
-      (Packet.Question.compare t.question state.question = 0)
+      (fst t.header) (fst state.query.header)
+      (Packet.Question.compare t.question state.query.question = 0)
       Packet.Question.pp t.question
       Packet.pp_data t.data
       (Fmt.option Udns.Edns.pp) t.edns
       (match t.tsig with None -> false | Some _ -> true)
-      Packet.pp_reply_err e
+      Packet.pp_mismatch e
   in
   match Packet.decode buf with
   | Ok t ->
     begin
-      to_msg t (Packet.is_reply state.header state.question `Query t) >>= function
+      to_msg t (Packet.reply_matches_request ~request:state.query t) >>= function
       | `Answer (answer, _) ->
         let rec follow_cname counter q_name =
           if counter <= 0 then Error (`Msg "CNAME recursion too deep")
@@ -81,7 +80,7 @@ let parse_response (type requested)
                 end
             end
         in
-        follow_cname 20 (fst state.question)
+        follow_cname 20 (fst state.query.question)
       | r -> Error (`Msg (Fmt.strf "Ok %a, expected answer" Packet.pp_reply r))
     end
   | Error `Partial as err -> err

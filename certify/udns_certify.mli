@@ -4,7 +4,7 @@ val letsencrypt_name : Domain_name.t -> (Domain_name.t, [> `Msg of string ]) res
 (** [letsencrypt_name host] is the service name at which we store let's encrypt
     certificates for the [host]. *)
 
-type u_err = [ `Tsig of Udns_tsig.e | `Bad_reply of Packet.reply_err * Packet.t | `Unexpected_reply of Packet.reply  ]
+type u_err = [ `Tsig of Udns_tsig.e | `Bad_reply of Packet.mismatch * Packet.t | `Unexpected_reply of Packet.reply  ]
 
 val pp_u_err : u_err Fmt.t
 
@@ -23,7 +23,7 @@ val nsupdate : (int -> Cstruct.t) -> (unit -> Ptime.t) -> host:Domain_name.t ->
 
 type q_err = [
   | `Decode of Packet.err
-  | `Bad_reply of Packet.reply_err * Packet.t
+  | `Bad_reply of Packet.mismatch * Packet.t
   | `Unexpected_reply of Packet.reply
   | `No_tlsa
 ]
