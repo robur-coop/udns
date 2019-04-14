@@ -919,9 +919,6 @@ module Packet : sig
 
   val encode : ?max_size:int -> proto -> t -> Cstruct.t * int
 
-  (* TODO : error and edns! *)
-  val error : Header.t -> Question.t -> data -> Rcode.t -> (Cstruct.t * int) option
-
   val raw_error : Cstruct.t -> Rcode.t -> Cstruct.t option
 end
 

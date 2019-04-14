@@ -3182,18 +3182,6 @@ module Packet = struct
     in
     doit (min max 4000) (* (mainly for TCP) we use a page as initial allocation *)
 
-  let error header question request_or_reply rcode =
-    match request_or_reply with
-    | #reply -> None
-    | #request ->
-      let opcode = opcode_data request_or_reply in
-      let errbuf = Cstruct.create max_reply_udp in
-      Header.encode errbuf (header, false, opcode, rcode) ;
-      let _names, off = Question.encode Domain_name.Map.empty errbuf Header.len question in
-      Cstruct.BE.set_uint16 errbuf 4 1;
-      let off = encode_edns rcode (Some (Edns.create ())) errbuf off in
-      Some (Cstruct.sub errbuf 0 off, max_reply_udp)
-
   let raw_error buf rcode =
     (* copy id from header, retain opcode, set rcode to ServFail
        if we receive a fragment < 12 bytes, it's not worth bothering *)
