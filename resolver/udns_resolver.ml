@@ -277,14 +277,6 @@ let resolve t ts proto sender sport req =
     if not (Packet.Header.FS.mem `Recursion_desired (snd req.header)) then
       Logs.warn (fun m -> m "recursion not desired") ;
     if List.mem (snd req.question) supported then begin
-      Logs.err (fun m -> m "unsupported query type %a" Rr.pp (snd req.question));
-      let pkt =
-        Packet.create (fst req.header, Packet.Header.FS.empty) req.question
-          (`Rcode_error (Rcode.NotImp, Opcode.Query, None))
-      in
-      let buf, _ = Packet.encode proto pkt in
-      t, [ proto, sender, sport, buf ], []
-    end else begin
       s := { !s with questions = succ !s.questions };
       (* ask the cache *)
       begin match handle_query t ts 0 proto req.edns sender sport ts req.question (fst req.header) with
@@ -292,6 +284,14 @@ let resolve t ts proto sender sport req =
           | `Nothing, t -> t, [], [] (* TODO: send a reply!? *)
           | `Query (packet, dst), t -> t, [], [ `Udp, dst, packet ]
       end
+    end else begin
+      Logs.err (fun m -> m "unsupported query type %a" Rr.pp (snd req.question));
+      let pkt =
+        Packet.create (fst req.header, Packet.Header.FS.empty) req.question
+          (`Rcode_error (Rcode.NotImp, Opcode.Query, None))
+      in
+      let buf, _ = Packet.encode proto pkt in
+      t, [ proto, sender, sport, buf ], []
     end
   | _ ->
     Logs.err (fun m -> m "ignoring %a" Packet.pp req);
