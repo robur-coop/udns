@@ -81,11 +81,13 @@ type e = [ `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
          | `EmptyNonTerminal of Domain_name.t * Soa.t
          | `NotAuthoritative
          | `NotFound of Domain_name.t * Soa.t ]
+(** The type of lookup errors. *)
 
 val pp_e : e Fmt.t
+(** [pp_e ppf e] pretty-prints [e] on [ppf]. *)
 
-val zone : Domain_name.t -> t ->
-  (Domain_name.t * Soa.t, e) result
+val zone : Domain_name.t -> t -> (Domain_name.t * Soa.t, e) result
+(** [zone k t] returns either the zone and soa for [k] in [t], or an error. *)
 
 val lookupb : Domain_name.t -> Rr.t -> t ->
   (Rr_map.b * (Domain_name.t * int32 * Domain_name.Set.t), e) result
@@ -97,6 +99,8 @@ val lookup : Domain_name.t -> 'a Rr_map.key -> t -> ('a, e) result
 
 val lookup_any : Domain_name.t -> t ->
   (Rr_map.t * (Domain_name.t * int32 * Domain_name.Set.t), e) result
+(** [lookup_any k t] looks up all resource records of [k] in [t], and returns
+    that and the authority information. *)
 
 val lookup_ignore : Domain_name.t -> Rr.t -> t -> (Rr_map.b, unit) result
 (** [lookup_ignore k ty t] finds a [k, ty] in [t], which may lead to an error.
