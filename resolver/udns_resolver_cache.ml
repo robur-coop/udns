@@ -427,7 +427,7 @@ let resolve t ~rng ts name typ =
   in
   go t typ name
 
-(*
+(* this is with qname minimisation!!
 let _resolve t ~rng ts name typ =
   (* TODO return the bailiwick (zone the NS is responsible for) as well *)
   (* TODO this is the query name minimisation approach, reimplement the
