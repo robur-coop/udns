@@ -669,7 +669,7 @@ let handle_tsig ?mac t now p buf =
       | None -> None
       | Some key ->
         match Tsig.dnskey_to_tsig_algo key with
-        | Some a when a = algo -> Some key
+        | Ok a when a = algo -> Some key
         | _ -> None
     in
     t.tsig_verify ?mac now p name ?key tsig (Cstruct.sub buf 0 off) >>= fun (tsig, mac, key) ->
@@ -898,14 +898,14 @@ module Secondary = struct
     match Authentication.find_key t.auth name with
     | Some key ->
       begin match Tsig.dnskey_to_tsig_algo key with
-        | Some algorithm ->
+        | Ok algorithm ->
           begin match Tsig.tsig ~algorithm ~original_id ~signed () with
             | None -> Log.err (fun m -> m "creation of tsig failed") ; None
             | Some tsig -> match t.tsig_sign ?mac:None ?max_size name tsig ~key packet buf with
               | None -> Log.err (fun m -> m "signing failed") ; None
               | Some res -> Some res
           end
-        | None -> Log.err (fun m -> m "couldn't convert algorithm to tsig") ; None
+        | Error (`Msg msg) -> Log.err (fun m -> m "couldn't convert algorithm: %s" msg) ; None
       end
     | _ -> Log.err (fun m -> m "key %a not found (or multiple)" Domain_name.pp name) ; None
 

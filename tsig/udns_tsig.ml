@@ -138,15 +138,15 @@ let verify ?mac now p name ?key tsig tbs =
 type s = [ `Key_algorithm of Dnskey.t | `Tsig_creation | `Sign ]
 
 let pp_s ppf = function
-  | `Key_algorithm key -> Fmt.pf ppf "can't use algorithm %a for tsig" Dnskey.pp key
+  | `Key_algorithm key -> Fmt.pf ppf "algorithm %a not supported for tsig" Dnskey.pp key
   | `Tsig_creation -> Fmt.pf ppf "failed to create tsig"
   | `Sign -> Fmt.pf ppf "failed to sign"
 
 let encode_and_sign ?(proto = `Udp) p now key keyname =
   let b, _ = Packet.encode proto p in
   match Tsig.dnskey_to_tsig_algo key with
-  | None -> Error (`Key_algorithm key)
-  | Some algorithm -> match Tsig.tsig ~algorithm ~signed:now () with
+  | Error _ -> Error (`Key_algorithm key)
+  | Ok algorithm -> match Tsig.tsig ~algorithm ~signed:now () with
     | None -> Error `Tsig_creation
     | Some tsig -> match sign keyname ~key tsig p b with
       | None -> Error `Sign

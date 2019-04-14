@@ -408,8 +408,8 @@ module Dnskey : sig
     | SHA512
     (** The type of supported algorithms. *)
 
-  val int_to_algorithm : int -> algorithm option
-  (** [int_to_algorithm i] tries to decode [i] to an [algorithm]. *)
+  val int_to_algorithm : ?off:int -> int -> (algorithm, [> `Not_implemented of int * string ]) result
+  (** [int_to_algorithm ~off i] tries to decode [i] to an [algorithm]. *)
 
   val algorithm_to_int : algorithm -> int
   (** [algorithm_to_int a] encodes [a] to an integer. *)
@@ -430,7 +430,7 @@ module Dnskey : sig
   val compare : t -> t -> int
   (** [comapre a b] compares the DNSKEY [a] with [b]. *)
 
-  val of_string : string -> t option
+  val of_string : string -> (t, [> `Msg of string ]) result
   (** [of_string str] attempts to parse [str] to a dnskey. The colon character
       ([:]) is used as separator, supported formats are: [algo:keydata] and
       [flags:algo:keydata], where keydata is a base64 string. *)
@@ -571,7 +571,8 @@ module Tsig : sig
 
   val algorithm_to_name : algorithm -> Domain_name.t
 
-  val algorithm_of_name : Domain_name.t -> algorithm option
+  val algorithm_of_name : ?off:int -> Domain_name.t ->
+    (algorithm, [> `Not_implemented of int * string ]) result
 
   val pp_algorithm : algorithm Fmt.t
 
@@ -595,7 +596,7 @@ module Tsig : sig
 
   val encode_full : Domain_name.t -> t -> Cstruct.t
 
-  val dnskey_to_tsig_algo : Dnskey.t -> algorithm option
+  val dnskey_to_tsig_algo : Dnskey.t -> (algorithm, [> `Msg of string ]) result
 
   val valid_time : Ptime.t -> t -> bool
 end

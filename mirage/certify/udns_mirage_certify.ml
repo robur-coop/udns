@@ -161,14 +161,11 @@ KOqkqm57TH2H3eDJAkSnh6/DNFu0Qg==
      | `Staging -> Logs.warn (fun m -> m "staging environment - test use only")
      | `Production -> Logs.warn (fun m -> m "production environment - take care what you do"));
     let keyname, zone, dnskey =
-      match Astring.String.cut ~sep:":" dns_key with
-      | None -> invalid_arg "couldn't parse dnskey"
-      | Some (name, key) ->
-        match Domain_name.of_string ~hostname:false name, Udns.Dnskey.of_string key with
-        | Error _, _ | _, None -> invalid_arg "failed to parse dnskey"
-        | Ok name, Some dnskey ->
-          let zone = Domain_name.drop_labels_exn ~amount:2 name in
-          (name, zone, dnskey)
+      match Udns.Dnskey.name_key_of_string dns_key with
+      | Ok (name, key) ->
+        let zone = Domain_name.drop_labels_exn ~amount:2 name in
+        (name, zone, key)
+      | Error (`Msg m) -> invalid_arg ("failed to parse dnskey: " ^ m)
     in
     let not_sub subdomain = not (Domain_name.sub ~subdomain ~domain:zone) in
     if not_sub hostname || List.exists not_sub additional_hostnames then

@@ -156,8 +156,8 @@ rr:
      { if not ($5 = 3) then
            parse_error ("DNSKEY protocol is not 3, but " ^ string_of_int $5) ;
        match Dnskey.int_to_algorithm $7 with
-       | None -> parse_error ("DNSKEY algorithm not supported " ^ string_of_int $7)
-       | Some x ->
+       | Error _ -> parse_error ("DNSKEY algorithm not supported " ^ string_of_int $7)
+       | Ok x ->
           let dnskey = { Dnskey.flags = $3 ; algorithm = x ; key = Cstruct.of_string $9 } in
           B (Dnskey, (0l, Rr_map.Dnskey_set.singleton dnskey))
      }

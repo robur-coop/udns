@@ -131,29 +131,29 @@ module Rr = struct
     | ANY -> 255 | URI -> 256 | CAA -> 257 | AVC -> 258 | TA -> 32768
     | DLV -> 32769
 
-  let of_int = function
-    | 1 -> Some A | 2 -> Some NS | 3 -> Some MD | 4 -> Some MF | 5 -> Some CNAME
-    | 6 -> Some SOA | 7 -> Some MB | 8 -> Some MG | 9 -> Some MR | 10 -> Some NULL
-    | 11 -> Some WKS | 12 -> Some PTR | 13 -> Some HINFO | 14 -> Some MINFO
-    | 15 -> Some MX | 16 -> Some TXT | 17 -> Some RP | 18 -> Some AFSDB
-    | 19 -> Some X25 | 20 -> Some ISDN | 21 -> Some RT | 22 -> Some NSAP
-    | 23 -> Some NSAP_PTR | 24 -> Some SIG | 25 -> Some KEY | 26 -> Some PX
-    | 27 -> Some GPOS | 28 -> Some AAAA | 29 -> Some LOC | 30 -> Some NXT
-    | 31 -> Some EID | 32 -> Some NIMLOC | 33 -> Some SRV | 34 -> Some ATMA
-    | 35 -> Some NAPTR | 36 -> Some KX | 37 -> Some CERT | 38 -> Some A6
-    | 39 -> Some DNAME | 40 -> Some SINK | 41 -> Some OPT | 42 -> Some APL
-    | 43 -> Some DS | 44 -> Some SSHFP | 45 -> Some IPSECKEY | 46 -> Some RRSIG
-    | 47 -> Some NSEC | 48 -> Some DNSKEY | 49 -> Some DHCID | 50 -> Some NSEC3
-    | 51 -> Some NSEC3PARAM | 52 -> Some TLSA | 53 -> Some SMIMEA | 55 -> Some HIP
-    | 56 -> Some NINFO | 57 -> Some RKEY | 58 -> Some TALINK | 59 -> Some CDS
-    | 60 -> Some CDNSKEY | 61 -> Some OPENPGPKEY | 62 -> Some CSYNC
-    | 99 -> Some SPF | 100 -> Some UINFO | 101 -> Some UID | 102 -> Some GID
-    | 103 -> Some UNSPEC | 104 -> Some NID | 105 -> Some L32 | 106 -> Some L64
-    | 107 -> Some LP | 108 -> Some EUI48 | 109 -> Some EUI64 | 249 -> Some TKEY
-    | 250 -> Some TSIG | 251 -> Some IXFR | 252 -> Some AXFR | 253 -> Some MAILB
-    | 254 -> Some MAILA | 255 -> Some ANY | 256 -> Some URI | 257 -> Some CAA
-    | 258 -> Some AVC | 32768 -> Some TA | 32769 -> Some DLV
-    | _ -> None
+  let of_int ?(off = 0) = function
+    | 1 -> Ok A | 2 -> Ok NS | 3 -> Ok MD | 4 -> Ok MF | 5 -> Ok CNAME
+    | 6 -> Ok SOA | 7 -> Ok MB | 8 -> Ok MG | 9 -> Ok MR | 10 -> Ok NULL
+    | 11 -> Ok WKS | 12 -> Ok PTR | 13 -> Ok HINFO | 14 -> Ok MINFO
+    | 15 -> Ok MX | 16 -> Ok TXT | 17 -> Ok RP | 18 -> Ok AFSDB
+    | 19 -> Ok X25 | 20 -> Ok ISDN | 21 -> Ok RT | 22 -> Ok NSAP
+    | 23 -> Ok NSAP_PTR | 24 -> Ok SIG | 25 -> Ok KEY | 26 -> Ok PX
+    | 27 -> Ok GPOS | 28 -> Ok AAAA | 29 -> Ok LOC | 30 -> Ok NXT
+    | 31 -> Ok EID | 32 -> Ok NIMLOC | 33 -> Ok SRV | 34 -> Ok ATMA
+    | 35 -> Ok NAPTR | 36 -> Ok KX | 37 -> Ok CERT | 38 -> Ok A6
+    | 39 -> Ok DNAME | 40 -> Ok SINK | 41 -> Ok OPT | 42 -> Ok APL
+    | 43 -> Ok DS | 44 -> Ok SSHFP | 45 -> Ok IPSECKEY | 46 -> Ok RRSIG
+    | 47 -> Ok NSEC | 48 -> Ok DNSKEY | 49 -> Ok DHCID | 50 -> Ok NSEC3
+    | 51 -> Ok NSEC3PARAM | 52 -> Ok TLSA | 53 -> Ok SMIMEA | 55 -> Ok HIP
+    | 56 -> Ok NINFO | 57 -> Ok RKEY | 58 -> Ok TALINK | 59 -> Ok CDS
+    | 60 -> Ok CDNSKEY | 61 -> Ok OPENPGPKEY | 62 -> Ok CSYNC
+    | 99 -> Ok SPF | 100 -> Ok UINFO | 101 -> Ok UID | 102 -> Ok GID
+    | 103 -> Ok UNSPEC | 104 -> Ok NID | 105 -> Ok L32 | 106 -> Ok L64
+    | 107 -> Ok LP | 108 -> Ok EUI48 | 109 -> Ok EUI64 | 249 -> Ok TKEY
+    | 250 -> Ok TSIG | 251 -> Ok IXFR | 252 -> Ok AXFR | 253 -> Ok MAILB
+    | 254 -> Ok MAILA | 255 -> Ok ANY | 256 -> Ok URI | 257 -> Ok CAA
+    | 258 -> Ok AVC | 32768 -> Ok TA | 32769 -> Ok DLV
+    | x -> Error (`Not_implemented (off, Fmt.strf "rrtype 0x%02X" x))
 
   let compare a b = int_compare (to_int a) (to_int b)
 
@@ -206,13 +206,13 @@ module Clas = struct
 
   let compare a b = int_compare (to_int a) (to_int b)
 
-  let of_int = function
-    | 1 -> Some IN
-    | 3 -> Some CHAOS
-    | 4 -> Some HESIOD
-    | 254 -> Some NONE
-    | 255 -> Some ANY_CLASS
-    | _ -> None
+  let of_int ?(off = 0) = function
+    | 1 -> Ok IN
+    | 3 -> Ok CHAOS
+    | 4 -> Ok HESIOD
+    | 254 -> Ok NONE
+    | 255 -> Ok ANY_CLASS
+    | c -> Error (`Not_implemented (off, Fmt.strf "class %X" c))
 
   let to_string = function
     | IN -> "IN"
@@ -244,13 +244,13 @@ module Opcode = struct
 
   let compare a b = int_compare (to_int a) (to_int b)
 
-  let of_int = function
-    | 0 -> Some Query
-    | 1 -> Some IQuery
-    | 2 -> Some Status
-    | 4 -> Some Notify
-    | 5 -> Some Update
-    | _ -> None
+  let of_int ?(off = 0) = function
+    | 0 -> Ok Query
+    | 1 -> Ok IQuery
+    | 2 -> Ok Status
+    | 4 -> Ok Notify
+    | 5 -> Ok Update
+    | x -> Error (`Not_implemented (off, Fmt.strf "opcode 0x%X" x))
 
   let to_string = function
     | Query -> "Query"
@@ -300,15 +300,15 @@ module Rcode = struct
     | BadAlg -> 21 | BadTrunc -> 22 | BadCookie -> 23
   let compare a b = int_compare (to_int a) (to_int b)
 
-  let of_int = function
-    | 0 -> Some NoError | 1 -> Some FormErr | 2 -> Some ServFail
-    | 3 -> Some NXDomain | 4 -> Some NotImp | 5 -> Some Refused
-    | 6 -> Some YXDomain | 7 -> Some YXRRSet | 8 -> Some NXRRSet
-    | 9 -> Some NotAuth | 10 -> Some NotZone | 16 -> Some BadVersOrSig
-    | 17 -> Some BadKey | 18 -> Some BadTime | 19 -> Some BadMode
-    | 20 -> Some BadName | 21 -> Some BadAlg | 22 -> Some BadTrunc
-    | 23 -> Some BadCookie
-    | _ -> None
+  let of_int ?(off = 0) = function
+    | 0 -> Ok NoError | 1 -> Ok FormErr | 2 -> Ok ServFail
+    | 3 -> Ok NXDomain | 4 -> Ok NotImp | 5 -> Ok Refused
+    | 6 -> Ok YXDomain | 7 -> Ok YXRRSet | 8 -> Ok NXRRSet
+    | 9 -> Ok NotAuth | 10 -> Ok NotZone | 16 -> Ok BadVersOrSig
+    | 17 -> Ok BadKey | 18 -> Ok BadTime | 19 -> Ok BadMode
+    | 20 -> Ok BadName | 21 -> Ok BadAlg | 22 -> Ok BadTrunc
+    | 23 -> Ok BadCookie
+    | x -> Error (`Not_implemented (off, Fmt.strf "rcode 0x%04X" x))
   let to_string = function
     | NoError -> "no error" | FormErr -> "form error"
     | ServFail -> "server failure" | NXDomain -> "no such domain"
@@ -835,14 +835,14 @@ module Dnskey = struct
     | SHA256 -> 163
     | SHA384 -> 164
     | SHA512 -> 165
-  let int_to_algorithm = function
-    | 157 -> Some MD5
-    | 161 -> Some SHA1
-    | 162 -> Some SHA224
-    | 163 -> Some SHA256
-    | 164 -> Some SHA384
-    | 165 -> Some SHA512
-    | _ -> None
+  let int_to_algorithm ?(off = 0) = function
+    | 157 -> Ok MD5
+    | 161 -> Ok SHA1
+    | 162 -> Ok SHA224
+    | 163 -> Ok SHA256
+    | 164 -> Ok SHA384
+    | 165 -> Ok SHA512
+    | x -> Error (`Not_implemented (off, Fmt.strf "DNSKEY algorithm 0x%X" x))
   let algorithm_to_string = function
     | MD5 -> "MD5"
     | SHA1 -> "SHA1"
@@ -851,13 +851,13 @@ module Dnskey = struct
     | SHA384 -> "SHA384"
     | SHA512 -> "SHA512"
   let string_to_algorithm = function
-    | "MD5" -> Some MD5
-    | "SHA1" -> Some SHA1
-    | "SHA224" -> Some SHA224
-    | "SHA256" -> Some SHA256
-    | "SHA384" -> Some SHA384
-    | "SHA512" -> Some SHA512
-    | _ -> None
+    | "MD5" -> Ok MD5
+    | "SHA1" -> Ok SHA1
+    | "SHA224" -> Ok SHA224
+    | "SHA256" -> Ok SHA256
+    | "SHA384" -> Ok SHA384
+    | "SHA512" -> Ok SHA512
+    | x -> Error (`Msg ("DNSKEY algorithm not implemented " ^ x))
 
   let algorithm_b64_len k =
     let b64 bits = (bits / 8 + 2) / 3 * 4 in
@@ -893,12 +893,10 @@ module Dnskey = struct
     and algo = Cstruct.get_uint8 buf (off + 3)
     in
     guard (proto = 3) (`Not_implemented (off + 2, Fmt.strf "dnskey protocol 0x%x" proto)) >>= fun () ->
-    match int_to_algorithm algo with
-    | None -> Error (`Not_implemented (off + 3, Fmt.strf "dnskey algorithm 0x%x" algo))
-    | Some algorithm ->
-      let len = algorithm_b64_len algorithm in
-      let key = Cstruct.sub buf (off + 4) len in
-      Ok ({ flags ; algorithm ; key }, names, off + len + 4)
+    int_to_algorithm ~off algo >>= fun algorithm ->
+    let len = algorithm_b64_len algorithm in
+    let key = Cstruct.sub buf (off + 4) len in
+    Ok ({ flags ; algorithm ; key }, names, off + len + 4)
 
   let encode t names buf off =
     Cstruct.BE.set_uint16 buf off t.flags ;
@@ -909,27 +907,28 @@ module Dnskey = struct
     names, off + 4 + kl
 
   let of_string key =
+    let open Rresult.R.Infix in
     let parse flags algo key =
       let key = Cstruct.of_string key in
-      match string_to_algorithm algo with
-      | None -> None
-      | Some algorithm -> Some { flags ; algorithm ; key }
+      string_to_algorithm algo >>| fun algorithm ->
+      { flags ; algorithm ; key }
     in
     match Astring.String.cuts ~sep:":" key with
     | [ flags ; algo ; key ] ->
-      begin match try Some (int_of_string flags) with Failure _ -> None with
-        | Some flags -> parse flags algo key
-        | None -> None
-      end
+      (try Ok (int_of_string flags) with Failure _ ->
+         Error (`Msg ("couldn't parse flags " ^ flags))) >>= fun flags ->
+      parse flags algo key
     | [ algo ; key ] -> parse 0 algo key
-    | _ -> None
+    | _ -> Error (`Msg ("invalid DNSKEY string " ^ key))
 
   let name_key_of_string str =
+    let open Rresult.R.Infix in
     match Astring.String.cut ~sep:":" str with
-    | None -> Error (`Msg ("couldn't parse " ^ str))
-    | Some (name, key) -> match Domain_name.of_string ~hostname:false name, of_string key with
-      | Error _, _ | _, None -> Error (`Msg ("failed to parse key " ^ key))
-      | Ok name, Some dnskey -> Ok (name, dnskey)
+    | None -> Error (`Msg ("couldn't parse name:key in " ^ str))
+    | Some (name, key) ->
+      Domain_name.of_string ~hostname:false name >>= fun name ->
+      of_string key >>| fun dnskey ->
+      (name, dnskey)
 end
 
 (* certificate authority authorization *)
@@ -1248,9 +1247,10 @@ module Tsig = struct
         of_s "hmac-sha512", SHA512 ]
     in
     (fun a -> fst (List.find (fun (_, t) -> t = a) map)),
-    (fun b ->
-       try Some (snd (List.find (fun (n, _) -> Domain_name.equal b n) map))
-       with Not_found -> None)
+    (fun ?(off = 0) b ->
+       try Ok (snd (List.find (fun (n, _) -> Domain_name.equal b n) map))
+       with Not_found ->
+         Error (`Not_implemented (off, Fmt.strf "algorithm name %a" Domain_name.pp b)))
 
   let pp_algorithm ppf a = Domain_name.pp ppf (algorithm_to_name a)
 
@@ -1272,12 +1272,12 @@ module Tsig = struct
       else
         Some s'
 
-  let ptime_of_int64 s =
+  let ptime_of_int64 ?(off = 0) s =
     let d, ps = Int64.(div s s_in_d, mul (rem s s_in_d) ps_in_s) in
     if d < Int64.of_int min_int || d > Int64.of_int max_int then
-      None
+      Error (`Malformed (off, Fmt.strf "timestamp does not fit in time range %Ld" s))
     else
-      Some (Ptime.v (Int64.to_int d, ps))
+      Ok (Ptime.v (Int64.to_int d, ps))
 
   let valid_time now tsig =
     let ts = tsig.signed
@@ -1348,38 +1348,36 @@ module Tsig = struct
     let len = Cstruct.BE.get_uint16 buf (off + 4) in
     let rdata_start = off + 6 in
     guard (Cstruct.len buf - rdata_start >= len) `Partial >>= fun () ->
-    Name.decode ~hostname:false names buf ~off:rdata_start >>= fun (algorithm, names, off) ->
-    guard (Cstruct.len buf - off >= 10) `Partial >>= fun () ->
-    let signed = decode_48bit_time buf off
-    and fudge = Cstruct.BE.get_uint16 buf (off + 6)
-    and mac_len = Cstruct.BE.get_uint16 buf (off + 8)
+    Name.decode ~hostname:false names buf ~off:rdata_start >>= fun (algorithm, names, off') ->
+    guard (Cstruct.len buf - off' >= 10) `Partial >>= fun () ->
+    let signed = decode_48bit_time buf off'
+    and fudge = Cstruct.BE.get_uint16 buf (off' + 6)
+    and mac_len = Cstruct.BE.get_uint16 buf (off' + 8)
     in
-    guard (Cstruct.len buf - off >= 10 + mac_len + 6) `Partial >>= fun () ->
-    let mac = Cstruct.sub buf (off + 10) mac_len
-    and original_id = Cstruct.BE.get_uint16 buf (off + 10 + mac_len)
-    and error = Cstruct.BE.get_uint16 buf (off + 12 + mac_len)
-    and other_len = Cstruct.BE.get_uint16 buf (off + 14 + mac_len)
+    guard (Cstruct.len buf - off' >= 10 + mac_len + 6) `Partial >>= fun () ->
+    let mac = Cstruct.sub buf (off' + 10) mac_len
+    and original_id = Cstruct.BE.get_uint16 buf (off' + 10 + mac_len)
+    and error = Cstruct.BE.get_uint16 buf (off' + 12 + mac_len)
+    and other_len = Cstruct.BE.get_uint16 buf (off' + 14 + mac_len)
     in
-    let rdata_end = off + 10 + mac_len + 6 + other_len in
+    let rdata_end = off' + 10 + mac_len + 6 + other_len in
     guard (rdata_end - rdata_start = len) `Partial >>= fun () ->
     guard (Cstruct.len buf >= rdata_end) `Partial >>= fun () ->
-    guard (other_len = 0 || other_len = 6) `Partial >>= fun () -> (* TODO: better error! *)
-    match algorithm_of_name algorithm, ptime_of_int64 signed, Rcode.of_int error with
-    | None, _, _ -> Error (`Not_implemented (off, Fmt.strf "tsig algorithm %a" Domain_name.pp algorithm))
-    | _, None, _ -> Error (`Malformed (off, Fmt.strf "tsig timestamp %Lu" signed))
-    | _, _, None -> Error (`Not_implemented (off, Fmt.strf "tsig rcode 0x%x" error))
-    | Some algorithm, Some signed, Some error ->
-      (if other_len = 0 then
-         Ok None
-       else
-         let other = decode_48bit_time buf (off + 16 + mac_len) in
-         match ptime_of_int64 other with
-         | None -> Error (`Malformed (off, Fmt.strf "tsig other timestamp %Lu" other))
-         | Some x -> Ok (Some x)) >>= fun other ->
-      let fudge = Ptime.Span.of_int_s fudge in
-      Ok ({ algorithm ; signed ; fudge ; mac ; original_id ; error ; other },
-          names,
-          off + 16 + mac_len + other_len)
+    guard (other_len = 0 || other_len = 6)
+      (`Malformed (off' + 14 + mac_len, "other timestamp should be 0 or 6 bytes!")) >>= fun () ->
+    algorithm_of_name ~off algorithm >>= fun algorithm ->
+    ptime_of_int64 ~off:off' signed >>= fun signed ->
+    Rcode.of_int ~off:(off' + 12 + mac_len) error >>= fun error ->
+    (if other_len = 0 then
+       Ok None
+     else
+       let other = decode_48bit_time buf (off + 16 + mac_len) in
+       ptime_of_int64 ~off:(off' + 14 + mac_len + 2) other >>| fun x ->
+       Some x) >>| fun other ->
+    let fudge = Ptime.Span.of_int_s fudge in
+    { algorithm ; signed ; fudge ; mac ; original_id ; error ; other },
+    names,
+    off + 16 + mac_len + other_len
 
   let encode_48bit_time buf ?(off = 0) ts =
     match ptime_span_to_int64 (Ptime.to_span ts) with
@@ -1489,12 +1487,12 @@ module Tsig = struct
 
   let dnskey_to_tsig_algo key =
     match key.Dnskey.algorithm with
-    | Dnskey.MD5 -> None
-    | Dnskey.SHA1 -> Some SHA1
-    | Dnskey.SHA224 -> Some SHA224
-    | Dnskey.SHA256 -> Some SHA256
-    | Dnskey.SHA384 -> Some SHA384
-    | Dnskey.SHA512 -> Some SHA512
+    | Dnskey.MD5 -> Error (`Msg "TSIG algorithm MD5 is not supported")
+    | Dnskey.SHA1 -> Ok SHA1
+    | Dnskey.SHA224 -> Ok SHA224
+    | Dnskey.SHA256 -> Ok SHA256
+    | Dnskey.SHA384 -> Ok SHA384
+    | Dnskey.SHA512 -> Ok SHA512
 end
 
 module Edns = struct
@@ -2230,18 +2228,16 @@ let decode_ntc names buf off =
   and cls = Cstruct.BE.get_uint16 buf (off + 2)
   (* CLS is interpreted differently by OPT, thus no int_to_clas called here *)
   in
-  match Rr.of_int typ with
-  | None -> Error (`Not_implemented (off, Fmt.strf "rrtyp 0x%x" typ))
-  | Some Rr.(DNSKEY | TSIG | TXT | CNAME as t) ->
-    Ok ((name, t, cls), names, off + 4)
-  | Some Rr.(TLSA | SRV as t) when Domain_name.is_service name ->
-    Ok ((name, t, cls), names, off + 4)
-  | Some Rr.SRV -> (* MUST be service name *)
-    Error (`Malformed (off, Fmt.strf "SRV must be a service name %a" Domain_name.pp name))
-  | Some t when Domain_name.is_hostname name ->
-    Ok ((name, t, cls), names, off + 4)
-  | Some _ ->
-    Error (`Malformed (off, Fmt.strf "record must be a hostname %a" Domain_name.pp name))
+  Rr.of_int ~off typ >>= function
+  | Rr.(DNSKEY | TSIG | TXT | CNAME as t) -> Ok ((name, t, cls), names, off + 4)
+  | Rr.(TLSA | SRV as t) when Domain_name.is_service name -> Ok ((name, t, cls), names, off + 4)
+  | Rr.SRV -> (* MUST be service name *)
+    Error (`Malformed (off, Fmt.strf "SRV must be a service name %a"
+                         Domain_name.pp name))
+  | t when Domain_name.is_hostname name -> Ok ((name, t, cls), names, off + 4)
+  | _ ->
+    Error (`Malformed (off, Fmt.strf "record must be a hostname %a"
+                         Domain_name.pp name))
 
 module Packet = struct
 
@@ -2349,15 +2345,13 @@ module Packet = struct
       let op = (hdr land 0x7800) lsr 11
       and rc = hdr land 0x000F
       in
-      match Opcode.of_int op, Rcode.of_int rc with
-      | None, _ -> Error (`Not_implemented (2, Fmt.strf "opcode 0x%x" op))
-      | _, None -> Error (`Malformed (3, Fmt.strf "rcode %x" rc))
-      | Some operation, Some rcode ->
-        let id = Cstruct.BE.get_uint16 buf 0
-        and query = hdr lsr 15 = 0
-        and flags = decode_flags hdr
-        in
-        Ok ((id, flags), query, operation, rcode)
+      Opcode.of_int ~off:2 op >>= fun operation ->
+      Rcode.of_int ~off:3 rc >>= fun rcode ->
+      let id = Cstruct.BE.get_uint16 buf 0
+      and query = hdr lsr 15 = 0
+      and flags = decode_flags hdr
+      in
+      Ok ((id, flags), query, operation, rcode)
 
     let encode_flags flags =
       FS.fold (fun f acc -> acc + Flags.number f) flags 0
@@ -2465,8 +2459,8 @@ module Packet = struct
     let decode ?(names = Name.Int_map.empty) ?(off = Header.len) buf =
       let open Rresult.R.Infix in
       decode_ntc names buf off >>= fun ((name, typ, c), names, off) ->
-      match Clas.of_int c with
-      | Some Clas.IN -> Ok ((name, typ), names, off)
+      Clas.of_int ~off c >>= function
+      | Clas.IN -> Ok ((name, typ), names, off)
       | _ -> Error (`Not_implemented (off, Fmt.strf "bad class in question 0x%x" c))
 
     let encode names buf off (name, typ) =
@@ -2684,12 +2678,12 @@ module Packet = struct
       guard (ttl = 0l) (`Malformed (off, Fmt.strf "prereq TTL not zero %lu" ttl)) >>= fun () ->
       let rlen = Cstruct.BE.get_uint16 buf (off + 4) in
       let r0 = guard (rlen = 0) (`Malformed (off + 4, Fmt.strf "prereq rdlength must be zero %d" rlen)) in
-      match Clas.of_int cls, typ with
-      | Some ANY_CLASS, ANY -> r0 >>= fun () -> Ok (name, Name_inuse, names, off')
-      | Some NONE, ANY -> r0 >>= fun () -> Ok (name, Not_name_inuse, names, off')
-      | Some ANY_CLASS, _ -> r0 >>= fun () -> Ok (name, Exists typ, names, off')
-      | Some NONE, _ -> r0 >>= fun () -> Ok (name, Not_exists typ, names, off')
-      | Some IN, _ ->
+      Clas.of_int cls >>= function
+      | ANY_CLASS when typ = ANY -> r0 >>= fun () -> Ok (name, Name_inuse, names, off')
+      | NONE when typ = ANY -> r0 >>= fun () -> Ok (name, Not_name_inuse, names, off')
+      | ANY_CLASS -> r0 >>= fun () -> Ok (name, Exists typ, names, off')
+      | NONE -> r0 >>= fun () -> Ok (name, Not_exists typ, names, off')
+      | IN->
         Rr_map.decode names buf off typ >>= fun (rdata, names, off'') ->
         Ok (name, Exists_data rdata, names, off'')
       | _ -> Error (`Malformed (off, Fmt.strf "prereq bad class 0x%x" cls))
@@ -2751,20 +2745,20 @@ module Packet = struct
       let rlen = Cstruct.BE.get_uint16 buf (off + 4) in
       let r0 = guard (rlen = 0) (`Malformed (off + 4, Fmt.strf "update rdlength must be zero %d" rlen)) in
       let ttl0 = guard (ttl = 0l) (`Malformed (off, Fmt.strf "update ttl must be zero %lu" ttl)) in
-      match Clas.of_int cls, typ with
-      | Some ANY_CLASS, ANY ->
+      Clas.of_int cls >>= function
+      | ANY_CLASS when typ = ANY ->
         ttl0 >>= fun () ->
         r0 >>= fun () ->
         Ok (name, Remove_all, names, off')
-      | Some ANY_CLASS, _ ->
+      | ANY_CLASS ->
         ttl0 >>= fun () ->
         r0 >>= fun () ->
         Ok (name, Remove typ, names, off')
-      | Some NONE, _ ->
+      | NONE ->
         ttl0 >>= fun () ->
         Rr_map.decode names buf off typ >>= fun (rdata, names, off) ->
         Ok (name, Remove_single rdata, names, off)
-      | Some IN, _ ->
+      | IN ->
         Rr_map.decode names buf off typ >>= fun (rdata, names, off) ->
         Ok (name, Add rdata, names, off)
       | _ -> Error (`Malformed (off, Fmt.strf "bad update class 0x%x" cls))
@@ -2978,15 +2972,13 @@ module Packet = struct
                        n Cstruct.hexdump_pp (Cstruct.sub buf off n))) ;
       Ok (additional, edns, tsig)
 
-  let ext_rcode rcode = function
+  let ext_rcode ?off rcode = function
     | Some e when e.Edns.extended_rcode > 0 ->
       begin
         let rcode' =
           Rcode.to_int rcode + e.extended_rcode lsl 4
         in
-        match Rcode.of_int rcode' with
-        | None -> Error (`Malformed (0, Fmt.strf "extended rcode 0x%x" rcode'))
-        | Some rcode -> Ok rcode
+        Rcode.of_int ?off rcode'
       end
     | _ -> Ok rcode
 
@@ -3062,7 +3054,7 @@ module Packet = struct
      else
        Ok (Name_rr_map.empty, None, None)) >>= fun (additional, edns, tsig) ->
     (* now in case of error, we may switch the rcode *)
-    ext_rcode rcode edns >>= with_rcode data >>| fun data ->
+    ext_rcode ~off:off rcode edns >>= with_rcode data >>| fun data ->
     { header ; question ; data ; additional ; edns ; tsig }
 
   let opcode_match request reply =
