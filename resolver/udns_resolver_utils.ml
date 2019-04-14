@@ -68,7 +68,7 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
       else
         match Rr_map.lookup_rr q_type rr_map with
         | Some b -> [ q_type, q_name, rank, `Entry b ], Rr_map.names_b b
-        | None -> match Rr_map.lookup_rr Rr.CNAME rr_map with
+        | None -> match Rr_map.find Cname rr_map with
           | None ->
             (* case neither TYP nor cname *)
             Logs.warn (fun m -> m "noerror answer with right name, but not TYP nor cname in %a, invalid soa for %a"
@@ -78,8 +78,8 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
           | Some cname ->
             (* explicitly register as CNAME so it'll be found *)
             (* should we try to find further records for the new alias? *)
-            [ Rr.CNAME, q_name, rank, `Entry cname ],
-            Rr_map.names_b cname
+            [ Rr.CNAME, q_name, rank, `Alias cname ],
+            Domain_name.Set.singleton (snd cname)
   in
 
   (* AUTHORITY - NS records *)
@@ -194,7 +194,7 @@ let nxdomain (_, flags) (name, _typ) data =
       [ name, `No_domain (name, soa) ]
     | _, rrs ->
       List.map (fun (name, cname) ->
-          name, `Entry Rr_map.(B (Cname, cname)))
+          name, `Alias cname)
         rrs
   in
   (* the cname does not matter *)
@@ -221,8 +221,7 @@ let noerror_stub (name, typ) (answer, authority) =
       in
       (typ, name, NonAuthoritativeAnswer, `No_data (name, soa)) :: acc
     | Some (`Cname (ttl, alias)) ->
-      let b = Rr_map.(B (Cname, (ttl, alias))) in
-      go ((Rr.CNAME, name, NonAuthoritativeAnswer, `Entry b) :: acc) alias
+      go ((Rr.CNAME, name, NonAuthoritativeAnswer, `Alias (ttl, alias)) :: acc) alias
     | Some (`Entry b) ->
       (typ, name, NonAuthoritativeAnswer, `Entry b) :: acc
     | Some (`Entries map) ->

@@ -12,30 +12,25 @@ type rank =
   | Additional
 
 let compare_rank a b = match a, b with
-  | ZoneFile, ZoneFile -> `Equal
-  | ZoneFile, _ -> `Bigger
-  | _, ZoneFile -> `Smaller
-  | ZoneTransfer, ZoneTransfer -> `Equal
-  | ZoneTransfer, _ -> `Bigger
-  | _, ZoneTransfer -> `Smaller
-  | AuthoritativeAnswer, AuthoritativeAnswer -> `Equal
-  | AuthoritativeAnswer, _ -> `Bigger
-  | _, AuthoritativeAnswer -> `Smaller
-  | AuthoritativeAuthority, AuthoritativeAuthority -> `Equal
-  | AuthoritativeAuthority, _ -> `Bigger
-  | _, AuthoritativeAuthority -> `Smaller
-  | ZoneGlue, ZoneGlue -> `Equal
-  | ZoneGlue, _ -> `Bigger
-  | _, ZoneGlue -> `Smaller
-  | NonAuthoritativeAnswer, NonAuthoritativeAnswer -> `Equal
-  | NonAuthoritativeAnswer, _ -> `Bigger
-  | _, NonAuthoritativeAnswer -> `Smaller
-  | Additional, Additional -> `Equal
-
-let pp_ord ppf = function
-  | `Bigger -> Fmt.string ppf "bigger"
-  | `Smaller -> Fmt.string ppf "smaller"
-  | `Equal -> Fmt.string ppf "equal"
+  | ZoneFile, ZoneFile -> 0
+  | ZoneFile, _ -> 1
+  | _, ZoneFile -> -1
+  | ZoneTransfer, ZoneTransfer -> 0
+  | ZoneTransfer, _ -> 1
+  | _, ZoneTransfer -> -1
+  | AuthoritativeAnswer, AuthoritativeAnswer -> 0
+  | AuthoritativeAnswer, _ -> 1
+  | _, AuthoritativeAnswer -> -1
+  | AuthoritativeAuthority, AuthoritativeAuthority -> 0
+  | AuthoritativeAuthority, _ -> 1
+  | _, AuthoritativeAuthority -> -1
+  | ZoneGlue, ZoneGlue -> 0
+  | ZoneGlue, _ -> 1
+  | _, ZoneGlue -> -1
+  | NonAuthoritativeAnswer, NonAuthoritativeAnswer -> 0
+  | NonAuthoritativeAnswer, _ -> 1
+  | _, NonAuthoritativeAnswer -> -1
+  | Additional, Additional -> 0
 
 let pp_rank ppf r = Fmt.string ppf (match r with
     | ZoneFile -> "zone file data"
@@ -265,10 +260,10 @@ let maybe_insert typ nam ts rank e t =
     Logs.debug (fun m -> m "maybe_insert: %a nothing found, adding: %a" Packet.Question.pp (nam, typ) pp_res entry);
     insert_lru ?map t nam typ ts rank entry
   | map, Ok ((_, rank'), entry) ->
-    Logs.debug (fun m -> m "maybe_insert: %a found rank %a insert rank %a: %a (unless bigger)"
-                   Packet.Question.pp (nam, typ) pp_rank rank' pp_rank rank pp_ord (compare_rank rank' rank));
+    Logs.debug (fun m -> m "maybe_insert: %a found rank %a insert rank %a: %d"
+                   Packet.Question.pp (nam, typ) pp_rank rank' pp_rank rank (compare_rank rank' rank));
     match compare_rank rank' rank with
-    | `Bigger -> t
+    | 1 -> t
     | _ -> insert_lru ?map t nam typ ts rank entry
 
 (*

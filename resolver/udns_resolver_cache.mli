@@ -10,6 +10,10 @@ type rank =
   | NonAuthoritativeAnswer
   | Additional
 
+val pp_rank : rank Fmt.t
+
+val compare_rank : rank -> rank -> int
+
 type t
 
 type stats
