@@ -6,8 +6,6 @@
 open Udns
 open Rresult.R.Infix
 
-let str_to_msg = function Ok a -> Ok a | Error msg -> Error (`Msg msg)
-
 let err_to_msg = function Ok () -> Ok () | Error e -> Error (`Msg (Fmt.to_to_string Udns_trie.pp_err e))
 
 let load_zone zone =
@@ -32,7 +30,7 @@ let jump _ zone old =
   in
   if Domain_name.Set.cardinal zones = 1 then
     let zone = Domain_name.Set.choose zones in
-    str_to_msg (Udns_server.text zone trie) >>= fun zone_data ->
+    Udns_server.text zone trie >>= fun zone_data ->
     Logs.debug (fun m -> m "assembled zone data %s" zone_data) ;
     (match old with
      | None -> Ok ()

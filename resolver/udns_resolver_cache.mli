@@ -59,7 +59,7 @@ val resolve_ns : t -> int64 -> Domain_name.t ->
 *)
 
 val resolve : t -> rng:(int -> Cstruct.t) ->  int64 -> Domain_name.t -> Rr.t ->
-  (Domain_name.t * Domain_name.t * Rr.t * Ipaddr.V4.t * t, string) result
+  Domain_name.t * Domain_name.t * Rr.t * Ipaddr.V4.t * t
 
 val handle_query : t -> rng:(int -> Cstruct.t) -> int64 -> Packet.Question.t ->
   [ `Reply of Packet.Header.FS.t * Packet.reply

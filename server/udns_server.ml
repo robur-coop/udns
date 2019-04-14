@@ -165,7 +165,7 @@ type t = {
 let text name data =
   match Udns_trie.entries name data with
   | Error e ->
-    Error (Fmt.strf "text: couldn't find zone %a: %a" Domain_name.pp name Udns_trie.pp_e e)
+    Error (`Msg (Fmt.strf "text: couldn't find zone %a: %a" Domain_name.pp name Udns_trie.pp_e e))
   | Ok (soa, map) ->
     let buf = Buffer.create 1024 in
     let origin, default_ttl =

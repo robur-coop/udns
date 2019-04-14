@@ -423,7 +423,7 @@ let resolve t ~rng ts name typ =
     Logs.debug (fun m -> m "go %a" Domain_name.pp name) ;
     match find_nearest_ns rng ts t name with
     | `NeedA ns -> go t Rr.A ns
-    | `HaveIP (zone, ip) -> Ok (zone, name, typ, ip, t)
+    | `HaveIP (zone, ip) -> zone, name, typ, ip, t
   in
   go t typ name
 
@@ -646,17 +646,13 @@ let handle_query t ~rng ts q =
     match r with
     | Error () -> `Nothing, t
     | Ok (qname, typ) ->
-      match resolve t ~rng ts qname typ with
-      | Error e ->
-        Logs.err (fun m -> m "resolve returned error %s" e) ;
-        `Nothing, t
-      | Ok (zone, name', typ, ip, t) ->
-        let name, typ =
-          match Domain_name.equal name' qname, snd q with
-          | true, Rr.SRV -> name, Rr.SRV
-          | _ -> name', typ
-        in
-        Logs.debug (fun m -> m "resolve returned zone %a name %a typ %a, ip %a"
-                       Domain_name.pp zone Domain_name.pp name
-                       Rr.pp typ Ipaddr.V4.pp ip) ;
-        `Query (zone, name, typ, ip), t
+      let zone, name', typ, ip, t = resolve t ~rng ts qname typ in
+      let name, typ =
+        match Domain_name.equal name' qname, snd q with
+        | true, Rr.SRV -> name, Rr.SRV
+        | _ -> name', typ
+      in
+      Logs.debug (fun m -> m "resolve returned zone %a name %a typ %a, ip %a"
+                     Domain_name.pp zone Domain_name.pp name
+                     Rr.pp typ Ipaddr.V4.pp ip) ;
+      `Query (zone, name, typ, ip), t
