@@ -375,7 +375,7 @@ let find_nearest_ns rng ts t name =
       | None -> assert false
       | Some ip -> `HaveIP (Domain_name.root, ip)
     else
-      f (Domain_name.drop_labels_exn name)
+      f (Domain_name.drop_labels_exn nam)
   in
   let rec go nam =
     match pick (find_ns nam) with
