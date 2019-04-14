@@ -305,7 +305,9 @@ let resolve t ts proto sender sport req =
 let handle_reply t ts proto sender packet reply =
   let id = fst packet.Packet.header in
   match reply with
-  | `Answer _ ->
+  | `Answer _
+  | `Rcode_error (Rcode.NXDomain, Opcode.Query, _)
+  | `Rcode_error (Rcode.ServFail, Opcode.Query, _) ->
     Logs.info (fun m -> m "handling reply %a" Packet.pp packet);
     (* (a) first check whether frame was in transit! *)
     let r, transit = was_in_transit t.transit packet.question id sender in
