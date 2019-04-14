@@ -468,6 +468,7 @@ module Name = struct
     in
     names, off
 
+  (*
   (* enable once https://github.com/ocaml/dune/issues/897 is resolved *)
   let%expect_test "decode_name" =
     let test ?hostname ?(map = Int_map.empty) ?(off = 0) data rmap roff =
@@ -611,6 +612,7 @@ module Name = struct
     [%expect {|
 03 66 6f 6f 03 62 61 72  00 03 62 61 7a 03 66 6f
 6f 03 62 61 72 00|}]
+*)
 end
 
 (* start of authority *)
@@ -2369,7 +2371,7 @@ module Packet = struct
       Cstruct.BE.set_uint16 buf 0 id ;
       Cstruct.BE.set_uint16 buf 2 header
 
-    let%expect_test "encode_decode_header" =
+(*    let%expect_test "encode_decode_header" =
       let eq (hdr, query, op, rc) (hdr', query', op', rc') =
         compare hdr hdr' = 0 && rc = rc' && query = query' && op = op'
       and cs = Cstruct.create 12
@@ -2447,7 +2449,7 @@ module Packet = struct
       [%expect {|ok|}];
       let data = Cstruct.of_hex "0000 000e 0000 0000 0000 0000" in
       test_err (decode data);
-      [%expect {|ok|}]
+      [%expect {|ok|}] *)
   end
 
   module Question = struct
