@@ -51,10 +51,12 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
             authority []
         with
         | (name, soa)::_ -> [ q_type, q_name, rank, `No_data (name, soa) ]
+        (* this is wrong for the normal iterative algorithm:
+            it asks for foo.com @root, and get .com NS in AU and A in AD
         | [] when not (Packet.Header.FS.mem `Truncation flags) ->
           Logs.warn (fun m -> m "noerror answer, but nothing in authority whose sub is %a in %a, invalid_soa!"
                         Packet.Question.pp (q_name, q_type) Name_rr_map.pp authority) ;
-          [ q_type, q_name, Additional, `No_data (q_name, invalid_soa q_name) ]
+          [ q_type, q_name, Additional, `No_data (q_name, invalid_soa q_name) ] *)
         | [] -> [] (* general case when we get an answer from root server *)
       end, Domain_name.Set.empty
     | Some rr_map ->
