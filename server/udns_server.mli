@@ -12,7 +12,7 @@ module Authentication : sig
   ]
   (** The type of operations. *)
 
-  type a = Udns_trie.t -> proto -> Domain_name.t option -> operation -> Domain_name.t -> bool
+  type a = Udns_trie.t -> proto -> ?key:Domain_name.t -> operation -> zone:Domain_name.t -> bool
   (** The authentifier function signature *)
 
   val tsig_auth : a

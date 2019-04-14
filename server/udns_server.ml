@@ -20,7 +20,7 @@ module Authentication = struct
     | `Transfer
   ]
 
-  type a = Udns_trie.t -> proto -> Domain_name.t option -> operation -> Domain_name.t -> bool
+  type a = Udns_trie.t -> proto -> ?key:Domain_name.t -> operation -> zone:Domain_name.t -> bool
 
   type t = Udns_trie.t * a list
 
@@ -151,8 +151,8 @@ module Authentication = struct
                    Domain_name.pp name) ;
       None
 
-  let tsig_auth _ _ keyname op zone =
-    match keyname with
+  let tsig_auth _ _ ?key op ~zone =
+    match key with
     | None -> false
     | Some subdomain ->
       let op_string = operation_to_string op in
@@ -162,8 +162,8 @@ module Authentication = struct
       Domain_name.sub ~subdomain ~domain:zone
       || Domain_name.sub ~subdomain ~domain:root
 
-  let authorise (data, authorised) proto keyname zone operation =
-    List.exists (fun a -> a data proto keyname operation zone) authorised
+  let authorise (data, authorised) proto ?key ~zone operation =
+    List.exists (fun a -> a data proto ?key operation ~zone) authorised
 end
 
 type t = {
@@ -318,7 +318,7 @@ let axfr trie proto (zone, _) =
       Error Rcode.NXDomain
 
 let axfr t proto key ((zone, _) as question) =
-  if Authentication.authorise t.auth proto key zone `Transfer then begin
+  if Authentication.authorise t.auth proto ?key ~zone `Transfer then begin
     Log.info (fun m -> m "transfer key %a authorised for AXFR %a"
                  Fmt.(option ~none:(unit "none") Domain_name.pp) key
                  Packet.Question.pp question) ;
@@ -650,7 +650,7 @@ let update_data trie zone (prereq, update) =
     | _, _ -> Ok (trie', None)
 
 let handle_update t proto key (zone, _) u =
-  if Authentication.authorise t.auth proto key zone `Update then begin
+  if Authentication.authorise t.auth proto ?key ~zone `Update then begin
     Log.info (fun m -> m "update key %a authorised for update %a"
                  Fmt.(option ~none:(unit "none") Domain_name.pp) key
                  Packet.Update.pp u) ;
