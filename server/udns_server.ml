@@ -35,7 +35,7 @@ module Authentication = struct
 
   let find_zone_ips name =
     (* the name of a key is primaryip.secondaryip._transfer.zone
-       e.g. 192.168.42.2_1053.192.168.42.1._transfer.mirage
+       e.g. 192.168.42.2.192.168.42.1._transfer.mirage
        alternative: <whatever>.primaryip._transfer.zone *)
     let arr = Domain_name.to_array name in
     let transfer = operation_to_string `Transfer in
@@ -44,27 +44,19 @@ module Authentication = struct
       let zone_idx = go 0 in
       let zone = Domain_name.of_array (Array.sub arr 0 zone_idx) in
       let start = succ zone_idx in
-      let ip_port start =
+      let ip start =
         try
           let subarr = Array.sub arr start 4 in
-          let content, port =
-            let last = Array.get subarr 0 in
-            match Astring.String.cut ~sep:"_" last with
-            | None -> last, 53
-            | Some (a, b) -> a, int_of_string b
-          in
-          Array.set subarr 0 content ;
           let host = Domain_name.of_array subarr in
-          (match Ipaddr.V4.of_string (Domain_name.to_string host) with
-           | Error _ -> None
-           | Ok ip -> Some ip), port
-        with Invalid_argument _ -> None, 53
+          match Ipaddr.V4.of_string (Domain_name.to_string host) with
+          | Error _ -> None
+          | Ok ip -> Some ip
+        with Invalid_argument _ -> None
       in
-      match ip_port (start + 4), ip_port start with
-      | _, (None, _) -> None
-      | (None, _), (Some ip, po) -> Some (zone, (ip, po), None)
-      | (Some primary, pport), (Some secondary, sport) ->
-        Some (zone, (primary, pport), Some (secondary, sport))
+      match ip (start + 4), ip start with
+      | _, None -> None
+      | None, Some ip -> Some (zone, ip, None)
+      | Some primary, Some secondary -> Some (zone, primary, Some secondary)
     with Invalid_argument _ -> None
 
   let find_ns s (trie, _) zone =
@@ -72,12 +64,8 @@ module Authentication = struct
       if Domain_name.sub ~domain:zone ~subdomain:name && is_op `Transfer name then
         match find_zone_ips name, s with
         | None, _ -> acc
-        | Some (_, prim, _), `P ->
-          let (ip, port) = prim in
-          (name, ip, port) :: acc
-        | Some (_, _, Some sec), `S ->
-          let (ip, port) = sec in
-          (name, ip, port) :: acc
+        | Some (_, prim, _), `P -> (name, prim) :: acc
+        | Some (_, _, Some sec), `S -> (name, sec) :: acc
         | Some (_, _, None), `S -> acc
       else
         acc
@@ -462,12 +450,12 @@ module Notification = struct
 
   let key_ips auth zone =
     let name_ip_ports = Authentication.secondaries auth zone in
-    List.fold_left (fun acc (_, ip, port) -> (ip, port) :: acc)
+    List.fold_left (fun acc (_, ip) -> ip :: acc)
       [] name_ip_ports
 
   let insert data keys conn name ip port =
-    let ips = Rr_map.Ipv4_set.(union (secondaries data name)
-                                 (of_list (List.map fst (key_ips keys name))))
+    let ips =
+      Rr_map.Ipv4_set.(union (secondaries data name) (of_list (key_ips keys name)))
     in
     if Rr_map.Ipv4_set.mem ip ips then begin
       Log.warn (fun m -> m "IP %a already in notification list" Ipaddr.V4.pp ip);
@@ -545,22 +533,17 @@ module Notification = struct
        1. the NS records of the zone (port 53 as default)
        2. the IP addresses of secondary servers which have transfer keys (port encoded in name)
        3. the TCP connections which requested (signed) SOA in l *)
-    let ips = secondaries server.data zone
-    and keys = key_ips server.auth zone
-    in
-    let ip_ports =
-      let ips' = Rr_map.Ipv4_set.(diff ips (of_list (List.map fst keys))) in
-      List.map (fun x -> x, 53) (Rr_map.Ipv4_set.elements ips') @ keys
+    let ips = Rr_map.Ipv4_set.(elements (union (secondaries server.data zone)
+                                           (of_list (key_ips server.auth zone))))
     in
     let tcp_ip_ports = match Domain_name.Map.find zone conn with
       | None -> []
       | Some conns -> conns
     in
     Log.debug (fun m -> m "notifying %a %a (and tcp %a)" Domain_name.pp zone
+                  Fmt.(list ~sep:(unit ", ") Ipaddr.V4.pp) ips
                   Fmt.(list ~sep:(unit ", ") (pair ~sep:(unit ":") Ipaddr.V4.pp int))
-                  ip_ports
-                  Fmt.(list ~sep:(unit ", ") (pair ~sep:(unit ":") Ipaddr.V4.pp int))
-                  ip_ports) ;
+                  tcp_ip_ports) ;
     let packet =
       let question = (zone, Rr.SOA)
       and header =
@@ -579,10 +562,11 @@ module Notification = struct
       IPM.add (ip, port) map' ns
     in
     let ns', outs =
-      List.fold_left (fun (ns, outs) (ip, port) ->
+      let port = 53 in
+      List.fold_left (fun (ns, outs) ip ->
           let ns = add_to_ns ns ip port in
           ns, (ip, port, fst (Packet.encode `Udp packet)) :: outs)
-        (ns, []) ip_ports
+        (ns, []) ips
     in
     let tcp_outs =
       List.fold_left (fun acc (ip, port) ->
@@ -883,10 +867,10 @@ module Secondary = struct
                   end) zones keylist
           end
         | primaries ->
-          List.fold_left (fun zones (keyname, ip, port) ->
+          List.fold_left (fun zones (keyname, ip) ->
               Log.app (fun m -> m "adding transfer key %a for zone %a"
                           Domain_name.pp keyname Domain_name.pp name) ;
-              let v = Requested_soa (0L, 0, 0, Cstruct.empty), ip, port, keyname in
+              let v = Requested_soa (0L, 0, 0, Cstruct.empty), ip, 53, keyname in
               Domain_name.Map.add name v zones)
             zones primaries
       in
