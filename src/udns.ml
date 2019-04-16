@@ -1684,6 +1684,7 @@ module Rr_map = struct
     | Tlsa : (int32 * Tlsa_set.t) rr
     | Sshfp : (int32 * Sshfp_set.t) rr
     | Txt : (int32 * Txt_set.t) rr
+    | Unknown : int -> (int32 * Txt_set.t) rr
 
   let equal_k : type a b . a rr -> a -> b rr -> b -> bool = fun k v k' v' ->
     match k, v, k', v' with
@@ -1700,6 +1701,7 @@ module Rr_map = struct
     | Caa, (_, caas), Caa, (_, caas') -> Caa_set.equal caas caas'
     | Tlsa, (_, tlsas), Tlsa, (_, tlsas') -> Tlsa_set.equal tlsas tlsas'
     | Sshfp, (_, sshfps), Sshfp, (_, sshfps') -> Sshfp_set.equal sshfps sshfps'
+    | Unknown t, (_, data), Unknown t', (_, data') -> t = t' && Txt_set.equal data data'
     | _, _, _, _ -> false
 
   let k_to_rr_typ : type a. a rr -> Rr.t = function
@@ -1998,6 +2000,21 @@ module Rr_map = struct
   end
 
   include Gmap.Make(K)
+
+  let ppk ppf (K k) = match k with
+    | Cname -> Fmt.string ppf "CNAME"
+    | Mx -> Fmt.string ppf "MX"
+    | Ns -> Fmt.string ppf "NS"
+    | Ptr -> Fmt.string ppf "PTR"
+    | Soa -> Fmt.string ppf "SOA"
+    | Txt -> Fmt.string ppf "TXT"
+    | A -> Fmt.string ppf "A"
+    | Aaaa -> Fmt.string ppf "AAAA"
+    | Srv -> Fmt.string ppf "SRV"
+    | Dnskey -> Fmt.string ppf "DNSKEY"
+    | Caa -> Fmt.string ppf "CAA"
+    | Tlsa -> Fmt.string ppf "TLSA"
+    | Sshfp -> Fmt.string ppf "SSHFP"
 
   let get_ttl : b -> int32 = fun (B (k, v)) ->
     match k, v with

@@ -677,6 +677,8 @@ module Rr_map : sig
 
   include Gmap.S with type 'a key = 'a rr
 
+  val ppk : k Fmt.t
+
   val to_rr_typ : b -> Rr.t
   (** [to_rr_typ b] is the resource record typ of [b]. *)
 
