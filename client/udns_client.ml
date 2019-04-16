@@ -24,7 +24,7 @@ let make_query protocol hostname
   end, { protocol ; query ; key = record_type }
 
 let parse_response (type requested)
-  : requested Rr_map.k query_state -> Cstruct.t ->
+  : requested Rr_map.key query_state -> Cstruct.t ->
     (requested, [< `Partial | `Msg of string]) result =
   fun state buf ->
   let open Rresult in

@@ -38,7 +38,7 @@ val equal : t -> t -> bool
 val insert_map : Rr_map.t Domain_name.Map.t -> t -> t
 (** [insert_map m t] inserts all elements of the domain name map [m] into [t]. *)
 
-val insert : Domain_name.t -> 'a Rr_map.k -> 'a -> t -> t
+val insert : Domain_name.t -> 'a Rr_map.key -> 'a -> t -> t
 (** [insert n k v t] insert [k, v] under [n] in [t].  Existing entries are replaced. *)
 
 val insertb : Domain_name.t -> Rr_map.b -> t -> t
@@ -50,7 +50,7 @@ val remove_rr : Domain_name.t -> Rr.t -> t -> t
     entries of [k] are removed.  Beware, this may lead to a [t] where the
     initially mentioned invariants are violated. *)
 
-val remove : Domain_name.t -> 'a Rr_map.k -> t -> t
+val remove : Domain_name.t -> 'a Rr_map.key -> t -> t
 (** [remove k key t] removes [k, ty] from [t]. *)
 
 val remove_zone : Domain_name.t -> t -> t

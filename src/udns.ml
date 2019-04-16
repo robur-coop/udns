@@ -1670,22 +1670,22 @@ module Rr_map = struct
   module Tlsa_set = Set.Make(Tlsa)
   module Sshfp_set = Set.Make(Sshfp)
 
-  type _ k =
-    | Soa : Soa.t k
-    | Ns : (int32 * Domain_name.Set.t) k
-    | Mx : (int32 * Mx_set.t) k
-    | Cname : (int32 * Domain_name.t) k
-    | A : (int32 * Ipv4_set.t) k
-    | Aaaa : (int32 * Ipv6_set.t) k
-    | Ptr : (int32 * Domain_name.t) k
-    | Srv : (int32 * Srv_set.t) k
-    | Dnskey : (int32 * Dnskey_set.t) k
-    | Caa : (int32 * Caa_set.t) k
-    | Tlsa : (int32 * Tlsa_set.t) k
-    | Sshfp : (int32 * Sshfp_set.t) k
-    | Txt : (int32 * Txt_set.t) k
+  type _ rr =
+    | Soa : Soa.t rr
+    | Ns : (int32 * Domain_name.Set.t) rr
+    | Mx : (int32 * Mx_set.t) rr
+    | Cname : (int32 * Domain_name.t) rr
+    | A : (int32 * Ipv4_set.t) rr
+    | Aaaa : (int32 * Ipv6_set.t) rr
+    | Ptr : (int32 * Domain_name.t) rr
+    | Srv : (int32 * Srv_set.t) rr
+    | Dnskey : (int32 * Dnskey_set.t) rr
+    | Caa : (int32 * Caa_set.t) rr
+    | Tlsa : (int32 * Tlsa_set.t) rr
+    | Sshfp : (int32 * Sshfp_set.t) rr
+    | Txt : (int32 * Txt_set.t) rr
 
-  let equal_k : type a b . a k -> a -> b k -> b -> bool = fun k v k' v' ->
+  let equal_k : type a b . a rr -> a -> b rr -> b -> bool = fun k v k' v' ->
     match k, v, k', v' with
     | Cname, (_, alias), Cname, (_, alias') -> Domain_name.equal alias alias'
     | Mx, (_, mxs), Mx, (_, mxs') -> Mx_set.equal mxs mxs'
@@ -1702,7 +1702,7 @@ module Rr_map = struct
     | Sshfp, (_, sshfps), Sshfp, (_, sshfps') -> Sshfp_set.equal sshfps sshfps'
     | _, _, _, _ -> false
 
-  let k_to_rr_typ : type a. a k -> Rr.t = function
+  let k_to_rr_typ : type a. a rr -> Rr.t = function
     | Cname -> Rr.CNAME
     | Mx -> Rr.MX
     | Ns -> Rr.NS
@@ -1717,7 +1717,7 @@ module Rr_map = struct
     | Tlsa -> Rr.TLSA
     | Sshfp -> Rr.SSHFP
 
-  let encode : type a. ?clas:Clas.t -> Domain_name.t -> a k -> a -> Name.name_offset_map -> Cstruct.t -> int ->
+  let encode : type a. ?clas:Clas.t -> Domain_name.t -> a rr -> a -> Name.name_offset_map -> Cstruct.t -> int ->
     (Name.name_offset_map * int) * int = fun ?(clas = Clas.IN) name k v names buf off ->
     let typ = k_to_rr_typ k
     and clas = Clas.to_int clas
@@ -1777,7 +1777,7 @@ module Rr_map = struct
           rr names (Txt.encode txt) off ttl, succ count)
         txts ((names, off), 0)
 
-  let combine_k : type a. a k -> a -> a -> a = fun k old v ->
+  let combine_k : type a. a rr -> a -> a -> a = fun k old v ->
     match k, old, v with
     | Cname, _, cname -> cname
     | Mx, (_, mxs), (ttl, mxs') -> (ttl, Mx_set.union mxs mxs')
@@ -1793,12 +1793,12 @@ module Rr_map = struct
     | Tlsa, (_, tlsas), (ttl, tlsas') -> (ttl, Tlsa_set.union tlsas tlsas')
     | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, Sshfp_set.union sshfps sshfps')
 
-  let combine_opt : type a. a k -> a -> a option -> a option = fun k v old ->
+  let combine_opt : type a. a rr -> a -> a option -> a option = fun k v old ->
     match v, old with
     | v, None -> Some v
     | v, Some old -> Some (combine_k k old v)
 
-  let subtract_k : type a. a k -> a -> a -> a option = fun k v rem ->
+  let subtract_k : type a. a rr -> a -> a -> a option = fun k v rem ->
     match k, v, rem with
     | Cname, _, _ -> None
     | Mx, (ttl, mxs), (_, rm) ->
@@ -1835,7 +1835,7 @@ module Rr_map = struct
       if Sshfp_set.is_empty s then None else Some (ttl, s)
 
   let text : type a. ?origin:Domain_name.t -> ?default_ttl:int32 ->
-    Domain_name.t -> a k -> a -> string = fun ?origin ?default_ttl n t v ->
+    Domain_name.t -> a rr -> a -> string = fun ?origin ?default_ttl n t v ->
     let hex cs =
       let buf = Bytes.create (Cstruct.len cs * 2) in
       for i = 0 to pred (Cstruct.len cs) do
@@ -1941,7 +1941,7 @@ module Rr_map = struct
     String.concat "\n" strs
 
   module K = struct
-    type 'a t = 'a k
+    type 'a t = 'a rr
 
     let compare : type a b. a t -> b t -> (a, b) Gmap.Order.t = fun t t' ->
       let open Gmap.Order in
@@ -2035,7 +2035,7 @@ module Rr_map = struct
 
   let equal_b (B (k, v)) (B (k', v')) = equal_k k v k' v'
 
-  let names : type a. a k -> a -> Domain_name.Set.t = fun k v ->
+  let names : type a. a rr -> a -> Domain_name.Set.t = fun k v ->
     match k, v with
     | Cname, (_, alias) -> Domain_name.Set.singleton alias
     | Mx, (_, mxs) ->
@@ -2162,7 +2162,7 @@ module Name_rr_map = struct
     let m' = Rr_map.update k (Rr_map.combine_opt k v) m in
     Domain_name.Map.add name m' dmap
 
-  let find : type a . Domain_name.t -> a Rr_map.k -> t -> a option =
+  let find : type a . Domain_name.t -> a Rr_map.rr -> t -> a option =
     fun name k dmap ->
     match Domain_name.Map.find name dmap with
     | None -> None

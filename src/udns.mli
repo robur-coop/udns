@@ -657,33 +657,33 @@ module Rr_map : sig
   module Tlsa_set : Set.S with type elt = Tlsa.t
   module Sshfp_set : Set.S with type elt = Sshfp.t
 
-  type _ k =
-    | Soa : Soa.t k
-    | Ns : (int32 * Domain_name.Set.t) k
-    | Mx : (int32 * Mx_set.t) k
-    | Cname : (int32 * Domain_name.t) k
-    | A : (int32 * Ipv4_set.t) k
-    | Aaaa : (int32 * Ipv6_set.t) k
-    | Ptr : (int32 * Domain_name.t) k
-    | Srv : (int32 * Srv_set.t) k
-    | Dnskey : (int32 * Dnskey_set.t) k
-    | Caa : (int32 * Caa_set.t) k
-    | Tlsa : (int32 * Tlsa_set.t) k
-    | Sshfp : (int32 * Sshfp_set.t) k
-    | Txt : (int32 * Txt_set.t) k
+  type _ rr =
+    | Soa : Soa.t rr
+    | Ns : (int32 * Domain_name.Set.t) rr
+    | Mx : (int32 * Mx_set.t) rr
+    | Cname : (int32 * Domain_name.t) rr
+    | A : (int32 * Ipv4_set.t) rr
+    | Aaaa : (int32 * Ipv6_set.t) rr
+    | Ptr : (int32 * Domain_name.t) rr
+    | Srv : (int32 * Srv_set.t) rr
+    | Dnskey : (int32 * Dnskey_set.t) rr
+    | Caa : (int32 * Caa_set.t) rr
+    | Tlsa : (int32 * Tlsa_set.t) rr
+    | Sshfp : (int32 * Sshfp_set.t) rr
+    | Txt : (int32 * Txt_set.t) rr
 
-  val equal_k : 'a k -> 'a -> 'b k -> 'b -> bool
+  val equal_k : 'a rr -> 'a -> 'b rr -> 'b -> bool
   (** [equal_k k v k' v'] is [true] if [k = k'] and [v = v'], [false] otherwise. *)
 
-  include Gmap.S with type 'a key = 'a k
+  include Gmap.S with type 'a key = 'a rr
 
   val to_rr_typ : b -> Rr.t
   (** [to_rr_typ b] is the resource record typ of [b]. *)
 
-  val k_to_rr_typ : 'a k -> Rr.t
+  val k_to_rr_typ : 'a rr -> Rr.t
   (** [k_to_rr_typ k] is the resource record typ of [k]. *)
 
-  val names : 'a k -> 'a -> Domain_name.Set.t
+  val names : 'a rr -> 'a -> Domain_name.Set.t
   (** [names k v] are the referenced domain names in the given binding. *)
 
   val names_b : b -> Domain_name.Set.t
@@ -705,17 +705,17 @@ module Rr_map : sig
   (** [text ~origin ~default_ttl domain-name binding] is the zone file format of [binding] using
       [domain-name]. *)
 
-  val subtract_k : 'a k -> 'a -> 'a -> 'a option
+  val subtract_k : 'a rr -> 'a -> 'a -> 'a option
   (** [subtract_k k v rem] removes [rem] from [v]. If the result is an empty set,
      [None] is returned. *)
 
-  val combine_k : 'a k -> 'a -> 'a -> 'a
+  val combine_k : 'a rr -> 'a -> 'a -> 'a
   (** [combine_k k old new] combines [old] with [new]. [new] always wins. *)
 
-  val combine_opt : 'a k -> 'a -> 'a option -> 'a option
+  val combine_opt : 'a rr -> 'a -> 'a option -> 'a option
   (** [combine_opt k new old] is [new] if [old] is [None], otherwise [combine_k k old v]. *)
 
-  val text : ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> 'a k -> 'a -> string
+  val text : ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> 'a rr -> 'a -> string
   (** [text ~origin ~default_ttl name k v] is the zone file data for [k, v]. *)
 
   val get_ttl : b -> int32
@@ -741,7 +741,7 @@ module Name_rr_map : sig
 
   val add : Domain_name.t -> Rr_map.b -> t -> t
 
-  val find : Domain_name.t -> 'a Rr_map.k -> t -> 'a option
+  val find : Domain_name.t -> 'a Rr_map.rr -> t -> 'a option
 
   val remove_sub : t -> t -> t
 end
