@@ -76,6 +76,7 @@ open Udns
 %token <string> TYPE_DNSKEY
 %token <string> TYPE_TLSA
 %token <string> TYPE_SSHFP
+%token <string> TYPE_GENERIC
 
 %token <string> CLASS_IN
 %token <string> CLASS_CS
@@ -116,6 +117,7 @@ rrclass:
  | CLASS_HS { parse_error "class must be \"IN\"" }
 
 rr:
+   generic_type s generic_rdata { B (Unknown $1, (0l, Rr_map.Txt_set.singleton $3)) }
      /* RFC 1035 */
  | TYPE_A s ipv4 { B (A, (0l, Rr_map.Ipv4_set.singleton $3)) }
  | TYPE_NS s domain { B (Ns, (0l, Domain_name.Set.singleton $3)) }
@@ -173,6 +175,25 @@ single_hex: charstring
 hex:
    single_hex { $1 }
  | hex s single_hex { Cstruct.append $1 $3 }
+
+generic_type: TYPE_GENERIC
+     { try parse_uint16 (String.sub $1 4 (String.length $1 - 4))
+       with Parsing.Parse_error -> parse_error ($1 ^ " is not a 16-bit number")
+     }
+
+generic_rdata: GENERIC s NUMBER s hex
+     { try
+         let len = int_of_string $3
+         and data = Cstruct.to_string $5
+         in
+         if not (String.length data = len) then
+           parse_error ("generic data length field is "
+			   ^ $3 ^ " but actual length is "
+			      ^ string_of_int (String.length data));
+	 data
+       with Failure _ ->
+	 parse_error ("\\# should be followed by a number")
+     }
 
 ipv4: NUMBER DOT NUMBER DOT NUMBER DOT NUMBER
      { try

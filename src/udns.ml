@@ -1852,7 +1852,7 @@ module Rr_map = struct
           sshfps []
       | Unknown x, (ttl, datas) ->
         Txt_set.fold (fun data acc ->
-            Fmt.strf "%s\t%aTYPE%d\\#%d %s" str_name ttl_fmt (ttl_opt ttl)
+            Fmt.strf "%s\t%aTYPE%d\t\\# %d %s" str_name ttl_fmt (ttl_opt ttl)
               x (String.length data) (hex (Cstruct.of_string data)) :: acc)
           datas []
     in
@@ -2228,9 +2228,9 @@ module Packet = struct
     match typ with
     | x when x = Edns.rtyp -> Ok ((name, `Edns, cls), names, off + 4)
     | x when x = Tsig.rtyp -> Ok ((name, `Tsig, cls), names, off + 4)
-    | 251 -> Ok ((name, `Ixfr, cls), names, off + 4)
-    | 252 -> Ok ((name, `Axfr, cls), names, off + 4)
-    | 255 -> Ok ((name, `Any, cls), names, off + 4)
+    | x when x = Rr_map.ixfr_rtyp -> Ok ((name, `Ixfr, cls), names, off + 4)
+    | x when x = Rr_map.axfr_rtyp -> Ok ((name, `Axfr, cls), names, off + 4)
+    | x when x = Rr_map.any_rtyp -> Ok ((name, `Any, cls), names, off + 4)
     | x -> Rr_map.of_int x >>= fun (K k) ->
       match k with
       | Rr_map.Dnskey -> Ok ((name, `K (Rr_map.K k), cls), names, off + 4)
