@@ -22,9 +22,11 @@ let bindings t =
   in
   go Domain_name.root t
 
-let pp ppf t =
-  Fmt.(list ~sep:(unit ",@ ") (pair ~sep:(unit ":@,") Domain_name.pp Rr_map.pp)) ppf
-    (bindings t)
+let pp_map name ppf map =
+  Fmt.(list ~sep:(unit "@.") string) ppf
+    (List.map (Rr_map.text_b name) (Rr_map.bindings map))
+
+let pp ppf t = List.iter (fun (name, map) -> pp_map name ppf map) (bindings t)
 
 let rec equal (N (sub, map)) (N (sub', map')) =
   Rr_map.equal Rr_map.equal_b map map' && M.equal equal sub sub'
@@ -67,7 +69,7 @@ let check_zone = function
 let lookup_res zone ty m =
   check_zone zone >>= fun (z, zmap) ->
   guard (not (Rr_map.is_empty m)) (ent z zmap) >>= fun () ->
-  match Rr_map.lookup_rr ty m with
+  match Rr_map.findk ty m with
   | Some v -> Ok (v, to_ns z zmap)
   | None -> match Rr_map.(findb Cname m) with
     | None when Rr_map.cardinal m = 1 && Rr_map.(mem Soa m) ->
@@ -133,7 +135,7 @@ let lookup_ignore name ty t =
   match lookup_aux name t with
   | Error _ -> Error ()
   | Ok (_zone, _sub, map) ->
-    match Rr_map.lookup_rr ty map with
+    match Rr_map.findk ty map with
     | None -> Error ()
     | Some v -> Ok v
 
@@ -215,7 +217,7 @@ type zone_check = [ `Missing_soa of Domain_name.t
                   | `Cname_other of Domain_name.t
                   | `Any_not_allowed of Domain_name.t
                   | `Bad_ttl of Domain_name.t * Rr_map.b
-                  | `Empty of Domain_name.t * Rr.t
+                  | `Empty of Domain_name.t * Rr_map.k
                   | `Missing_address of Domain_name.t
                   | `Soa_not_ns of Domain_name.t ]
 
@@ -224,7 +226,7 @@ let pp_zone_check ppf = function
   | `Cname_other name -> Fmt.pf ppf "%a contains a cname record, and also other entries" Domain_name.pp name
   | `Any_not_allowed name -> Fmt.pf ppf "resource type ANY is not allowed, but present for %a" Domain_name.pp name
   | `Bad_ttl (name, v) -> Fmt.pf ppf "bad TTL for %a %a" Domain_name.pp name Rr_map.pp_b v
-  | `Empty (name, typ) -> Fmt.pf ppf "%a empty %a" Domain_name.pp name Rr.pp typ
+  | `Empty (name, typ) -> Fmt.pf ppf "%a empty %a" Domain_name.pp name Rr_map.ppk typ
   | `Missing_address name -> Fmt.pf ppf "missing address record for %a" Domain_name.pp name
   | `Soa_not_ns name -> Fmt.pf ppf "%a nameserver of SOA is not in nameserver set" Domain_name.pp name
 
@@ -257,12 +259,12 @@ let check trie =
         | B (Dnskey, (ttl, keys)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Dnskey_set.is_empty keys then
-            Error (`Empty (name, Rr.DNSKEY))
+            Error (`Empty (name, K Dnskey))
           else Ok ()
         | B (Ns, (ttl, names)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Domain_name.Set.cardinal names = 0 then
-            Error (`Empty (name, Rr.NS))
+            Error (`Empty (name, K Ns))
           else
             let domain = match state' with `None -> name | `Soa zone -> zone in
             Domain_name.Set.fold (fun name r ->
@@ -277,7 +279,7 @@ let check trie =
           if ttl < 0l then
             Error (`Bad_ttl (name, v))
           else if Mx_set.is_empty mxs then
-            Error (`Empty (name, Rr.MX))
+            Error (`Empty (name, K Mx))
           else
             let domain = match state' with `None -> name | `Soa zone -> zone in
             Mx_set.fold (fun { mail_exchange ; _ } r ->
@@ -301,43 +303,50 @@ let check trie =
         | B (Txt, (ttl, txts)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Txt_set.is_empty txts then
-            Error (`Empty (name, Rr.TXT))
+            Error (`Empty (name, K Txt))
           else if
             Txt_set.exists (fun s -> String.length s > 0) txts
           then
             Ok ()
           else
-            Error (`Empty (name, Rr.TXT))
+            Error (`Empty (name, K Txt))
         | B (A, (ttl, a)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Ipv4_set.is_empty a then
-            Error (`Empty (name, Rr.A))
+            Error (`Empty (name, K A))
           else Ok ()
         | B (Aaaa, (ttl, aaaa)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Ipv6_set.is_empty aaaa then
-            Error (`Empty (name, Rr.AAAA))
+            Error (`Empty (name, K Aaaa))
           else Ok ()
         | B (Srv, (ttl, srvs)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Srv_set.is_empty srvs then
-            Error (`Empty (name, Rr.SRV))
+            Error (`Empty (name, K Srv))
           else Ok ()
         | B (Caa, (ttl, caas)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Caa_set.is_empty caas then
-            Error (`Empty (name, Rr.CAA))
+            Error (`Empty (name, K Caa))
           else Ok ()
         | B (Tlsa, (ttl, tlsas)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Tlsa_set.is_empty tlsas then
-            Error (`Empty (name, Rr.TLSA))
+            Error (`Empty (name, K Tlsa))
           else Ok ()
         | B (Sshfp, (ttl, sshfps)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
           else if Sshfp_set.is_empty sshfps then
-            Error (`Empty (name, Rr.SSHFP))
-          else Ok ())
+            Error (`Empty (name, K Sshfp))
+          else Ok ()
+        | B (Unknown x, (ttl, datas)) ->
+          if ttl < 0l then Error (`Bad_ttl (name, v))
+          else if Txt_set.is_empty datas then
+            Error (`Empty (name, K (Unknown x)))
+          else Ok ()
+
+      )
       map (Ok ()) >>= fun () ->
     M.fold (fun lbl (N (sub, map)) r ->
         r >>= fun () ->
@@ -397,12 +406,13 @@ let remove k ty t =
 
 let remove_rr k ty t =
   let remove sub map =
-    if ty = Rr.ANY then
-      N (sub, Rr_map.empty)
-    else
-      let map' = Rr_map.remove_rr ty map in
-      N (sub, map')
+    let map' = Rr_map.removek ty map in
+    N (sub, map')
   in
+  remove_aux k t remove
+
+let remove_all k t =
+  let remove sub _ = N (sub, Rr_map.empty) in
   remove_aux k t remove
 
 let remove_zone name t =

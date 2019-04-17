@@ -41,7 +41,10 @@ let pp_rank ppf r = Fmt.string ppf (match r with
     | NonAuthoritativeAnswer -> "non-authoritative answer"
     | Additional -> "additional data")
 
-module RRMap = Map.Make(Rr)
+module RRMap = Map.Make(struct
+    type t = Rr_map.k
+    let compare = Rr_map.comparek
+  end)
 
 module V = struct
   type meta = int64 * rank
@@ -84,7 +87,7 @@ module V = struct
       Fmt.pf ppf "no domain (%a) %a SOA %a" pp_meta meta Domain_name.pp name Soa.pp soa
     | Rr_map rr ->
       Fmt.pf ppf "entries: %a"
-        Fmt.(list ~sep:(unit ";@,") (pair Rr.pp pp_entry))
+        Fmt.(list ~sep:(unit ";@,") (pair Rr_map.ppk pp_entry))
         (RRMap.bindings rr)
 end
 
@@ -178,33 +181,43 @@ let insert_lru t ?map name typ created rank res =
   in
   LRU.trim t'
 
-let cached_any rrmap now =
-  let rrs =
-    RRMap.fold (fun _typ ((created, _), e) acc ->
-        match e with
-        | V.No_data _ | V.Serv_fail _ -> acc
-        | V.Entry b ->
-          let ttl = Rr_map.get_ttl b in
-          let updated_ttl = update_ttl ~created ~now ttl in
-          if updated_ttl < 0l then acc
-          else Rr_map.addb (Rr_map.with_ttl b updated_ttl) acc)
-      rrmap Rr_map.empty
-  in
-  if Rr_map.is_empty rrs then
-    Error `Cache_miss
-  else
-    Ok rrs
+let update_ttl_res e ~created ~now =
+  let ttl = get_ttl e in
+  let updated_ttl = update_ttl ~created ~now ttl in
+  if updated_ttl < 0l then Error `Cache_drop else Ok (with_ttl updated_ttl e)
 
 let cached t now typ nam =
-  match find_lru t nam typ with
-  | Some rrmap, _ when typ = Rr.ANY ->
-    begin match cached_any rrmap now with
-      | Error e ->
-        s := { !s with miss = succ !s.miss };
-        Error e
-      | Ok map ->
-        s := { !s with hit = succ !s.hit };
-        Ok (`Entries map, LRU.promote nam t)
+  match snd (find_lru t nam typ) with
+  | Error e ->
+    s := { !s with miss = succ !s.miss };
+    Error e
+  | Ok ((created, _), e) ->
+    match update_ttl_res e ~created ~now with
+    | Ok e' ->
+      s := { !s with hit = succ !s.hit };
+      Ok (e', LRU.promote nam t)
+    | Error e ->
+      s := { !s with drop = succ !s.drop };
+      Error e
+
+let cached_any t now nam =
+  match find_lru t nam Rr_map.(K A) with
+  | Some rrmap, _ ->
+    let rrs =
+      RRMap.fold (fun _typ ((created, _), e) acc ->
+          match update_ttl_res (V.to_res e) ~created ~now with
+          | Ok (`Entry b') -> Rr_map.addb b' acc
+          | Ok (`Alias a) -> Rr_map.addb (B (Cname, a)) acc
+          | Ok (`No_data _ | `Serv_fail _ | `No_domain _) -> acc
+          | Error _ -> acc)
+        rrmap Rr_map.empty
+    in
+    if Rr_map.is_empty rrs then begin
+      s := { !s with miss = succ !s.miss };
+      Error `Cache_miss
+    end else begin
+      s := { !s with hit = succ !s.hit };
+      Ok (`Entries rrs, LRU.promote nam t)
     end
   | _, Error e ->
     s := { !s with miss = succ !s.miss };
@@ -219,6 +232,7 @@ let cached t now typ nam =
       s := { !s with hit = succ !s.hit };
       Ok (with_ttl updated_ttl e, LRU.promote nam t)
     end
+
 
 let pp_err ppf = function
   | `Cache_drop -> Fmt.string ppf "cache drop"
@@ -257,11 +271,11 @@ let maybe_insert typ nam ts rank e t =
   let entry = smooth_ttl e in
   match find_lru t nam typ with
   | map, Error _ ->
-    Logs.debug (fun m -> m "maybe_insert: %a nothing found, adding: %a" Packet.Question.pp (nam, typ) pp_res entry);
+    Logs.debug (fun m -> m "maybe_insert: %a nothing found, adding: %a" Packet.Question.pp (nam, `K typ) pp_res entry);
     insert_lru ?map t nam typ ts rank entry
   | map, Ok ((_, rank'), entry) ->
     Logs.debug (fun m -> m "maybe_insert: %a found rank %a insert rank %a: %d"
-                   Packet.Question.pp (nam, typ) pp_rank rank' pp_rank rank (compare_rank rank' rank));
+                   Packet.Question.pp (nam, `K typ) pp_rank rank' pp_rank rank (compare_rank rank' rank));
     match compare_rank rank' rank with
     | 1 -> t
     | _ -> insert_lru ?map t nam typ ts rank entry
@@ -362,10 +376,10 @@ let find_nearest_ns rng ts t name =
     | [ x ] -> Some x
     | xs -> Some (List.nth xs (Randomconv.int ~bound:(List.length xs) rng))
   in
-  let find_ns name = match cached t ts Rr.NS name with
+  let find_ns name = match cached t ts Rr_map.(K Ns) name with
     | Ok (`Entry Rr_map.(B (Ns, (_, names))), _) -> Domain_name.Set.elements names
     | _ -> []
-  and find_a name = match cached t ts Rr.A name with
+  and find_a name = match cached t ts Rr_map.(K A) name with
     | Ok (`Entry Rr_map.(B (A, (_, ips))), _) -> Rr_map.Ipv4_set.elements ips
     | _ -> []
   in
@@ -422,7 +436,7 @@ let resolve t ~rng ts name typ =
   let rec go t typ name =
     Logs.debug (fun m -> m "go %a" Domain_name.pp name) ;
     match find_nearest_ns rng ts t name with
-    | `NeedA ns -> go t Rr.A ns
+    | `NeedA ns -> go t Rr_map.(K A) ns
     | `HaveIP (zone, ip) -> zone, name, typ, ip, t
   in
   go t typ name
@@ -550,10 +564,6 @@ let follow_cname t ts typ ~name ttl ~alias =
       let acc' = Domain_name.Map.add name Rr_map.(singleton k v) acc in
       Logs.debug (fun m -> m "follow_cname: entry found, returning");
       `Out (Rcode.NoError, acc', Name_rr_map.empty, t)
-    | Ok (`Entries rr_map, t) ->
-      let acc' = Domain_name.Map.add name rr_map acc in
-      Logs.debug (fun m -> m "follow_cname: entries found, returning");
-      `Out (Rcode.NoError, acc', Name_rr_map.empty, t)
     | Ok (`No_domain res, t) ->
       Logs.debug (fun m -> m "follow_cname: nodom");
       `Out (Rcode.NXDomain, acc, to_map res, t)
@@ -594,7 +604,12 @@ let answer t ts (name, typ) =
     in
     (flags, data, t)
   in
-  match cached t ts typ name with
+  let r = match typ with
+    | `Any -> cached_any t ts name
+    | `K ty -> cached t ts ty name
+    | `Axfr -> assert false
+  in
+  match r with
   | Error e ->
     Logs.warn (fun m -> m "error %a while looking up %a, query"
                   pp_err e Packet.Question.pp (name, typ));
@@ -619,40 +634,35 @@ let answer t ts (name, typ) =
   | Ok (`Alias (ttl, alias), t) ->
     Logs.debug (fun m -> m "alias while looking up %a" Packet.Question.pp (name, typ));
     match typ with
-    | Rr.CNAME ->
+    | `K ty when Rr_map.comparek ty (K Cname) <> 0 ->
+      begin match follow_cname t ts ty ~name ttl ~alias with
+        | `Out (rcode, answer, authority, t) ->
+          `Packet (packet t true rcode answer authority)
+        | `Query (n, t) -> `Query (n, t)
+      end
+    | _ ->
       let data = Domain_name.Map.singleton name Rr_map.(singleton Cname (ttl, alias)) in
       `Packet (packet t false Rcode.NoError data Domain_name.Map.empty)
-    | _ ->
-      match follow_cname t ts typ ~name ttl ~alias with
-      | `Out (rcode, answer, authority, t) ->
-        `Packet (packet t true rcode answer authority)
-      | `Query (n, t) -> `Query (n, t)
 
 let handle_query t ~rng ts q =
   match answer t ts q with
   | `Packet (flags, data, t) -> `Reply (flags, data), t
   | `Query (name, t) ->
-    let r =
-      match snd q with
-      (* similar for TLSA, which uses _443._tcp.<name> (not a service name!) *)
-      | Rr.SRV when Domain_name.is_service name ->
-        Ok (Domain_name.drop_labels_exn ~amount:2 name, Rr.NS)
-      | Rr.SRV ->
-        Logs.err (fun m -> m "requested SRV record %a, but not a service name"
-                     Domain_name.pp name) ;
-        Error ()
-      | x -> Ok (name, x)
+    (* similar for TLSA, which uses _443._tcp.<name> (a service name!) *)
+    (* TODO unclear why it's here... *)
+    let qname, ty =
+      if Domain_name.is_service name then
+        Domain_name.drop_labels_exn ~amount:2 name, Rr_map.(K Ns)
+      else
+        name, (match snd q with `Any -> Rr_map.(K Ns) | `K k -> k | `Axfr -> assert false)
     in
-    match r with
-    | Error () -> `Nothing, t
-    | Ok (qname, typ) ->
-      let zone, name', typ, ip, t = resolve t ~rng ts qname typ in
-      let name, typ =
-        match Domain_name.equal name' qname, snd q with
-        | true, Rr.SRV -> name, Rr.SRV
-        | _ -> name', typ
-      in
-      Logs.debug (fun m -> m "resolve returned zone %a name %a typ %a, ip %a"
-                     Domain_name.pp zone Domain_name.pp name
-                     Rr.pp typ Ipaddr.V4.pp ip) ;
-      `Query (zone, name, typ, ip), t
+    let zone, name', typ, ip, t = resolve t ~rng ts qname ty in
+    let name, typ =
+      if Domain_name.equal name' qname then
+        name, snd q
+      else
+        name', `K typ
+    in
+    Logs.debug (fun m -> m "resolve returned zone %a query %a, ip %a"
+                   Domain_name.pp zone Packet.Question.pp (name, typ) Ipaddr.V4.pp ip);
+    `Query (zone, (name, typ), ip), t

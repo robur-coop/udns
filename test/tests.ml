@@ -56,9 +56,15 @@ module Packet = struct
                 (Error (`Not_implemented (0, "UnsupportedClass 0")))
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 0000 01" in
+    let res =
+      let header = (0, Flags.singleton `Recursion_desired)
+      and question = Question.create Domain_name.root (Unknown 0)
+      and data = `Query
+      in
+      Packet.create header question data
+    in
     Alcotest.(check (result t_ok p_err) "question with unsupported typ"
-                (Error (`Not_implemented (0, "typ 0")))
-                (decode cs)) ;
+                (Ok res) (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 2100 01" in
     Alcotest.(check (result t_ok p_err) "question with bad SRV"
                 (Error (`Malformed (0, "BadContent")))
@@ -95,8 +101,8 @@ module Packet = struct
         Rr_map.(singleton Soa soa)
     in
     let res =
-      Packet.create (0xD4E4, flags)
-        (n_of_s "6.16.150.138.in-addr.arpa", Rr.PTR)
+      create (0xD4E4, flags)
+        (Question.create (n_of_s "6.16.150.138.in-addr.arpa") Ptr)
         (`Rcode_error (Rcode.NXDomain, Opcode.Query, Some content))
     in
     Alcotest.(check (result t_ok p_err) "regression 0 decodes"
@@ -109,7 +115,8 @@ module Packet = struct
     in
     let flags = Flags.singleton `Recursion_desired in
     let res =
-      Packet.create (0x83D9, flags) (n_of_s "keys.riseup.net", Rr.AAAA) `Query
+      create (0x83D9, flags)
+        (Question.create (n_of_s "keys.riseup.net") Aaaa) `Query
     in
     Alcotest.(check (result t_ok p_err) "regression 1 decodes"
                 (Ok res) (decode data))
@@ -134,7 +141,8 @@ module Packet = struct
       (Domain_name.Map.empty,
        Domain_name.Map.singleton (n_of_s "bbc.net.uk") Rr_map.(singleton Soa soa))
     in
-    let res = Packet.create (0xAE00, flags) (n_of_s "news.bbc.net.uk", Rr.NS)
+    let res = create (0xAE00, flags)
+        (Question.create (n_of_s "news.bbc.net.uk") Ns)
         (`Rcode_error (Rcode.NXDomain, Opcode.Query, Some content))
     in
     Alcotest.(check (result t_ok p_err) "regression 2 decodes"
@@ -149,7 +157,7 @@ module Packet = struct
     in
     let flags = Flags.(add `Recursion_desired (singleton `Recursion_available))
     and question =
-      (Domain_name.of_string_exn ~hostname:false "foo.com", Rr.MX)
+      Question.create (Domain_name.of_string_exn ~hostname:false "foo.com") Mx
     and answer =
       let mx = {
         Mx.preference = 1000 ;
@@ -159,7 +167,7 @@ module Packet = struct
         Rr_map.(singleton Mx (556l, Mx_set.singleton mx))
     and edns = Edns.create ~payload_size:450 ()
     in
-    let res = Packet.create ~edns (0xe213, flags) question
+    let res = create ~edns (0xe213, flags) question
         (`Answer (answer, Domain_name.Map.empty))
     in
     Alcotest.(check (result t_ok p_err) "regression 4 decodes"
@@ -177,7 +185,7 @@ module Packet = struct
                            10 00 00 00 00 00 00 00|___}
     in
     let question =
-      (Domain_name.of_string_exn ~hostname:false "_tcp.keys.riseup.net", Rr.NS)
+      Question.create (Domain_name.of_string_exn ~hostname:false "_tcp.keys.riseup.net") Ns
     and authority =
       let soa = { Soa.nameserver = Domain_name.of_string_exn "primary.riseup.net" ;
                   hostmaster = Domain_name.of_string_exn "collective.riseup.net" ;
@@ -189,7 +197,7 @@ module Packet = struct
     and edns = Edns.create ~payload_size:4096 ()
     in
     let res =
-      Packet.create ~edns (0x9FCA, Flags.empty) question
+      create ~edns (0x9FCA, Flags.empty) question
         (`Rcode_error (Rcode.NXDomain, Opcode.Query, Some (Name_rr_map.empty, authority)))
     in
     Alcotest.(check (result t_ok p_err) "regression 4 decodes"
@@ -202,9 +210,10 @@ module Packet = struct
                            00 00 29 05 cc 00 00 00  00 00 00|___}
     in
     let flags = Flags.singleton `Authoritative
-    and question = (Domain_name.of_string_exn "ns4.bbc.net.uk", Rr.NS)
+    and question =
+      Question.create (Domain_name.of_string_exn "ns4.bbc.net.uk") Ns
     in
-    let res = Packet.create (0x5B12, flags) question
+    let res = create (0x5B12, flags) question
         (`Rcode_error (Rcode.FormErr, Opcode.Query, None))
     in
     Alcotest.(check (result t_ok p_err) "regression 5 decodes"
@@ -439,13 +448,13 @@ module Packet = struct
       let up =
         Domain_name.Map.singleton
           (n_of_s "www.example.com")
-          [ Packet.Update.Remove_single Rr_map.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))) ]
+          [ Update.Remove_single Rr_map.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost))) ]
       in
       (Domain_name.Map.empty, up)
-    and zone = n_of_s "example.com", Rr.SOA
+    and zone = Question.create (n_of_s "example.com") Soa
     in
-    let res = Packet.create header zone (`Update update) in
-    let encoded = fst @@ Packet.encode `Udp res in
+    let res = create header zone (`Update update) in
+    let encoded = fst @@ encode `Udp res in
     Cstruct.hexdump encoded;
     (* encode followed by decode should lead to same data *)
     Alcotest.(check (result t_ok p_err) "regression 7 decode encode works"
@@ -457,15 +466,15 @@ module Packet = struct
     and prereq =
       let pre =
         Domain_name.Map.singleton (n_of_s "www.example.com")
-          [ Packet.Update.Exists_data Rr_map.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost)))]
+          [ Update.Exists_data Rr_map.(B (A, (0l, Ipv4_set.singleton Ipaddr.V4.localhost)))]
       in
       (pre, Domain_name.Map.empty)
-    and zone = (n_of_s "example.com", Rr.SOA)
+    and zone = Question.create (n_of_s "example.com") Soa
     in
-    let res = Packet.create header zone (`Update prereq) in
+    let res = create header zone (`Update prereq) in
     (* encode followed by decode should lead to same data *)
     Alcotest.(check (result t_ok p_err) "regression 8 decode encode works"
-                (Ok res) (decode @@ fst @@ Packet.encode `Udp res))
+                (Ok res) (decode @@ fst @@ encode `Udp res))
 
   let regression9 () =
     (* from ednscomp.isc.org *)
@@ -477,7 +486,7 @@ a8 6c 00 00 00 01 00 00  00 00 00 01 04 6e 71 73
 |}
     in
     let header = 0xa86c, Flags.empty
-    and question = (n_of_s "nqsb.io", Rr.A)
+    and question = Question.create (n_of_s "nqsb.io") A
     and edns =
       let extensions = [
         Edns.Nsid Cstruct.empty ;
@@ -487,7 +496,7 @@ a8 6c 00 00 00 01 00 00  00 00 00 01 04 6e 71 73
       ] in
       Edns.create ~payload_size:4096 ~extensions ()
     in
-    let res = Packet.create ~edns header question `Query in
+    let res = create ~edns header question `Query in
     Alcotest.(check (result t_ok p_err) "regression 9 decodes"
                 (Ok res) (decode data))
 

@@ -202,31 +202,15 @@ let text name data =
 let create data auth rng tsig_verify tsig_sign =
   { data ; auth ; rng ; tsig_verify ; tsig_sign }
 
-let find_glue trie typ name names =
-  let a, aaaa =
-    let open Domain_name.Set in
-    match typ with
-    | Rr.A -> singleton name, empty
-    | Rr.AAAA -> empty, singleton name
-    | Rr.ANY -> singleton name, singleton name
-    | _ -> empty, empty
-  in
+let find_glue trie names =
   let insert_rr map typ name =
-    match Udns_trie.lookupb name typ trie with
+    match Udns_trie.lookupb name (K typ) trie with
     | Ok (v, _) -> Name_rr_map.add name v map
     | _ -> map
   in
   Domain_name.Set.fold (fun name map ->
-      let map =
-        if Domain_name.Set.mem name a then
-          map
-        else
-          insert_rr map Rr.A name
-      in
-      if Domain_name.Set.mem name aaaa then
-        map
-      else
-        insert_rr map Rr.AAAA name)
+      let map = insert_rr map A name in
+      insert_rr map Aaaa name)
     names Domain_name.Map.empty
 
 let authoritative =
@@ -240,8 +224,8 @@ let err_flags = function
 let lookup trie (name, typ) =
   (* TODO: should randomize answers + ad? *)
   let r = match typ with
-    | Rr.ANY -> Udns_trie.lookup_any name trie
-    | _ -> match Udns_trie.lookupb name typ trie with
+    | `Any -> Udns_trie.lookup_any name trie
+    | `K k -> match Udns_trie.lookupb name k trie with
       | Ok (B (k, v), au) -> Ok (Rr_map.singleton k v, au)
       | Error e -> Error e
   in
@@ -258,7 +242,7 @@ let lookup trie (name, typ) =
         Rr_map.(fold (fun b s -> Domain_name.Set.union (names_b b) s) an ns)
       in
       Name_rr_map.remove_sub
-        (Name_rr_map.remove_sub (find_glue trie typ name names) answer)
+        (Name_rr_map.remove_sub (find_glue trie names) answer)
         authority
     in
     Ok (authoritative, (answer, authority), Some additional)
@@ -266,7 +250,7 @@ let lookup trie (name, typ) =
     let additional =
       Domain_name.Set.fold (fun name map ->
           (* TODO aaaa records! *)
-          match Udns_trie.lookup_ignore name Rr.A trie with
+          match Udns_trie.lookup_ignore name (K A) trie with
           | Ok (Rr_map.(B (A, _) as v)) -> Name_rr_map.add name v map
           | _ -> map)
         ns Domain_name.Map.empty
@@ -325,19 +309,19 @@ let safe_decode buf =
   | Ok v -> Ok v
 
 let handle_question t (name, typ) =
-  let open Rr in
+  (* TODO white/blacklist of allowed qtypes? what about ANY and UDP? *)
   match typ with
-  | AXFR -> assert false (* this won't happen, decoder constructs `Axfr *)
-  | A | NS | CNAME | SOA | PTR | MX | TXT | AAAA | SRV | ANY | CAA | SSHFP | TLSA | DNSKEY ->
-    lookup t.data (name, typ)
-  | r ->
+  | `Axfr -> assert false (* this won't happen, decoder constructs `Axfr -- but we need some evidence... *)
+  (*| A | NS | CNAME | SOA | PTR | MX | TXT | AAAA | SRV | ANY | CAA | SSHFP | TLSA | DNSKEY -> *)
+  | (`K _ | `Any) as k -> lookup t.data (name, k)
+(*  | r ->
     Log.err (fun m -> m "refusing query type %a" Rr.pp r) ;
-    Error (Rcode.Refused, None)
+    Error (Rcode.Refused, None) *)
 
 (* this implements RFC 2136 Section 2.4 + 3.2 *)
 let handle_rr_prereq trie name = function
   | Packet.Update.Name_inuse ->
-    begin match Udns_trie.lookupb name Rr.A trie with
+    begin match Udns_trie.lookupb name (K A) trie with
       | Ok _ | Error (`EmptyNonTerminal _) -> Ok ()
       | _ -> Error Rcode.NXDomain
     end
@@ -347,7 +331,7 @@ let handle_rr_prereq trie name = function
       | _ -> Error Rcode.NXRRSet
     end
   | Packet.Update.Not_name_inuse ->
-    begin match Udns_trie.lookupb name Rr.A trie with
+    begin match Udns_trie.lookupb name (K A) trie with
       | Error (`NotFound _) -> Ok ()
       | _ -> Error Rcode.YXDomain
     end
@@ -366,16 +350,12 @@ let handle_rr_prereq trie name = function
 let handle_rr_update trie name = function
   | Packet.Update.Remove typ ->
     begin match typ with
-      | Rr.ANY ->
-        Log.warn (fun m -> m "ignoring request to remove %a %a"
-                      Rr.pp typ Domain_name.pp name) ;
-        trie
-      | Rr.SOA ->
+      | K Soa ->
         (* this does not follow 2136, but we want to be able to remove a zone *)
         Udns_trie.remove_zone name trie
       | _ -> Udns_trie.remove_rr name typ trie
     end
-  | Packet.Update.Remove_all -> Udns_trie.remove_rr name Rr.ANY trie
+  | Packet.Update.Remove_all -> Udns_trie.remove_all name trie
   | Packet.Update.Remove_single Rr_map.(B (k, rem) as b) ->
     begin match Udns_trie.lookup name k trie with
       | Error e ->
@@ -533,7 +513,7 @@ module Notification = struct
                   Fmt.(list ~sep:(unit ", ") (pair ~sep:(unit ":") Ipaddr.V4.pp int))
                   tcp_ip_ports) ;
     let packet =
-      let question = (zone, Rr.SOA)
+      let question = Packet.Question.create zone Soa
       and header =
         let id = Randomconv.int ~bound:(1 lsl 16 - 1) server.rng in
         (id, authoritative)
@@ -690,7 +670,7 @@ module Primary = struct
 
   let tcp_soa_query proto (name, typ) =
     match proto, typ with
-    | `Tcp, Rr.SOA -> Ok name
+    | `Tcp, `K (Rr_map.K Soa) -> Ok name
     | _ -> Error ()
 
   let handle_packet (t, l, ns) ts proto ip port p key =
@@ -887,7 +867,7 @@ module Secondary = struct
 
   let axfr t proto now ts q_name name =
     let header = header t.rng ()
-    and question = (q_name, Rr.AXFR)
+    and question = (q_name, `Axfr)
     in
     let p = Packet.create header question `Axfr_request in
     let buf, max_size = Packet.encode proto p in
@@ -897,7 +877,7 @@ module Secondary = struct
 
   let query_soa ?(retry = 0) t proto now ts q_name name =
     let header = header t.rng ()
-    and question = (q_name, Rr.SOA)
+    and question = Packet.Question.create q_name Soa
     in
     let p = Packet.create header question `Query in
     let buf, max_size = Packet.encode proto p in
@@ -973,7 +953,7 @@ module Secondary = struct
 
   let handle_notify t zones now ts ip (zone, typ) _notify =
     match typ with
-    | Rr.SOA ->
+    | `K (Rr_map.K Soa) ->
       begin match Domain_name.Map.find zone zones with
         | None -> (* we don't know anything about the notified zone *)
           Log.warn (fun m -> m "ignoring notify for %a, no such zone"
@@ -996,9 +976,8 @@ module Secondary = struct
                        Domain_name.pp zone Ipaddr.V4.pp ip Ipaddr.V4.pp ip') ;
           Error Rcode.Refused
       end
-    | t ->
-      Log.warn (fun m -> m "ignoring notify %a with type %a"
-                   Domain_name.pp zone Rr.pp t) ;
+    | _ ->
+      Log.warn (fun m -> m "ignoring notify %a" Packet.Question.pp (zone, typ));
       Error Rcode.FormErr
 
   let authorise should is =
@@ -1117,7 +1096,8 @@ module Secondary = struct
           end
       end
     | _ ->
-      Log.warn (fun m -> m "ignoring %a (%a) unmatched state" Domain_name.pp zone Rr.pp typ) ;
+      Log.warn (fun m -> m "ignoring question %a unmatched state"
+                   Packet.Question.pp (zone, typ));
       Error Rcode.Refused
 
   let handle_packet (t, zones) now ts ip p keyname =

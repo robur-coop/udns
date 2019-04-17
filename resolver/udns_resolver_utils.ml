@@ -52,37 +52,42 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
                 acc)
             authority []
         with
-        | (name, soa)::_ -> [ q_type, q_name, rank, `No_data (name, soa) ]
+        | (name, soa)::_ ->
+          begin match q_type with
+            | `Any | `Axfr -> [] (* i really don't know how to handle ANY NoDATA*)
+            | `K k -> [ k, q_name, rank, `No_data (name, soa) ]
         (* this is wrong for the normal iterative algorithm:
             it asks for foo.com @root, and get .com NS in AU and A in AD
         | [] when not (Packet.Header.FS.mem `Truncation flags) ->
           Logs.warn (fun m -> m "noerror answer, but nothing in authority whose sub is %a in %a, invalid_soa!"
                         Packet.Question.pp (q_name, q_type) Name_rr_map.pp authority) ;
           [ q_type, q_name, Additional, `No_data (q_name, invalid_soa q_name) ] *)
+          end
         | [] -> [] (* general case when we get an answer from root server *)
       end, Domain_name.Set.empty
     | Some rr_map ->
       let rank = if Packet.Flags.mem `Authoritative flags then AuthoritativeAnswer else NonAuthoritativeAnswer in
       (* collect those rrsets which are of interest depending on q_type! *)
-      if q_type = Rr.ANY then
-        Rr_map.fold (fun b (acc, names) ->
-            (Rr_map.to_rr_typ b, q_name, rank, `Entry b) :: acc,
-            Domain_name.Set.union names (Rr_map.names_b b))
+      match q_type with
+      | `Axfr -> assert false
+      | `Any ->
+        Rr_map.fold (fun (B (k, v)) (acc, names) ->
+            (Rr_map.K k, q_name, rank, `Entry (Rr_map.B (k, v))) :: acc,
+            Domain_name.Set.union names (Rr_map.names k v))
           rr_map ([], Domain_name.Set.empty)
-      else
-        match Rr_map.lookup_rr q_type rr_map with
-        | Some b -> [ q_type, q_name, rank, `Entry b ], Rr_map.names_b b
+      | `K k -> match Rr_map.findk k rr_map with
+        | Some b -> [ k, q_name, rank, `Entry b ], Rr_map.names_b b
         | None -> match Rr_map.find Cname rr_map with
           | None ->
             (* case neither TYP nor cname *)
             Logs.warn (fun m -> m "noerror answer with right name, but not TYP nor cname in %a, invalid soa for %a"
                           Name_rr_map.pp answer Packet.Question.pp (q_name, q_type));
-            [ q_type, q_name, rank, `No_data (q_name, invalid_soa q_name) ],
+            [ k, q_name, rank, `No_data (q_name, invalid_soa q_name) ],
             Domain_name.Set.empty
           | Some cname ->
             (* explicitly register as CNAME so it'll be found *)
             (* should we try to find further records for the new alias? *)
-            [ Rr.CNAME, q_name, rank, `Alias cname ],
+            [ Rr_map.(K Cname), q_name, rank, `Alias cname ],
             Domain_name.Set.singleton (snd cname)
   in
 
@@ -105,7 +110,7 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
     in
     let rank = if Packet.Flags.mem `Authoritative flags then AuthoritativeAuthority else Additional in
     List.fold_left (fun acc (name, ns) ->
-        (Rr.NS, name, rank, `Entry Rr_map.(B (Ns, ns))) :: acc)
+        (Rr_map.(K Ns), name, rank, `Entry Rr_map.(B (Ns, ns))) :: acc)
       [] nm, names
   in
 
@@ -125,13 +130,13 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
         match Domain_name.Map.find name additional with
         | None -> acc
         | Some map ->
-          let a = match Rr_map.lookup_rr Rr.A map with
+          let a = match Rr_map.findb A map with
             | None -> acc
-            | Some b -> (Rr.A, name, Additional, `Entry b) :: acc
+            | Some b -> (Rr_map.K A, name, Additional, `Entry b) :: acc
           in
-          match Rr_map.lookup_rr Rr.AAAA map with
+          match Rr_map.findb Aaaa map with
           | None -> a
-            | Some b -> (Rr.AAAA, name, Additional, `Entry b) :: a)
+          | Some b -> (Rr_map.K Aaaa, name, Additional, `Entry b) :: a)
       names []
   in
   (* This is defined in RFC2181, Sec9 -- answer is unique if authority or
@@ -149,7 +154,10 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
     (* not sure if this can happen, maybe discard everything? *)
     Logs.warn (fun m -> m "reply without answers or ns invalid so for %a"
                   Packet.Question.pp (q_name, q_type));
-    [ q_type, q_name, Additional, `No_data (q_name, invalid_soa q_name) ]
+    begin match q_type with
+      | `Any | `Axfr -> []
+      | `K k -> [ k, q_name, Additional, `No_data (q_name, invalid_soa q_name) ]
+    end
   | _, _ -> answers @ ns @ glues
 
 let find_soa name authority =
@@ -199,7 +207,7 @@ let nxdomain (_, flags) (name, _typ) data =
     | rrs -> List.map (fun (name, cname) -> (name, `Alias cname)) rrs
   in
   (* the cname does not matter *)
-  List.map (fun (name, res) -> Rr.CNAME, name, rank, res) entries
+  List.map (fun (name, res) -> Rr_map.K Cname, name, rank, res) entries
 
 let noerror_stub (name, typ) (answer, authority) =
   (* no glue, just answers - but get all the cnames *)
@@ -207,8 +215,9 @@ let noerror_stub (name, typ) (answer, authority) =
     match Domain_name.Map.find name answer with
     | None -> None
     | Some rrmap -> match typ with
-      | Rr.ANY -> Some (`Entries rrmap)
-      | _ -> match Rr_map.lookup_rr typ rrmap with
+      | `Axfr -> assert false
+      | `Any -> Some (`Entries rrmap)
+      | `K k -> match Rr_map.findk k rrmap with
         | Some b -> Some (`Entry b)
         | None -> match Rr_map.(find Cname rrmap) with
           | None -> None
@@ -220,14 +229,16 @@ let noerror_stub (name, typ) (answer, authority) =
         | Some (name, soa) -> (name, soa)
         | None -> name, invalid_soa name
       in
+      (* TODO unclear what to do here *)
+      let typ = match typ with `Axfr | `Any -> Rr_map.K A | `K k -> k in
       (typ, name, NonAuthoritativeAnswer, `No_data (name, soa)) :: acc
     | Some (`Cname (ttl, alias)) ->
-      go ((Rr.CNAME, name, NonAuthoritativeAnswer, `Alias (ttl, alias)) :: acc) alias
-    | Some (`Entry b) ->
-      (typ, name, NonAuthoritativeAnswer, `Entry b) :: acc
+      go ((Rr_map.K Cname, name, NonAuthoritativeAnswer, `Alias (ttl, alias)) :: acc) alias
+    | Some (`Entry (B (k, v))) ->
+      (K k, name, NonAuthoritativeAnswer, `Entry (Rr_map.B (k, v))) :: acc
     | Some (`Entries map) ->
       Rr_map.fold (fun Rr_map.(B (k, _) as b) acc ->
-          (Rr_map.k_to_rr_typ k, name, NonAuthoritativeAnswer, `Entry b) :: acc)
+          (Rr_map.K k, name, NonAuthoritativeAnswer, `Entry b) :: acc)
         map acc
   in
   go [] name
@@ -243,5 +254,5 @@ let scrub ?(mode = `Recursive) zone p =
   | `Stub, `Rcode_error (Rcode.ServFail, _, _) ->
     let name = fst p.question in
     let soa = invalid_soa name in
-    Ok [ Rr.CNAME, name, NonAuthoritativeAnswer, `Serv_fail (name, soa) ]
+    Ok [ Rr_map.K Cname, name, NonAuthoritativeAnswer, `Serv_fail (name, soa) ]
   | _, e -> Error (Packet.rcode_data e)

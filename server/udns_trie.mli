@@ -45,10 +45,14 @@ val insertb : Domain_name.t -> Rr_map.b -> t -> t
 (** [insertb k b t] insert [b] under [k] in [t].  The type is already included in
     [b].  Existing entries are replaced. *)
 
-val remove_rr : Domain_name.t -> Rr.t -> t -> t
+val remove_rr : Domain_name.t -> Rr_map.k -> t -> t
 (** [remove_rr k ty t] removes [k, ty] from [t].  If [ty] is {!Udns_enum.ANY}, all
     entries of [k] are removed.  Beware, this may lead to a [t] where the
     initially mentioned invariants are violated. *)
+
+val remove_all : Domain_name.t -> t -> t
+(** [remove_all k t] removes all entries of [k] in [t]. Beware, this may lead to
+   a [t] where the initially mentioned invariants are violated. *)
 
 val remove : Domain_name.t -> 'a Rr_map.key -> t -> t
 (** [remove k key t] removes [k, ty] from [t]. *)
@@ -64,7 +68,7 @@ type zone_check = [ `Missing_soa of Domain_name.t
                   | `Cname_other of Domain_name.t
                   | `Any_not_allowed of Domain_name.t
                   | `Bad_ttl of Domain_name.t * Rr_map.b
-                  | `Empty of Domain_name.t * Rr.t
+                  | `Empty of Domain_name.t * Rr_map.k
                   | `Missing_address of Domain_name.t
                   | `Soa_not_ns of Domain_name.t ]
 
@@ -89,7 +93,7 @@ val pp_e : e Fmt.t
 val zone : Domain_name.t -> t -> (Domain_name.t * Soa.t, e) result
 (** [zone k t] returns either the zone and soa for [k] in [t], or an error. *)
 
-val lookupb : Domain_name.t -> Rr.t -> t ->
+val lookupb : Domain_name.t -> Rr_map.k -> t ->
   (Rr_map.b * (Domain_name.t * int32 * Domain_name.Set.t), e) result
 (** [lookupb k ty t] finds [k, ty] in [t], which may lead to an error.  The
     authority information is returned as well. *)
@@ -102,7 +106,7 @@ val lookup_any : Domain_name.t -> t ->
 (** [lookup_any k t] looks up all resource records of [k] in [t], and returns
     that and the authority information. *)
 
-val lookup_ignore : Domain_name.t -> Rr.t -> t -> (Rr_map.b, unit) result
+val lookup_ignore : Domain_name.t -> Rr_map.k -> t -> (Rr_map.b, unit) result
 (** [lookup_ignore k ty t] finds a [k, ty] in [t], which may lead to an error.
     It ignores potential DNS invariants, e.g. that there is no surrounding zone. *)
 

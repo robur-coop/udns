@@ -11,7 +11,7 @@ let make_query protocol hostname
       Cstruct.t * 'xy query_state =
   (* SRV records: Service + Protocol are case-insensitive, see RFC2728 pg2. *)
   fun record_type ->
-  let question = (hostname, Rr_map.k_to_rr_typ record_type) in
+  let question = Packet.Question.create hostname record_type in
   let header = Random.int 0xffff (* TODO *), Packet.Flags.singleton `Recursion_desired in
   let query = Packet.create header question `Query in
   let cs , _ = Packet.encode protocol query in
