@@ -306,7 +306,6 @@ let handle_question t (name, typ) =
   (* TODO white/blacklist of allowed qtypes? what about ANY and UDP? *)
   match typ with
   | `Axfr -> assert false (* this won't happen, decoder constructs `Axfr -- but we need some evidence... *)
-  (*| A | NS | CNAME | SOA | PTR | MX | TXT | AAAA | SRV | ANY | CAA | SSHFP | TLSA | DNSKEY -> *)
   | (`K _ | `Any) as k -> lookup t.data (name, k)
 (*  | r ->
     Log.err (fun m -> m "refusing query type %a" Rr.pp r) ;
