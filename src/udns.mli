@@ -573,38 +573,34 @@ module Rr_map : sig
     | Txt : (int32 * Txt_set.t) rr
     | Unknown : int -> (int32 * Txt_set.t) rr
 
-  val equal_k : 'a rr -> 'a -> 'b rr -> 'b -> bool
-  (** [equal_k k v k' v'] is [true] if [k = k'] and [v = v'], [false] otherwise. *)
-
   include Gmap.S with type 'a key = 'a rr
 
+  val equal_rr : 'a key -> 'a -> 'a -> bool
+  (** [equal_rr k v v'] is [true] if [v = v'], [false] otherwise. *)
+
+  val equalb : b -> b -> bool
+  (** [equalb b b'] is [true] if the bindings are equal. *)
+
   val ppk : k Fmt.t
+  (** [ppk ppf k] pretty-prints [k]. *)
 
-  val names : 'a rr -> 'a -> Domain_name.Set.t
+  val names : 'a key -> 'a -> Domain_name.Set.t
   (** [names k v] are the referenced domain names in the given binding. *)
-
-  val names_b : b -> Domain_name.Set.t
-  (** [names_b binding] are the referenced domain names in the given binding. *)
 
   val pp_b : b Fmt.t
   (** [pp_b ppf b] pretty-prints the binding [b]. *)
 
-  val equal_b : b -> b -> bool
-  (** [equal_b b b'] is [true] if the bindings are equal. *)
-
   val text_b : ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> b -> string
-  (** [text ~origin ~default_ttl domain-name binding] is the zone file format of [binding] using
+  (** [text_b ~origin ~default_ttl domain-name binding] is the zone file format of [binding] using
       [domain-name]. *)
 
-  val subtract_k : 'a rr -> 'a -> 'a -> 'a option
-  (** [subtract_k k v rem] removes [rem] from [v]. If the result is an empty set,
-     [None] is returned. *)
+  val remove_rr : 'a key -> 'a -> 'a -> 'a option
+  (** [remove_rr k v rem] removes [rem] from [v]. If the result is an empty set,
+      [None] is returned. *)
 
-  val combine_k : 'a rr -> 'a -> 'a -> 'a
-  (** [combine_k k old new] combines [old] with [new]. [new] always wins. *)
-
-  val combine_opt : 'a rr -> 'a -> 'a option -> 'a option
-  (** [combine_opt k new old] is [new] if [old] is [None], otherwise [combine_k k old v]. *)
+  val union_rr : 'a key -> 'a -> 'a -> 'a
+  (** [combine_k k l r] combines [l] with [r]. A potential [r] Soa or Cname
+      overwrites its [l] counterpart. *)
 
   val text : ?origin:Domain_name.t -> ?default_ttl:int32 -> Domain_name.t -> 'a rr -> 'a -> string
   (** [text ~origin ~default_ttl name k v] is the zone file data for [k, v]. *)
@@ -630,11 +626,15 @@ module Name_rr_map : sig
 
   val pp : t Fmt.t
 
-  val add : Domain_name.t -> Rr_map.b -> t -> t
+  val add : Domain_name.t -> 'a Rr_map.key -> 'a -> t -> t
 
-  val find : Domain_name.t -> 'a Rr_map.rr -> t -> 'a option
+  val find : Domain_name.t -> 'a Rr_map.key -> t -> 'a option
 
   val remove_sub : t -> t -> t
+
+  val singleton : Domain_name.t -> 'a Rr_map.key -> 'a -> t
+
+  val union : t -> t -> t
 end
 
 (** The DNS packet.

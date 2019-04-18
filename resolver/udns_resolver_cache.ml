@@ -163,7 +163,7 @@ let find_lru t name typ =
   | Some Rr_map tm ->
     Some tm,
     try
-      let meta, entry = RRMap.find typ tm in
+      let meta, entry = RRMap.find (K typ) tm in
       Ok (meta, V.to_res entry)
     with
     | Not_found -> Error `Cache_miss
@@ -176,7 +176,7 @@ let insert_lru t ?map name typ created rank res =
     | `Alias (ttl, alias) -> LRU.add name (Alias (meta, ttl, alias)) t
     | `Entry _ | `No_data _ | `Serv_fail _ ->
       let map = match map with None -> RRMap.empty | Some x -> x in
-      let map' = RRMap.add typ (meta, V.of_res res) map in
+      let map' = RRMap.add (K typ) (meta, V.of_res res) map in
       LRU.add name (Rr_map map') t
   in
   LRU.trim t'
@@ -201,13 +201,13 @@ let cached t now typ nam =
       Error e
 
 let cached_any t now nam =
-  match find_lru t nam Rr_map.(K A) with
+  match find_lru t nam A with
   | Some rrmap, _ ->
     let rrs =
       RRMap.fold (fun _typ ((created, _), e) acc ->
           match update_ttl_res (V.to_res e) ~created ~now with
-          | Ok (`Entry b') -> Rr_map.addb b' acc
-          | Ok (`Alias a) -> Rr_map.addb (B (Cname, a)) acc
+          | Ok (`Entry Rr_map.(B (k, v))) -> Rr_map.add k v acc
+          | Ok (`Alias a) -> Rr_map.add Cname a acc
           | Ok (`No_data _ | `Serv_fail _ | `No_domain _) -> acc
           | Error _ -> acc)
         rrmap Rr_map.empty
@@ -271,11 +271,12 @@ let maybe_insert typ nam ts rank e t =
   let entry = smooth_ttl e in
   match find_lru t nam typ with
   | map, Error _ ->
-    Logs.debug (fun m -> m "maybe_insert: %a nothing found, adding: %a" Packet.Question.pp (nam, `K typ) pp_res entry);
+    Logs.debug (fun m -> m "maybe_insert: %a nothing found, adding: %a"
+                   Packet.Question.pp (nam, `K (K typ)) pp_res entry);
     insert_lru ?map t nam typ ts rank entry
   | map, Ok ((_, rank'), entry) ->
     Logs.debug (fun m -> m "maybe_insert: %a found rank %a insert rank %a: %d"
-                   Packet.Question.pp (nam, `K typ) pp_rank rank' pp_rank rank (compare_rank rank' rank));
+                   Packet.Question.pp (nam, `K (K typ)) pp_rank rank' pp_rank rank (compare_rank rank' rank));
     match compare_rank rank' rank with
     | 1 -> t
     | _ -> insert_lru ?map t nam typ ts rank entry
@@ -376,10 +377,10 @@ let find_nearest_ns rng ts t name =
     | [ x ] -> Some x
     | xs -> Some (List.nth xs (Randomconv.int ~bound:(List.length xs) rng))
   in
-  let find_ns name = match cached t ts Rr_map.(K Ns) name with
+  let find_ns name = match cached t ts Ns name with
     | Ok (`Entry Rr_map.(B (Ns, (_, names))), _) -> Domain_name.Set.elements names
     | _ -> []
-  and find_a name = match cached t ts Rr_map.(K A) name with
+  and find_a name = match cached t ts A name with
     | Ok (`Entry Rr_map.(B (A, (_, ips))), _) -> Rr_map.Ipv4_set.elements ips
     | _ -> []
   in
@@ -436,7 +437,7 @@ let resolve t ~rng ts name typ =
   let rec go t typ name =
     Logs.debug (fun m -> m "go %a" Domain_name.pp name) ;
     match find_nearest_ns rng ts t name with
-    | `NeedA ns -> go t Rr_map.(K A) ns
+    | `NeedA ns -> go t (Rr_map.K A) ns
     | `HaveIP (zone, ip) -> zone, name, typ, ip, t
   in
   go t typ name
@@ -606,7 +607,7 @@ let answer t ts (name, typ) =
   in
   let r = match typ with
     | `Any -> cached_any t ts name
-    | `K ty -> cached t ts ty name
+    | `K (Rr_map.K ty) -> cached t ts ty name
     | `Axfr -> assert false
   in
   match r with
@@ -634,7 +635,7 @@ let answer t ts (name, typ) =
   | Ok (`Alias (ttl, alias), t) ->
     Logs.debug (fun m -> m "alias while looking up %a" Packet.Question.pp (name, typ));
     match typ with
-    | `K ty when Rr_map.comparek ty (K Cname) <> 0 ->
+    | `K (K ty) when Rr_map.comparek (K ty) (K Cname) <> 0 ->
       begin match follow_cname t ts ty ~name ttl ~alias with
         | `Out (rcode, answer, authority, t) ->
           `Packet (packet t true rcode answer authority)
@@ -652,9 +653,9 @@ let handle_query t ~rng ts q =
     (* TODO unclear why it's here... *)
     let qname, ty =
       if Domain_name.is_service name then
-        Domain_name.drop_labels_exn ~amount:2 name, Rr_map.(K Ns)
+        Domain_name.drop_labels_exn ~amount:2 name, Rr_map.K Ns
       else
-        name, (match snd q with `Any -> Rr_map.(K Ns) | `K k -> k | `Axfr -> assert false)
+        name, (match snd q with `Any -> Rr_map.K Ns | `K k -> k | `Axfr -> assert false)
     in
     let zone, name', typ, ip, t = resolve t ~rng ts qname ty in
     let name, typ =

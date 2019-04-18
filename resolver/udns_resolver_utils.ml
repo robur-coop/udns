@@ -75,19 +75,30 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
             (Rr_map.K k, q_name, rank, `Entry (Rr_map.B (k, v))) :: acc,
             Domain_name.Set.union names (Rr_map.names k v))
           rr_map ([], Domain_name.Set.empty)
-      | `K k -> match Rr_map.findk k rr_map with
-        | Some b -> [ k, q_name, rank, `Entry b ], Rr_map.names_b b
+      | `K (Rr_map.K Cname) ->
+        begin match Rr_map.find Cname rr_map with
+          | Some v -> [ Rr_map.K Cname, q_name, rank, `Alias v ], Rr_map.names Cname v
+          | None ->
+            (* case no cname *)
+            Logs.warn (fun m -> m "noerror answer with right name, but no cname in %a, invalid soa for %a"
+                          Name_rr_map.pp answer Packet.Question.pp (q_name, q_type));
+            [ Rr_map.K Cname, q_name, rank, `No_data (q_name, invalid_soa q_name) ],
+            Domain_name.Set.empty
+        end
+      | `K (Rr_map.K k) -> match Rr_map.find k rr_map with
+        | Some v ->
+          [ Rr_map.K k, q_name, rank, `Entry (B (k, v)) ], Rr_map.names k v
         | None -> match Rr_map.find Cname rr_map with
           | None ->
             (* case neither TYP nor cname *)
             Logs.warn (fun m -> m "noerror answer with right name, but not TYP nor cname in %a, invalid soa for %a"
                           Name_rr_map.pp answer Packet.Question.pp (q_name, q_type));
-            [ k, q_name, rank, `No_data (q_name, invalid_soa q_name) ],
+            [ Rr_map.K k, q_name, rank, `No_data (q_name, invalid_soa q_name) ],
             Domain_name.Set.empty
           | Some cname ->
             (* explicitly register as CNAME so it'll be found *)
             (* should we try to find further records for the new alias? *)
-            [ Rr_map.(K Cname), q_name, rank, `Alias cname ],
+            [ Rr_map.K Cname, q_name, rank, `Alias cname ],
             Domain_name.Set.singleton (snd cname)
   in
 
@@ -130,13 +141,13 @@ let noerror bailiwick (_, flags) (q_name, q_type) (answer, authority) additional
         match Domain_name.Map.find name additional with
         | None -> acc
         | Some map ->
-          let a = match Rr_map.findb A map with
+          let a = match Rr_map.find A map with
             | None -> acc
-            | Some b -> (Rr_map.K A, name, Additional, `Entry b) :: acc
+            | Some v -> (Rr_map.K A, name, Additional, `Entry (Rr_map.B (A, v))) :: acc
           in
-          match Rr_map.findb Aaaa map with
+          match Rr_map.find Aaaa map with
           | None -> a
-          | Some b -> (Rr_map.K Aaaa, name, Additional, `Entry b) :: a)
+          | Some v -> (Rr_map.K Aaaa, name, Additional, `Entry (Rr_map.B (Aaaa, v))) :: a)
       names []
   in
   (* This is defined in RFC2181, Sec9 -- answer is unique if authority or
@@ -217,9 +228,9 @@ let noerror_stub (name, typ) (answer, authority) =
     | Some rrmap -> match typ with
       | `Axfr -> assert false
       | `Any -> Some (`Entries rrmap)
-      | `K k -> match Rr_map.findk k rrmap with
-        | Some b -> Some (`Entry b)
-        | None -> match Rr_map.(find Cname rrmap) with
+      | `K (Rr_map.K k) -> match Rr_map.find k rrmap with
+        | Some v -> Some (`Entry (Rr_map.B (k, v)))
+        | None -> match Rr_map.find Cname rrmap with
           | None -> None
           | Some (ttl, alias) -> Some (`Cname (ttl, alias))
   in

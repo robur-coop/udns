@@ -60,13 +60,13 @@ let create ?(size = 10000) ?(mode = `Recursive) now rng primary =
   let cache =
     List.fold_left (fun cache (name, b) ->
         Udns_resolver_cache.maybe_insert
-          Rr_map.(K A) name now Udns_resolver_cache.Additional
+          A name now Udns_resolver_cache.Additional
           (`Entry b) cache)
       cache Udns_resolver_root.a_records
   in
   let cache =
     Udns_resolver_cache.maybe_insert
-      Rr_map.(K Ns) Domain_name.root now Udns_resolver_cache.Additional
+      Ns Domain_name.root now Udns_resolver_cache.Additional
       (`Entry Udns_resolver_root.ns_records) cache
   in
   { rng ; cache ; primary ; transit = QM.empty ; queried = QM.empty ; mode }
@@ -194,9 +194,9 @@ let scrub_it mode t proto zone edns ts p =
   | Ok xs, _ ->
     let cache =
       List.fold_left
-        (fun t (ty, n, r, e) ->
+        (fun t (Rr_map.K ty, n, r, e) ->
            Logs.debug (fun m -> m "maybe_insert %a %a %a"
-                            Rr_map.ppk ty Domain_name.pp n Udns_resolver_cache.pp_res e) ;
+                            Rr_map.ppk (K ty) Domain_name.pp n Udns_resolver_cache.pp_res e) ;
            Udns_resolver_cache.maybe_insert ty n ts r e t)
         t xs
     in
@@ -441,11 +441,11 @@ let query_root t now proto =
     | Some x -> x
   in
   let ip =
-    match Udns_resolver_cache.cached t.cache now Rr_map.(K Ns) Domain_name.root with
+    match Udns_resolver_cache.cached t.cache now Ns Domain_name.root with
     | Ok (`Entry Rr_map.(B (Ns, (_, names))), _) ->
       let ips =
         Domain_name.Set.fold (fun name acc ->
-            match Udns_resolver_cache.cached t.cache now Rr_map.(K A) name with
+            match Udns_resolver_cache.cached t.cache now A name with
             | Ok (`Entry Rr_map.(B (A, (_, ips))), _) ->
               Rr_map.Ipv4_set.union ips acc
             | _ -> acc)

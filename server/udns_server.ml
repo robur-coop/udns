@@ -203,14 +203,16 @@ let create data auth rng tsig_verify tsig_sign =
   { data ; auth ; rng ; tsig_verify ; tsig_sign }
 
 let find_glue trie names =
-  let insert_rr map typ name =
-    match Udns_trie.lookupb name (K typ) trie with
-    | Ok (v, _) -> Name_rr_map.add name v map
-    | _ -> map
-  in
   Domain_name.Set.fold (fun name map ->
-      let map = insert_rr map A name in
-      insert_rr map Aaaa name)
+      match
+        match Udns_trie.lookup_glue name trie with
+        | Some v4, Some v6 -> Some Rr_map.(add A v4 (singleton Aaaa v6))
+        | Some v4, None -> Some (Rr_map.singleton A v4)
+        | None, Some v6 -> Some (Rr_map.singleton Aaaa v6)
+        | None, None -> None
+      with
+      | None -> map
+      | Some rrs -> Domain_name.Map.add name rrs map)
     names Domain_name.Map.empty
 
 let authoritative =
@@ -225,7 +227,7 @@ let lookup trie (name, typ) =
   (* TODO: should randomize answers + ad? *)
   let r = match typ with
     | `Any -> Udns_trie.lookup_any name trie
-    | `K k -> match Udns_trie.lookupb name k trie with
+    | `K (Rr_map.K k) -> match Udns_trie.lookup_with_cname name k trie with
       | Ok (B (k, v), au) -> Ok (Rr_map.singleton k v, au)
       | Error e -> Error e
   in
@@ -239,7 +241,7 @@ let lookup trie (name, typ) =
     in
     let additional =
       let names =
-        Rr_map.(fold (fun b s -> Domain_name.Set.union (names_b b) s) an ns)
+        Rr_map.(fold (fun (B (k, v)) s -> Domain_name.Set.union (names k v) s) an ns)
       in
       Name_rr_map.remove_sub
         (Name_rr_map.remove_sub (find_glue trie names) answer)
@@ -247,16 +249,8 @@ let lookup trie (name, typ) =
     in
     Ok (authoritative, (answer, authority), Some additional)
   | Error (`Delegation (name, (ttl, ns))) ->
-    let additional =
-      Domain_name.Set.fold (fun name map ->
-          (* TODO aaaa records! *)
-          match Udns_trie.lookup_ignore name (K A) trie with
-          | Ok (Rr_map.(B (A, _) as v)) -> Name_rr_map.add name v map
-          | _ -> map)
-        ns Domain_name.Map.empty
-    in
     let authority = Domain_name.Map.singleton name Rr_map.(singleton Ns (ttl, ns)) in
-    Ok (Packet.Flags.empty, (Name_rr_map.empty, authority), Some additional)
+    Ok (Packet.Flags.empty, (Name_rr_map.empty, authority), Some (find_glue trie ns))
   | Error (`EmptyNonTerminal (zname, soa)) ->
     let authority = Domain_name.Map.singleton zname Rr_map.(singleton Soa soa) in
     Ok (authoritative, (Name_rr_map.empty, authority), None)
@@ -321,39 +315,39 @@ let handle_question t (name, typ) =
 (* this implements RFC 2136 Section 2.4 + 3.2 *)
 let handle_rr_prereq trie name = function
   | Packet.Update.Name_inuse ->
-    begin match Udns_trie.lookupb name (K A) trie with
+    begin match Udns_trie.lookup name A trie with
       | Ok _ | Error (`EmptyNonTerminal _) -> Ok ()
       | _ -> Error Rcode.NXDomain
     end
-  | Packet.Update.Exists typ ->
-    begin match Udns_trie.lookupb name typ trie with
+  | Packet.Update.Exists (K typ) ->
+    begin match Udns_trie.lookup name typ trie with
       | Ok _ -> Ok ()
       | _ -> Error Rcode.NXRRSet
     end
   | Packet.Update.Not_name_inuse ->
-    begin match Udns_trie.lookupb name (K A) trie with
+    begin match Udns_trie.lookup name A trie with
       | Error (`NotFound _) -> Ok ()
       | _ -> Error Rcode.YXDomain
     end
-  | Packet.Update.Not_exists typ ->
-    begin match Udns_trie.lookupb name typ trie with
+  | Packet.Update.Not_exists (K typ) ->
+    begin match Udns_trie.lookup name typ trie with
       | Error (`EmptyNonTerminal _ | `NotFound _) -> Ok ()
       | _ -> Error Rcode.YXRRSet
     end
   | Packet.Update.Exists_data Rr_map.(B (k, v)) ->
     match Udns_trie.lookup name k trie with
-    | Ok v' when Rr_map.equal_k k v k v' -> Ok ()
+    | Ok v' when Rr_map.equal_rr k v v' -> Ok ()
     | _ -> Error Rcode.NXRRSet
 
 (* RFC 2136 Section 2.5 + 3.4.2 *)
 (* we partially ignore 3.4.2.3 and 3.4.2.4 by not special-handling of NS, SOA *)
 let handle_rr_update trie name = function
-  | Packet.Update.Remove typ ->
+  | Packet.Update.Remove (K typ) ->
     begin match typ with
-      | K Soa ->
+      | Soa ->
         (* this does not follow 2136, but we want to be able to remove a zone *)
         Udns_trie.remove_zone name trie
-      | _ -> Udns_trie.remove_rr name typ trie
+      | _ -> Udns_trie.remove name typ trie
     end
   | Packet.Update.Remove_all -> Udns_trie.remove_all name trie
   | Packet.Update.Remove_single Rr_map.(B (k, rem) as b) ->
@@ -363,7 +357,7 @@ let handle_rr_update trie name = function
                      Udns_trie.pp_e e Domain_name.pp name Rr_map.pp_b b) ;
         trie
       | Ok v ->
-        match Rr_map.subtract_k k v rem with
+        match Rr_map.remove_rr k v rem with
         | None ->
           Log.info (fun m -> m "removed single %a entry %a (stored %a) none leftover"
                        Domain_name.pp name Rr_map.pp_b b Rr_map.pp_b Rr_map.(B (k, v)));
@@ -378,7 +372,7 @@ let handle_rr_update trie name = function
     (* turns out, RFC 2136, 3.4.2.2 says "SOA with smaller or equal serial is silently ignored" *)
     begin match Udns_trie.lookup name k trie with
       | Ok old ->
-        let newval = Rr_map.combine_k k old add in
+        let newval = Rr_map.union_rr k old add in
         Log.info (fun m -> m "added %a: %a (stored %a), now %a"
                      Domain_name.pp name Rr_map.pp_b b Rr_map.pp_b (Rr_map.B (k, old))
                      Rr_map.pp_b (Rr_map.B (k, newval))) ;
@@ -402,10 +396,10 @@ module Notification = struct
   type connections = (Ipaddr.V4.t * int) list Domain_name.Map.t
 
   let secondaries trie zone =
-    match Udns_trie.lookup zone Rr_map.Ns trie, Udns_trie.lookup zone Rr_map.Soa trie with
-    | Ok (_, ns), Ok soa ->
+    match Udns_trie.lookup_with_cname zone Rr_map.Soa trie with
+    | Ok (B (Soa, soa), (_, _, ns)) ->
       let secondaries = Domain_name.Set.remove soa.Soa.nameserver ns in
-      (* TODO AAAA records *)
+      (* TODO AAAA records / use lookup_glue? *)
       Domain_name.Set.fold (fun ns acc ->
           match Udns_trie.lookup ns Rr_map.A trie with
           | Ok (_, ips) -> ips

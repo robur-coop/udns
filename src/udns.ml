@@ -1543,23 +1543,26 @@ module Rr_map = struct
 
   include Gmap.Make(K)
 
-  let equal_k : type a b . a rr -> a -> b rr -> b -> bool = fun k v k' v' ->
-    match k, v, k', v' with
-    | Cname, (_, alias), Cname, (_, alias') -> Domain_name.equal alias alias'
-    | Mx, (_, mxs), Mx, (_, mxs') -> Mx_set.equal mxs mxs'
-    | Ns, (_, ns), Ns, (_, ns') -> Domain_name.Set.equal ns ns'
-    | Ptr, (_, name), Ptr, (_, name') -> Domain_name.equal name name'
-    | Soa, soa, Soa, soa' -> Soa.compare soa soa' = 0
-    | Txt, (_, txts), Txt, (_, txts') -> Txt_set.equal txts txts'
-    | A, (_, aas), A, (_, aas') -> Ipv4_set.equal aas aas'
-    | Aaaa, (_, aaaas), Aaaa, (_, aaaas') -> Ipv6_set.equal aaaas aaaas'
-    | Srv, (_, srvs), Srv, (_, srvs') -> Srv_set.equal srvs srvs'
-    | Dnskey, (_, keys), Dnskey, (_, keys') -> Dnskey_set.equal keys keys'
-    | Caa, (_, caas), Caa, (_, caas') -> Caa_set.equal caas caas'
-    | Tlsa, (_, tlsas), Tlsa, (_, tlsas') -> Tlsa_set.equal tlsas tlsas'
-    | Sshfp, (_, sshfps), Sshfp, (_, sshfps') -> Sshfp_set.equal sshfps sshfps'
-    | Unknown t, (_, data), Unknown t', (_, data') -> t = t' && Txt_set.equal data data'
-    | _, _, _, _ -> false
+  let equal_rr : type a. a rr -> a -> a -> bool = fun k v v' ->
+    match k, v, v' with
+    | Cname, (_, alias), (_, alias') -> Domain_name.equal alias alias'
+    | Mx, (_, mxs), (_, mxs') -> Mx_set.equal mxs mxs'
+    | Ns, (_, ns), (_, ns') -> Domain_name.Set.equal ns ns'
+    | Ptr, (_, name), (_, name') -> Domain_name.equal name name'
+    | Soa, soa, soa' -> Soa.compare soa soa' = 0
+    | Txt, (_, txts), (_, txts') -> Txt_set.equal txts txts'
+    | A, (_, aas), (_, aas') -> Ipv4_set.equal aas aas'
+    | Aaaa, (_, aaaas), (_, aaaas') -> Ipv6_set.equal aaaas aaaas'
+    | Srv, (_, srvs), (_, srvs') -> Srv_set.equal srvs srvs'
+    | Dnskey, (_, keys), (_, keys') -> Dnskey_set.equal keys keys'
+    | Caa, (_, caas), (_, caas') -> Caa_set.equal caas caas'
+    | Tlsa, (_, tlsas), (_, tlsas') -> Tlsa_set.equal tlsas tlsas'
+    | Sshfp, (_, sshfps), (_, sshfps') -> Sshfp_set.equal sshfps sshfps'
+    | Unknown _, (_, data), (_, data') -> Txt_set.equal data data'
+
+  let equalb (B (k, v)) (B (k', v')) = match K.compare k k' with
+    | Gmap.Order.Eq -> equal_rr k v v'
+    | _ -> false
 
   let to_int : type a. a rr -> int = function
     | A -> 1 | Ns -> 2 | Cname -> 5 | Soa -> 6 | Ptr -> 12 | Mx -> 15
@@ -1686,8 +1689,8 @@ module Rr_map = struct
           rr names (encode data) off ttl, succ count)
         datas ((names, off), 0)
 
-  let combine_k : type a. a rr -> a -> a -> a = fun k old v ->
-    match k, old, v with
+  let union_rr : type a. a rr -> a -> a -> a = fun k l r ->
+    match k, l, r with
     | Cname, _, cname -> cname
     | Mx, (_, mxs), (ttl, mxs') -> (ttl, Mx_set.union mxs mxs')
     | Ns, (_, ns), (ttl, ns') -> (ttl, Domain_name.Set.union ns ns')
@@ -1703,12 +1706,15 @@ module Rr_map = struct
     | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, Sshfp_set.union sshfps sshfps')
     | Unknown _, (_, data), (ttl, data') -> (ttl, Txt_set.union data data')
 
-  let combine_opt : type a. a rr -> a -> a option -> a option = fun k v old ->
-    match v, old with
-    | v, None -> Some v
-    | v, Some old -> Some (combine_k k old v)
+  let unionee : type a a. a rr -> a -> a -> a option =
+    fun k v v' -> Some (union_rr k v v')
 
-  let subtract_k : type a. a rr -> a -> a -> a option = fun k v rem ->
+  let combine_opt : type a. a rr -> a -> a option -> a option = fun k l r ->
+    match r with
+    | None -> Some l
+    | Some r -> Some (union_rr k l r)
+
+  let remove_rr : type a. a rr -> a -> a -> a option = fun k v rem ->
     match k, v, rem with
     | Cname, _, _ -> None
     | Mx, (ttl, mxs), (_, rm) ->
@@ -1894,8 +1900,6 @@ module Rr_map = struct
 
   let pp_b ppf (B (k, _)) = ppk ppf (K k)
 
-  let equal_b (B (k, v)) (B (k', v')) = equal_k k v k' v'
-
   let names : type a. a rr -> a -> Domain_name.Set.t = fun k v ->
     match k, v with
     | Cname, (_, alias) -> Domain_name.Set.singleton alias
@@ -1908,8 +1912,6 @@ module Rr_map = struct
       Srv_set.fold (fun x acc -> Domain_name.Set.add x.target acc)
         srvs Domain_name.Set.empty
     | _ -> Domain_name.Set.empty
-
-  let names_b (B (k, v)) = names k v
 
   let decode names buf off (K typ) =
     let open Rresult.R.Infix in
@@ -1978,7 +1980,7 @@ module Name_rr_map = struct
   let empty = Domain_name.Map.empty
 
   let equal a b =
-    Domain_name.Map.equal (Rr_map.equal Rr_map.equal_b) a b
+    Domain_name.Map.equal (Rr_map.equal { f = Rr_map.equal_rr }) a b
 
   let pp ppf map =
     List.iter (fun (name, rr_map) ->
@@ -1986,7 +1988,7 @@ module Name_rr_map = struct
           (List.map (Rr_map.text_b name) (Rr_map.bindings rr_map)))
       (Domain_name.Map.bindings map)
 
-  let add name (Rr_map.B (k, v)) dmap =
+  let add name k v dmap =
     let m = match Domain_name.Map.find name dmap with
       | None -> Rr_map.empty
       | Some map -> map
@@ -2010,6 +2012,14 @@ module Name_rr_map = struct
           let rrs' = Rr_map.fold (fun (B (k, _)) map -> Rr_map.remove k map) rrmap rrs in
           Domain_name.Map.add name rrs' map)
       sub map
+
+  let singleton name k v =
+    Domain_name.Map.singleton name (Rr_map.singleton k v)
+
+  let union t t' =
+    Domain_name.Map.union (fun _ rr rr' ->
+        Some (Rr_map.union { f = Rr_map.unionee } rr rr'))
+      t t'
 end
 
 module Packet = struct
@@ -2316,8 +2326,9 @@ module Packet = struct
     | Ok (names, off) -> Ok (names, off, acc)
     | Error e -> Error e
 
-  let decode_n_partial add f names buf off acc c =
-    let acc, r = decode_n_aux add f names buf off acc c in
+  let decode_n_partial names buf off acc c =
+    let add name (Rr_map.B (k, v)) map = Name_rr_map.add name k v map in
+    let acc, r = decode_n_aux add decode_rr names buf off acc c in
     match r with
     | Ok (names, off) -> Ok (`Full (names, off, acc))
     | Error `Partial -> Ok (`Partial acc)
@@ -2339,8 +2350,8 @@ module Packet = struct
     | `K t ->
       guard (clas = Clas.(to_int IN))
         (`Malformed (off, Fmt.strf "additional class must be IN 0x%x" clas)) >>= fun () ->
-      Rr_map.decode names buf off' t >>| fun (b, names, off') ->
-      (Name_rr_map.add name b map, edns, None), names, off'
+      Rr_map.decode names buf off' t >>| fun (B (k, v), names, off') ->
+      (Name_rr_map.add name k v map, edns, None), names, off'
     | _ -> Error (`Malformed (off, Fmt.strf "decode additional, unexpected rr %a"
                                 Rr_map.pp_rr typ))
 
@@ -2376,10 +2387,10 @@ module Packet = struct
       and aucount = Cstruct.BE.get_uint16 buf 8
       in
       let empty = Domain_name.Map.empty in
-      decode_n_partial Name_rr_map.add decode_rr names buf off empty ancount >>= function
+      decode_n_partial names buf off empty ancount >>= function
       | `Partial answer -> guard truncated `Partial >>| fun () -> (answer, empty), names, off, false, truncated
       | `Full (names, off, answer) ->
-        decode_n_partial Name_rr_map.add decode_rr names buf off empty aucount >>= function
+        decode_n_partial names buf off empty aucount >>= function
         | `Partial authority -> guard truncated `Partial >>| fun () -> (answer, authority), names, off, false, truncated
         | `Full (names, off, authority) -> Ok ((answer, authority), names, off, true, truncated)
 
@@ -2439,7 +2450,8 @@ module Packet = struct
       (* TODO: verify name == zname in question, also all RR sub of zname *)
       match k, v with
       | Soa, soa ->
-        decode_n Name_rr_map.add decode_rr names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
+        let add name (Rr_map.B (k, v)) map = Name_rr_map.add name k v map in
+        decode_n add decode_rr names buf off empty (ancount - 2) >>= fun (names, off, answer) ->
         decode_rr names buf off >>= fun (name', B (k', v'), names, off) ->
         begin
           match k', v' with
@@ -2476,7 +2488,7 @@ module Packet = struct
 
     let equal_prereq a b = match a, b with
       | Exists t, Exists t' -> Rr_map.comparek t t' = 0
-      | Exists_data b, Exists_data b' -> Rr_map.equal_b b b'
+      | Exists_data b, Exists_data b' -> Rr_map.equalb b b'
       | Not_exists t, Not_exists t' -> Rr_map.comparek t t' = 0
       | Name_inuse, Name_inuse -> true
       | Not_name_inuse, Not_name_inuse -> true
@@ -2548,8 +2560,8 @@ module Packet = struct
     let equal_update a b = match a, b with
       | Remove t, Remove t' -> Rr_map.comparek t t' = 0
       | Remove_all, Remove_all -> true
-      | Remove_single b, Remove_single b' -> Rr_map.equal_b b b'
-      | Add b, Add b' -> Rr_map.equal_b b b'
+      | Remove_single b, Remove_single b' -> Rr_map.equalb b b'
+      | Add b, Add b' -> Rr_map.equalb b b'
       | _ -> false
 
     let pp_update ppf = function
