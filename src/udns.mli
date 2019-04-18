@@ -557,6 +557,13 @@ module Rr_map : sig
   module Tlsa_set : Set.S with type elt = Tlsa.t
   module Sshfp_set : Set.S with type elt = Sshfp.t
 
+  module I : sig
+    type t
+    val of_int : ?off:int -> int -> (t, [> `Malformed of int * string ]) result
+    val to_int : t -> int
+    val compare : t -> t -> int
+  end
+
   type _ rr =
     | Soa : Soa.t rr
     | Ns : (int32 * Domain_name.Set.t) rr
@@ -571,7 +578,7 @@ module Rr_map : sig
     | Tlsa : (int32 * Tlsa_set.t) rr
     | Sshfp : (int32 * Sshfp_set.t) rr
     | Txt : (int32 * Txt_set.t) rr
-    | Unknown : int -> (int32 * Txt_set.t) rr
+    | Unknown : I.t -> (int32 * Txt_set.t) rr
 
   include Gmap.S with type 'a key = 'a rr
 

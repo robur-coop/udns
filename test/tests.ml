@@ -57,8 +57,12 @@ module Packet = struct
                 (decode cs)) ;
     let cs = of_hex "0000 0100 0001 0000 0000 0000 0000 0000 01" in
     let res =
+      let i = match Rr_map.I.of_int 0 with
+        | Error _ -> Alcotest.fail "expected ok"
+        | Ok i -> i
+      in
       let header = (0, Flags.singleton `Recursion_desired)
-      and question = Question.create Domain_name.root (Unknown 0)
+      and question = Question.create Domain_name.root (Unknown i)
       and data = `Query
       in
       Packet.create header question data

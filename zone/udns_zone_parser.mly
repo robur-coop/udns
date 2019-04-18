@@ -117,7 +117,11 @@ rrclass:
  | CLASS_HS { parse_error "class must be \"IN\"" }
 
 rr:
-   generic_type s generic_rdata { B (Unknown $1, (0l, Rr_map.Txt_set.singleton $3)) }
+generic_type s generic_rdata {
+  match Rr_map.I.of_int $1 with
+  | Ok i -> B (Unknown i, (0l, Rr_map.Txt_set.singleton $3))
+  | Error _ -> parse_error "type code reserved, not generic"
+}
      /* RFC 1035 */
  | TYPE_A s ipv4 { B (A, (0l, Rr_map.Ipv4_set.singleton $3)) }
  | TYPE_NS s domain { B (Ns, (0l, Domain_name.Set.singleton $3)) }

@@ -1501,6 +1501,21 @@ module Rr_map = struct
   module Tlsa_set = Set.Make(Tlsa)
   module Sshfp_set = Set.Make(Sshfp)
 
+  module I : sig
+    type t
+    val of_int : ?off:int -> int -> (t, [> `Malformed of int * string ]) result
+    val to_int : t -> int
+    val compare : t -> t -> int
+  end = struct
+    type t = int
+    let of_int ?(off = 0) i = match i with
+      | 1 | 2 | 5 | 6 | 12 | 15 | 16 | 28 | 33 | 41 | 44 | 48 | 52 | 250 | 251 | 252 | 255 | 257 ->
+        Error (`Malformed (off, "reserved and supported RTYPE not Unknown"))
+      | x -> if x < 1 lsl 15 then Ok x else Error (`Malformed (off, "RTYPE exceeds 16 bit"))
+    let to_int t = t
+    let compare = int_compare
+  end
+
   type _ rr =
     | Soa : Soa.t rr
     | Ns : (int32 * Domain_name.Set.t) rr
@@ -1515,7 +1530,7 @@ module Rr_map = struct
     | Tlsa : (int32 * Tlsa_set.t) rr
     | Sshfp : (int32 * Sshfp_set.t) rr
     | Txt : (int32 * Txt_set.t) rr
-    | Unknown : int -> (int32 * Txt_set.t) rr
+    | Unknown : I.t -> (int32 * Txt_set.t) rr
 
   module K = struct
     type 'a t = 'a rr
@@ -1537,7 +1552,7 @@ module Rr_map = struct
       | Sshfp, Sshfp -> Eq | Sshfp, _ -> Lt | _, Sshfp -> Gt
       | Txt, Txt -> Eq | Txt, _ -> Lt | _, Txt -> Gt
       | Unknown a, Unknown b ->
-        let r = int_compare a b in
+        let r = I.compare a b in
         if r = 0 then Eq else if r < 0 then Lt else Gt
   end
 
@@ -1567,7 +1582,7 @@ module Rr_map = struct
   let to_int : type a. a rr -> int = function
     | A -> 1 | Ns -> 2 | Cname -> 5 | Soa -> 6 | Ptr -> 12 | Mx -> 15
     | Txt -> 16 | Aaaa -> 28 | Srv -> 33 | Sshfp -> 44 | Dnskey -> 48
-    | Tlsa -> 52 | Caa -> 257 | Unknown x -> x
+    | Tlsa -> 52 | Caa -> 257 | Unknown x -> I.to_int x
 
   let any_rtyp = 255 and axfr_rtyp = 252 and ixfr_rtyp = 251
 
@@ -1577,10 +1592,9 @@ module Rr_map = struct
     | 33 -> Ok (K Srv) | 44 -> Ok (K Sshfp) | 48 -> Ok (K Dnskey)
     | 52 -> Ok (K Tlsa) | 257 -> Ok (K Caa)
     | x ->
-      if x = Edns.rtyp || x = Tsig.rtyp || x = any_rtyp || x = axfr_rtyp || x = ixfr_rtyp then
-        Error (`Not_implemented (off, Fmt.strf "unexpected RTYPE in RR: 0x%02X" x))
-      else
-        Ok (K (Unknown x))
+      let open Rresult.R.Infix in
+      I.of_int ~off x >>| fun i ->
+      K (Unknown i)
 
   let ppk ppf (K k) = match k with
     | Cname -> Fmt.string ppf "CNAME"
@@ -1596,7 +1610,7 @@ module Rr_map = struct
     | Caa -> Fmt.string ppf "CAA"
     | Tlsa -> Fmt.string ppf "TLSA"
     | Sshfp -> Fmt.string ppf "SSHFP"
-    | Unknown x -> Fmt.pf ppf "TYPE%d" x
+    | Unknown x -> Fmt.pf ppf "TYPE%d" (I.to_int x)
 
   type rrtyp = [ `Any | `Tsig | `Edns | `Ixfr | `Axfr | `K of k ]
 
@@ -1859,7 +1873,7 @@ module Rr_map = struct
       | Unknown x, (ttl, datas) ->
         Txt_set.fold (fun data acc ->
             Fmt.strf "%s\t%aTYPE%d\t\\# %d %s" str_name ttl_fmt (ttl_opt ttl)
-              x (String.length data) (hex (Cstruct.of_string data)) :: acc)
+              (I.to_int x) (String.length data) (hex (Cstruct.of_string data)) :: acc)
           datas []
     in
     String.concat "\n" strs
