@@ -635,15 +635,16 @@ let answer t ts (name, typ) =
   | Ok (`Alias (ttl, alias), t) ->
     Logs.debug (fun m -> m "alias while looking up %a" Packet.Question.pp (name, typ));
     match typ with
-    | `K (K ty) when Rr_map.comparek (K ty) (K Cname) <> 0 ->
-      begin match follow_cname t ts ty ~name ttl ~alias with
-        | `Out (rcode, answer, authority, t) ->
-          `Packet (packet t true rcode answer authority)
-        | `Query (n, t) -> `Query (n, t)
-      end
-    | _ ->
-      let data = Domain_name.Map.singleton name Rr_map.(singleton Cname (ttl, alias)) in
+    | `Any | `Axfr ->
+      let data = Name_rr_map.singleton name Cname (ttl, alias) in
       `Packet (packet t false Rcode.NoError data Domain_name.Map.empty)
+    | `K (K Cname) ->
+      let data = Name_rr_map.singleton name Cname (ttl, alias) in
+      `Packet (packet t false Rcode.NoError data Domain_name.Map.empty)
+    | `K (K ty) ->
+      match follow_cname t ts ty ~name ttl ~alias with
+      | `Out (rcode, an, au, t) -> `Packet (packet t true rcode an au)
+      | `Query (n, t) -> `Query (n, t)
 
 let handle_query t ~rng ts q =
   match answer t ts q with
