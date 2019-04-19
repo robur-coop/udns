@@ -1174,7 +1174,7 @@ let bailiwick_a () =
   Alcotest.check res "CNAME and unrelated NS record in authority"
     (Ok [ K Cname, q_name, AuthoritativeAnswer, `Alias alias ])
     (Udns_resolver_utils.scrub q_name dns) ;
-  let answer = `Answer (Domain_name.Map.singleton q_name Rr_map.(singleton Cname alias),
+  let answer = `Answer (Name_rr_map.singleton q_name Cname alias,
                         Name_rr_map.empty)
   in
   let additional = Name_rr_map.singleton (name "bar") A a in

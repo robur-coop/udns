@@ -3018,7 +3018,7 @@ module Packet = struct
         | None -> names, off
         | Some soa ->
           Cstruct.BE.set_uint16 buf 6 1;
-          let query = Domain_name.Map.singleton (fst question) Rr_map.(singleton Soa soa) in
+          let query = Name_rr_map.singleton (fst question) Soa soa in
           Query.encode names buf off question (query, Name_rr_map.empty)
       end
     | `Update u -> Update.encode names buf off question u

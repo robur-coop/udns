@@ -17,8 +17,7 @@ let invalid_soa name =
     expiry = 1048576l ; minimum = 300l
   }
 
-let soa_map name soa =
-  Domain_name.Map.singleton name Rr_map.(singleton Soa soa)
+let soa_map name soa = Name_rr_map.singleton name Soa soa
 
 let _invalid_soa_map name =
   let soa = invalid_soa name in

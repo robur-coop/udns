@@ -541,8 +541,7 @@ let _resolve t ~rng ts name typ =
 *)
 
 
-let to_map (name, soa) =
-  Domain_name.Map.singleton name Rr_map.(singleton Soa soa)
+let to_map (name, soa) = Name_rr_map.singleton name Soa soa
 
 let follow_cname t ts typ ~name ttl ~alias =
   let rec follow t acc name =
@@ -575,7 +574,7 @@ let follow_cname t ts typ ~name ttl ~alias =
       Logs.debug (fun m -> m "follow_cname: servfail") ;
       `Out (Rcode.ServFail, acc, to_map res, t)
   in
-  let initial = Domain_name.Map.singleton name Rr_map.(singleton Cname (ttl, alias)) in
+  let initial = Name_rr_map.singleton name Cname (ttl, alias) in
   follow t initial alias
 
 (*
@@ -626,7 +625,7 @@ let answer t ts (name, typ) =
     `Packet (packet t false Rcode.ServFail Domain_name.Map.empty (to_map res))
   | Ok (`Entry (Rr_map.B (k, v)), t) ->
     Logs.debug (fun m -> m "entry while looking up %a" Packet.Question.pp (name, typ));
-    let data = Domain_name.Map.singleton name (Rr_map.singleton k v) in
+    let data = Name_rr_map.singleton name k v in
     `Packet (packet t true Rcode.NoError data Domain_name.Map.empty)
   | Ok (`Entries rr_map, t) ->
     Logs.debug (fun m -> m "entries while looking up %a" Packet.Question.pp (name, typ));

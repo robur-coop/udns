@@ -235,9 +235,7 @@ let lookup trie (name, typ) =
   | Ok (an, (au, ttl, ns)) ->
     let answer = Domain_name.Map.singleton name an in
     let authority =
-      Name_rr_map.remove_sub
-        (Domain_name.Map.singleton au Rr_map.(singleton Ns (ttl, ns)))
-        answer
+      Name_rr_map.remove_sub (Name_rr_map.singleton au Ns (ttl, ns)) answer
     in
     let additional =
       let names =
@@ -249,13 +247,13 @@ let lookup trie (name, typ) =
     in
     Ok (authoritative, (answer, authority), Some additional)
   | Error (`Delegation (name, (ttl, ns))) ->
-    let authority = Domain_name.Map.singleton name Rr_map.(singleton Ns (ttl, ns)) in
+    let authority = Name_rr_map.singleton name Ns (ttl, ns) in
     Ok (Packet.Flags.empty, (Name_rr_map.empty, authority), Some (find_glue trie ns))
   | Error (`EmptyNonTerminal (zname, soa)) ->
-    let authority = Domain_name.Map.singleton zname Rr_map.(singleton Soa soa) in
+    let authority = Name_rr_map.singleton zname Soa soa in
     Ok (authoritative, (Name_rr_map.empty, authority), None)
   | Error (`NotFound (zname, soa)) ->
-    let authority = Domain_name.Map.singleton zname Rr_map.(singleton Soa soa) in
+    let authority = Name_rr_map.singleton zname Soa soa in
     Error (Rcode.NXDomain, Some (Name_rr_map.empty, authority))
   | Error `NotAuthoritative -> Error (Rcode.NotAuth, None)
 
