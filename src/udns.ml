@@ -1558,7 +1558,12 @@ module Rr_map = struct
 
   include Gmap.Make(K)
 
-  let equal_rr : type a. a rr -> a -> a -> bool = fun k v v' ->
+  type k = K : 'a key -> k
+
+  let comparek (K k) (K k') = match K.compare k k' with
+    | Gmap.Order.Eq -> 0 | Gmap.Order.Gt -> 1 | Gmap.Order.Lt -> -1
+
+  let equal_rr : type a. a key -> a -> a -> bool = fun k v v' ->
     match k, v, v' with
     | Cname, (_, alias), (_, alias') -> Domain_name.equal alias alias'
     | Mx, (_, mxs), (_, mxs') -> Mx_set.equal mxs mxs'
@@ -1579,7 +1584,7 @@ module Rr_map = struct
     | Gmap.Order.Eq -> equal_rr k v v'
     | _ -> false
 
-  let to_int : type a. a rr -> int = function
+  let to_int : type a. a key -> int = function
     | A -> 1 | Ns -> 2 | Cname -> 5 | Soa -> 6 | Ptr -> 12 | Mx -> 15
     | Txt -> 16 | Aaaa -> 28 | Srv -> 33 | Sshfp -> 44 | Dnskey -> 48
     | Tlsa -> 52 | Caa -> 257 | Unknown x -> I.to_int x
@@ -1636,7 +1641,7 @@ module Rr_map = struct
     Cstruct.BE.set_uint16 buf (off + 2) c ;
     names, off + 4
 
-  let encode : type a. ?clas:Clas.t -> Domain_name.t -> a rr -> a -> Name.name_offset_map -> Cstruct.t -> int ->
+  let encode : type a. ?clas:Clas.t -> Domain_name.t -> a key -> a -> Name.name_offset_map -> Cstruct.t -> int ->
     (Name.name_offset_map * int) * int = fun ?(clas = Clas.IN) name k v names buf off ->
     let clas = Clas.to_int clas in
     let rr names f off ttl =
@@ -1703,7 +1708,7 @@ module Rr_map = struct
           rr names (encode data) off ttl, succ count)
         datas ((names, off), 0)
 
-  let union_rr : type a. a rr -> a -> a -> a = fun k l r ->
+  let union_rr : type a. a key -> a -> a -> a = fun k l r ->
     match k, l, r with
     | Cname, _, cname -> cname
     | Mx, (_, mxs), (ttl, mxs') -> (ttl, Mx_set.union mxs mxs')
@@ -1720,15 +1725,15 @@ module Rr_map = struct
     | Sshfp, (_, sshfps), (ttl, sshfps') -> (ttl, Sshfp_set.union sshfps sshfps')
     | Unknown _, (_, data), (ttl, data') -> (ttl, Txt_set.union data data')
 
-  let unionee : type a a. a rr -> a -> a -> a option =
+  let unionee : type a. a key -> a -> a -> a option =
     fun k v v' -> Some (union_rr k v v')
 
-  let combine_opt : type a. a rr -> a -> a option -> a option = fun k l r ->
+  let combine_opt : type a. a key -> a -> a option -> a option = fun k l r ->
     match r with
     | None -> Some l
     | Some r -> Some (union_rr k l r)
 
-  let remove_rr : type a. a rr -> a -> a -> a option = fun k v rem ->
+  let remove_rr : type a. a key -> a -> a -> a option = fun k v rem ->
     match k, v, rem with
     | Cname, _, _ -> None
     | Mx, (ttl, mxs), (_, rm) ->
@@ -1768,7 +1773,7 @@ module Rr_map = struct
       if Txt_set.is_empty data then None else Some (ttl, data)
 
   let text : type a. ?origin:Domain_name.t -> ?default_ttl:int32 ->
-    Domain_name.t -> a rr -> a -> string = fun ?origin ?default_ttl n t v ->
+    Domain_name.t -> a key -> a -> string = fun ?origin ?default_ttl n t v ->
     let hex cs =
       let buf = Bytes.create (Cstruct.len cs * 2) in
       for i = 0 to pred (Cstruct.len cs) do
@@ -1914,7 +1919,7 @@ module Rr_map = struct
 
   let pp_b ppf (B (k, _)) = ppk ppf (K k)
 
-  let names : type a. a rr -> a -> Domain_name.Set.t = fun k v ->
+  let names : type a. a key -> a -> Domain_name.Set.t = fun k v ->
     match k, v with
     | Cname, (_, alias) -> Domain_name.Set.singleton alias
     | Mx, (_, mxs) ->

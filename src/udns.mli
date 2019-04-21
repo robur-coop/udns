@@ -588,6 +588,12 @@ module Rr_map : sig
   val equalb : b -> b -> bool
   (** [equalb b b'] is [true] if the bindings are equal. *)
 
+  type k = K : 'a key -> k
+  (** The monomorphic type of keys. *)
+
+  val comparek : k -> k -> int
+  (** [comparek k k'] compares [k] with [k'] using the defined ordering. *)
+
   val ppk : k Fmt.t
   (** [ppk ppf k] pretty-prints [k]. *)
 
