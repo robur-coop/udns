@@ -49,7 +49,10 @@ let sign ?mac ?max_size name tsig ~key p buf =
        - only question is preserved
        - _one_ additional, the TSIG itself *)
     match add_tsig ?max_size name tsig buf with
-    | Some out -> Some (out, mac)
+    | Some out ->
+      Log.debug (fun m -> m "dns_tsig sign for %X: %a"
+                    (fst p.Packet.header) Cstruct.hexdump_pp mac);
+      Some (out, mac)
     | None ->
       match p.Packet.data with
       | #Packet.request ->
@@ -76,7 +79,10 @@ let sign ?mac ?max_size name tsig ~key p buf =
                     Fmt.(option ~none:(unit "none") int) max_size
                     Cstruct.hexdump_pp new_buf) ;
           None
-        | Some out -> Some (out, mac)
+        | Some out ->
+          Log.debug (fun m -> m "dns_tsig sign for %X: %a"
+                        (fst p.header) Cstruct.hexdump_pp mac);
+          Some (out, mac)
 
 let verify_raw ?mac now name ~key tsig tbs =
   Rresult.R.of_option ~none:(fun () -> Error (`Bad_key (name, tsig)))
@@ -85,6 +91,10 @@ let verify_raw ?mac now name ~key tsig tbs =
   Cstruct.BE.set_uint16 tbs 10 (pred ac) ;
   let prep = mac_to_prep mac in
   let computed = compute_tsig name tsig ~key:priv (Cstruct.append prep tbs) in
+  Log.debug (fun m -> m "incoming mac %a@.computed is@.%a@.tsig mac@.%a"
+                Fmt.(option ~none:(unit "no") Cstruct.hexdump_pp) mac
+                Cstruct.hexdump_pp computed
+                Cstruct.hexdump_pp tsig.Tsig.mac);
   let mac = tsig.Tsig.mac in
   guard (Cstruct.len mac = Cstruct.len computed) (`Bad_truncation (name, tsig)) >>= fun () ->
   guard (Cstruct.equal computed mac) (`Invalid_mac (name, tsig)) >>= fun () ->
