@@ -55,12 +55,12 @@ module Make (P : Mirage_clock_lwt.PCLOCK) (M : Mirage_clock_lwt.MCLOCK) (TIME : 
         Lwt.return_unit
       else
         on_update ~old:(trie old) t
-    and maybe_notify t ts = function
+    and maybe_notify t now ts = function
       | None -> Lwt.return_unit
       | Some n -> on_notify n t >>= function
         | None -> Lwt.return_unit
         | Some trie ->
-          let state', outs = Udns_server.Primary.with_data t ts trie in
+          let state', outs = Udns_server.Primary.with_data t now ts trie in
           state := state';
           Lwt_list.iter_p send_notify outs
     in
@@ -71,7 +71,7 @@ module Make (P : Mirage_clock_lwt.PCLOCK) (M : Mirage_clock_lwt.MCLOCK) (TIME : 
       let elapsed = M.elapsed_ns () in
       let t, answer, notify, n = Udns_server.Primary.handle_buf !state now elapsed `Udp src src_port buf in
       maybe_update_state t >>= fun () ->
-      maybe_notify t elapsed n >>= fun () ->
+      maybe_notify t now elapsed n >>= fun () ->
       (match answer with
        | None -> Log.warn (fun m -> m "empty answer") ; Lwt.return_unit
        | Some answer -> Dns.send_udp stack port src src_port answer) >>= fun () ->
@@ -92,7 +92,7 @@ module Make (P : Mirage_clock_lwt.PCLOCK) (M : Mirage_clock_lwt.MCLOCK) (TIME : 
           let elapsed = M.elapsed_ns () in
           let t, answer, notify, n = Udns_server.Primary.handle_buf !state now elapsed `Tcp dst_ip dst_port data in
           maybe_update_state t >>= fun () ->
-          maybe_notify t elapsed n >>= fun () ->
+          maybe_notify t now elapsed n >>= fun () ->
           Lwt_list.iter_p send_notify notify >>= fun () ->
           match answer with
           | None -> Log.warn (fun m -> m "empty answer") ; loop ()
@@ -106,7 +106,9 @@ module Make (P : Mirage_clock_lwt.PCLOCK) (M : Mirage_clock_lwt.MCLOCK) (TIME : 
     S.listen_tcpv4 stack ~port tcp_cb ;
     Log.info (fun m -> m "DNS server listening on TCP port %d" port) ;
     let rec time () =
-      let t, notifies = Udns_server.Primary.timer !state (M.elapsed_ns ()) in
+      let now = Ptime.v (P.now_d_ps ()) in
+      let elapsed = M.elapsed_ns () in
+      let t, notifies = Udns_server.Primary.timer !state now elapsed in
       maybe_update_state t >>= fun () ->
       Lwt_list.iter_p send_notify notifies >>= fun () ->
       TIME.sleep_ns (Duration.of_sec timer) >>= fun () ->

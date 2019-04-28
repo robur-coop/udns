@@ -383,17 +383,19 @@ let handle_rr_update trie name = function
         Udns_trie.insert name k add trie
     end
 
-let sign_outgoing ?max_size tsig_sign keyname key signed packet buf =
-  match Tsig.dnskey_to_tsig_algo key with
-  | Error (`Msg msg) ->
-    Log.err (fun m -> m "couldn't convert algorithm: %s" msg) ; None
-  | Ok algorithm ->
-    let original_id = fst packet.Packet.header in
-    match Tsig.tsig ~algorithm ~original_id ~signed () with
-    | None -> Log.err (fun m -> m "creation of tsig failed") ; None
-    | Some tsig -> match tsig_sign ?mac:None ?max_size keyname tsig ~key packet buf with
-      | None -> Log.err (fun m -> m "signing failed") ; None
-      | Some res -> Some res
+let sign_outgoing ~max_size server keyname signed packet buf =
+  match Authentication.find_key server.auth keyname with
+  | None -> Log.err (fun m -> m "key %a not found (or multiple)" Domain_name.pp keyname) ; None
+  | Some key -> match Tsig.dnskey_to_tsig_algo key with
+    | Error (`Msg msg) ->
+      Log.err (fun m -> m "couldn't convert algorithm: %s" msg) ; None
+    | Ok algorithm ->
+      let original_id = fst packet.Packet.header in
+      match Tsig.tsig ~algorithm ~original_id ~signed () with
+      | None -> Log.err (fun m -> m "creation of tsig failed") ; None
+      | Some tsig -> match server.tsig_sign ?mac:None ~max_size keyname tsig ~key packet buf with
+        | None -> Log.err (fun m -> m "signing failed") ; None
+        | Some res -> Some res
 
 module Notification = struct
   (* TODO dnskey authentication of outgoing packets (preserve in connections, name of key should be enough) *)
@@ -478,10 +480,19 @@ module Notification = struct
       | xs -> Domain_name.Map.add name xs new_map)
       conn Domain_name.Map.empty
 
+  let encode_and_sign key_opt server now packet =
+    let buf, max_size = Packet.encode `Tcp packet in
+    match key_opt with
+    | None -> buf, None
+    | Some key ->
+      match sign_outgoing ~max_size server key now packet buf with
+      | None -> buf, None
+      | Some (out, mac) -> out, Some mac
+
   (* outstanding notifications, with timestamp and retry count
      (at most one per zone per ip) *)
   type outstanding =
-    (int64 * int * Packet.t * Domain_name.t option) Domain_name.Map.t IPM.t
+    (int64 * int * Cstruct.t option * Packet.t * Domain_name.t option) Domain_name.Map.t IPM.t
 
   (* operations:
      - timer occured, retransmit outstanding or drop
@@ -490,31 +501,32 @@ module Notification = struct
   *)
   let retransmit = Array.map Duration.of_sec [| 1 ; 3 ; 7 ; 20 ; 40 ; 60 ; 180 |]
 
-  let retransmit ns now =
+  let retransmit server ns now ts =
     let max = pred (Array.length retransmit) in
     IPM.fold (fun ip map (new_ns, out) ->
         let new_map, out =
           Domain_name.Map.fold
-            (fun name (ts, count, packet, key) (new_map, out) ->
-               if Int64.add ts retransmit.(count) < now then
+            (fun name (oldts, count, mac, packet, key) (new_map, outs) ->
+               if Int64.sub ts retransmit.(count) > oldts then
+                 let out, mac = encode_and_sign key server now packet in
                  (if count = max then begin
                      Log.warn (fun m -> m "retransmitting notify to %a the last time %a"
                                  Ipaddr.V4.pp ip Packet.pp packet) ;
                     new_map
                    end else
-                    (Domain_name.Map.add name (ts, succ count, packet, key) new_map)),
-                 (ip, fst (Packet.encode `Udp packet)) :: out
+                    (Domain_name.Map.add name (oldts, succ count, mac, packet, key) new_map)),
+                 (ip, out) :: outs
                else
-                 (Domain_name.Map.add name (ts, count, packet, key) new_map, out))
+                 (Domain_name.Map.add name (oldts, count, mac, packet, key) new_map, outs))
             map (Domain_name.Map.empty, out)
         in
         (if Domain_name.Map.is_empty new_map then new_ns else IPM.add ip new_map new_ns),
         out)
       ns (IPM.empty, [])
 
-  let notify conn ns server now zone soa =
+  let notify conn ns server now ts zone soa =
     let remotes = to_notify conn ~data:server.data ~auth:server.auth zone in
-    Log.debug (fun m -> m "notifying %a %a" Domain_name.pp zone
+    Log.debug (fun m -> m "notifying %a: %a" Domain_name.pp zone
                   Fmt.(list ~sep:(unit ",@ ")
                          (pair ~sep:(unit ", key") Ipaddr.V4.pp
                             (option ~none:(unit "no key") Domain_name.pp)))
@@ -528,8 +540,8 @@ module Notification = struct
       in
       Packet.create header question (`Notify (Some soa))
     in
-    let add_to_ns ns ip key =
-      let data = (now, 0, packet, key) in
+    let add_to_ns ns ip key mac =
+      let data = (ts, 0, mac, packet, key) in
       let map = match IPM.find_opt ip ns with
         | None -> Domain_name.Map.empty
         | Some map -> map
@@ -538,8 +550,9 @@ module Notification = struct
       IPM.add ip map' ns
     in
     IPM.fold (fun ip key (ns, outs) ->
-        let ns = add_to_ns ns ip key in
-        ns, (ip, fst (Packet.encode `Udp packet)) :: outs)
+        let out, mac = encode_and_sign key server now packet in
+        let ns = add_to_ns ns ip key mac in
+        ns, (ip, out) :: outs)
       remotes (ns, [])
 
   let received_reply ns ip reply =
@@ -547,7 +560,7 @@ module Notification = struct
     | None -> ns
     | Some map ->
       let map' = match Domain_name.Map.find (fst reply.Packet.question) map with
-        | Some (_, _, request, _) ->
+        | Some (_, _, _, request, _) ->
           begin match Packet.reply_matches_request ~request reply with
             | Ok r ->
               let map' = Domain_name.Map.remove (fst reply.question) map in
@@ -564,6 +577,14 @@ module Notification = struct
         IPM.remove ip ns
       else
         IPM.add ip map' ns
+
+  let mac ns ip reply =
+    match IPM.find_opt ip ns with
+    | None -> None
+    | Some map ->
+      match Domain_name.Map.find (fst reply.Packet.question) map with
+      | Some (_, _, mac, _, _) -> mac
+      | None -> None
 end
 
 let in_zone zone name = Domain_name.sub ~subdomain:name ~domain:zone
@@ -641,17 +662,17 @@ module Primary = struct
 
   let data (t, _, _) = t.data
 
-  let with_data (t, l, n) now data =
+  let with_data (t, l, n) now ts data =
     (* we're the primary and need to notify our friends! *)
     let n', out =
       Udns_trie.fold Soa data
         (fun name soa (n, outs) ->
            match Udns_trie.lookup name Soa t.data with
            | Error _ ->
-             let n', outs' = Notification.notify l n t now name soa in
+             let n', outs' = Notification.notify l n t now ts name soa in
              (n', outs @ outs')
            | Ok old when Soa.newer ~old soa ->
-             let n', outs' = Notification.notify l n t now name soa in
+             let n', outs' = Notification.notify l n t now ts name soa in
              (n', outs @ outs')
            | Ok _ -> (n, outs))
         (n, [])
@@ -661,7 +682,7 @@ module Primary = struct
           match Udns_trie.lookup name Soa data with
           | Error _ ->
             let soa' = { soa with Soa.serial = Int32.succ soa.Soa.serial } in
-            let n', outs' = Notification.notify l n t now name soa' in
+            let n', outs' = Notification.notify l n t now ts name soa' in
             (n', outs @ outs')
           | Ok _ -> (n, outs))
         (n', [])
@@ -675,7 +696,7 @@ module Primary = struct
       let f name soa ns =
         Log.debug (fun m -> m "soa found for %a" Domain_name.pp name) ;
         (* we drop notifications, the first call to timer will solve this :) *)
-        fst (Notification.notify Domain_name.Map.empty ns t 0L name soa)
+        fst (Notification.notify Domain_name.Map.empty ns t Ptime.epoch 0L name soa)
       in
       Udns_trie.fold Rr_map.Soa data f IPM.empty
     in
@@ -686,7 +707,7 @@ module Primary = struct
     | `Tcp, `K (Rr_map.K Soa) -> Ok name
     | _ -> Error ()
 
-  let handle_packet (t, l, ns) ts proto ip _port p key =
+  let handle_packet (t, l, ns) now ts proto ip _port p key =
     match p.Packet.data with
     | `Query ->
       (* if there was a (transfer-key) signed SOA, and tcp, we add to notification list! *)
@@ -711,7 +732,7 @@ module Primary = struct
       in
       let ns, out = match stuff with
         | None -> ns, []
-        | Some (zone, soa) -> Notification.notify l ns t' ts zone soa
+        | Some (zone, soa) -> Notification.notify l ns t' now ts zone soa
       in
       let answer' = Packet.create (fst p.header, flags) p.question answer in
       (t', l, ns), Some answer', out, None
@@ -752,7 +773,7 @@ module Primary = struct
     | Ok p ->
       let handle_inner keyname =
         let t, answer, out, notify =
-          handle_packet t ts proto ip port p keyname
+          handle_packet t now ts proto ip port p keyname
         in
         let answer = match answer with
           | Some answer ->
@@ -765,8 +786,9 @@ module Primary = struct
         in
         t, answer, out, notify
       in
-      let server, _, _ = t in
-      match handle_tsig server now p buf with
+      let server, _, ns = t in
+      let mac = Notification.mac ns ip p in
+      match handle_tsig ?mac server now p buf with
       | Error (e, data) ->
         Log.err (fun m -> m "error %a while handling tsig" Tsig_op.pp_e e) ;
         t, data, [], None
@@ -796,8 +818,8 @@ module Primary = struct
     let l' = Notification.remove l ip in
     (t, l', ns)
 
-  let timer (t, l, ns) now =
-    let ns', out = Notification.retransmit ns now in
+  let timer (t, l, ns) now ts =
+    let ns', out = Notification.retransmit t ns now ts in
     (t, l, ns'), out
 end
 
@@ -859,11 +881,6 @@ module Secondary = struct
     in
     (create ~tsig_verify ~tsig_sign Udns_trie.empty (keys, a) rng, zones)
 
-  let maybe_sign ?max_size t name signed packet buf =
-    match Authentication.find_key t.auth name with
-    | Some key -> sign_outgoing ?max_size t.tsig_sign name key signed packet buf
-    | _ -> Log.err (fun m -> m "key %a not found (or multiple)" Domain_name.pp name) ; None
-
   let header rng () =
     let id = Randomconv.int ~bound:(1 lsl 16 - 1) rng in
     id, Packet.Flags.empty
@@ -874,7 +891,7 @@ module Secondary = struct
     in
     let p = Packet.create header question `Axfr_request in
     let buf, max_size = Packet.encode proto p in
-    match maybe_sign ~max_size t name now p buf with
+    match sign_outgoing ~max_size t name now p buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_axfr (ts, fst header, mac), buf)
 
@@ -884,7 +901,7 @@ module Secondary = struct
     in
     let p = Packet.create header question `Query in
     let buf, max_size = Packet.encode proto p in
-    match maybe_sign ~max_size t name now p buf with
+    match sign_outgoing ~max_size t name now p buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_soa (ts, fst header, retry, mac), buf)
 
