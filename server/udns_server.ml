@@ -987,11 +987,17 @@ module Secondary = struct
                         Domain_name.pp zone) ;
           (* TODO should we look in zones and if there's a fresh Requested_soa, leave it as is? *)
           let zones, out =
-            match query_soa t `Tcp now ts zone name with
-            | None -> zones, []
-            | Some (st, buf) ->
-              Domain_name.Map.add zone (st, ip, name) zones,
-              [ (`Tcp, ip, buf) ]
+            match Domain_name.Map.find zone zones with
+            | None | Some (Transferred _, _, _) ->
+              begin match query_soa t `Tcp now ts zone name with
+                | None -> zones, []
+                | Some (st, buf) ->
+                  Domain_name.Map.add zone (st, ip, name) zones,
+                  [ (`Tcp, ip, buf) ]
+              end
+            | Some _ ->
+              Log.warn (fun m -> m "already in zones requesting, skipping");
+              zones, []
           in
           Ok (zones, out)
         | Some (_, ip', _) ->
