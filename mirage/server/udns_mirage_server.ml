@@ -120,7 +120,6 @@ module Make (P : Mirage_clock_lwt.PCLOCK) (M : Mirage_clock_lwt.MCLOCK) (TIME : 
     let state = ref t in
     let tcp_out = ref Dns.IM.empty in
     let tcp_packet_transit = ref Dns.IM.empty in
-    let in_flight = ref Dns.IS.empty in
 
     let maybe_update_state t =
       let old = !state in
@@ -175,29 +174,22 @@ module Make (P : Mirage_clock_lwt.PCLOCK) (M : Mirage_clock_lwt.MCLOCK) (TIME : 
       match Dns.IM.find ip !tcp_out with
       | None ->
         begin
-          if Dns.IS.mem ip !in_flight then
+          Log.info (fun m -> m "creating connection to %a:%d" Ipaddr.V4.pp ip dport) ;
+          T.create_connection (S.tcpv4 stack) (ip, dport) >>= function
+          | Error e ->
+            Log.err (fun m -> m "error %a while establishing tcp connection to %a:%d"
+                        T.pp_error e Ipaddr.V4.pp ip dport) ;
+            Lwt.async (fun () ->
+                TIME.sleep_ns (Duration.of_sec 5) >>= fun () ->
+                close ip) ;
             Lwt.return_unit
-          else begin
-            Log.info (fun m -> m "creating connection to %a:%d" Ipaddr.V4.pp ip dport) ;
-            in_flight := Dns.IS.add ip !in_flight ;
-            T.create_connection (S.tcpv4 stack) (ip, dport) >>= function
-            | Error e ->
-              Log.err (fun m -> m "error %a while establishing tcp connection to %a:%d"
-                          T.pp_error e Ipaddr.V4.pp ip dport) ;
-              in_flight := Dns.IS.remove ip !in_flight ;
-              Lwt.async (fun () ->
-                  TIME.sleep_ns (Duration.of_sec 5) >>= fun () ->
-                  close ip) ;
+          | Ok flow ->
+            tcp_out := Dns.IM.add ip flow !tcp_out ;
+            Dns.send_tcp flow data >>= function
+            | Error () -> close ip
+            | Ok () ->
+              Lwt.async (fun () -> read_and_handle ip (Dns.of_flow flow)) ;
               Lwt.return_unit
-            | Ok flow ->
-              Dns.send_tcp flow data >>= function
-              | Error () -> close ip
-              | Ok () ->
-                tcp_out := Dns.IM.add ip flow !tcp_out ;
-                in_flight := Dns.IS.remove ip !in_flight ;
-                Lwt.async (fun () -> read_and_handle ip (Dns.of_flow flow)) ;
-                Lwt.return_unit
-          end
         end
       | Some flow ->
         Dns.send_tcp flow data >>= function
@@ -226,11 +218,12 @@ module Make (P : Mirage_clock_lwt.PCLOCK) (M : Mirage_clock_lwt.MCLOCK) (TIME : 
 
     let tcp_cb flow =
       let dst_ip, dst_port = T.dst flow in
+      tcp_out := Dns.IM.add dst_ip flow !tcp_out ;
       Log.info (fun m -> m "tcp connection from %a:%d" Ipaddr.V4.pp dst_ip dst_port) ;
       let f = Dns.of_flow flow in
       let rec loop () =
         Dns.read_tcp f >>= function
-        | Error () -> Lwt.return_unit
+        | Error () -> tcp_out := Dns.IM.remove dst_ip !tcp_out ; Lwt.return_unit
         | Ok data ->
           let now = Ptime.v (P.now_d_ps ()) in
           let elapsed = M.elapsed_ns () in
@@ -246,7 +239,7 @@ module Make (P : Mirage_clock_lwt.PCLOCK) (M : Mirage_clock_lwt.MCLOCK) (TIME : 
           | Some data ->
             Dns.send_tcp flow data >>= function
             | Ok () -> loop ()
-            | Error () -> Lwt.return_unit
+            | Error () -> tcp_out := Dns.IM.remove dst_ip !tcp_out ; Lwt.return_unit
       in
       loop ()
     in
