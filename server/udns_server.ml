@@ -974,36 +974,106 @@ module Secondary = struct
     in
     t, out
 
-  let handle_notify t zones now ts ip (zone, typ) _notify =
+  let handle_notify t zones now ts ip (zone, typ) notify keyname =
     match typ with
     | `K (Rr_map.K Soa) ->
-      begin match Domain_name.Map.find zone zones with
-        | None -> (* we don't know anything about the notified zone *)
+      let kzone = match keyname with
+        | None -> None
+        | Some key -> match Authentication.find_zone_ips key with
+          | Some (z, _, _) -> Some (key, z)
+          | None -> None
+      in
+      begin match Domain_name.Map.find zone zones, kzone with
+        | None, None ->
+          (* we don't know anything about the notified zone *)
           Log.warn (fun m -> m "ignoring notify for %a, no such zone"
-                       Domain_name.pp zone) ;
+                       Domain_name.pp zone);
           Error Rcode.Refused
-        | Some (_, ip', name) when Ipaddr.V4.compare ip ip' = 0 ->
-          Log.debug (fun m -> m "received notify for %a, replying and requesting SOA"
-                        Domain_name.pp zone) ;
-          (* TODO should we look in zones and if there's a fresh Requested_soa, leave it as is? *)
-          let zones, out =
-            match Domain_name.Map.find zone zones with
-            | None | Some (Transferred _, _, _) ->
+        | None, Some (kname, kzone) ->
+          if Domain_name.(equal root kzone) then
+            (* new zone, let's AXFR directly! *)
+            let r = match axfr t `Tcp now ts zone kname with
+              | None ->
+                Log.warn (fun m -> m "new zone %a, couldn't AXFR" Domain_name.pp zone);
+                zones, []
+              | Some (st, buf) ->
+                Domain_name.Map.add zone (st, ip, kname) zones,
+                [ `Tcp, ip, buf ]
+            in
+            Ok r
+          else begin
+            Log.warn (fun m -> m "ignoring notify for %a, (key %a, kzone %a): no such zone"
+                         Domain_name.pp zone Domain_name.pp kname Domain_name.pp kzone);
+            Error Rcode.Refused
+          end
+        | Some (Transferred _, ip', name), None ->
+          if Ipaddr.V4.compare ip ip' = 0 then begin
+            Log.debug (fun m -> m "received notify for %a, replying and requesting SOA"
+                          Domain_name.pp zone) ;
+            let zones, out =
+              match query_soa t `Tcp now ts zone name with
+              | None -> zones, []
+              | Some (st, buf) ->
+                Domain_name.Map.add zone (st, ip, name) zones,
+                [ `Tcp, ip, buf ]
+            in
+            Ok (zones, out)
+          end else begin
+            Log.warn (fun m -> m "ignoring notify for %a from %a (%a is primary)"
+                         Domain_name.pp zone Ipaddr.V4.pp ip Ipaddr.V4.pp ip');
+            Error Rcode.Refused
+          end
+        | Some _, None ->
+          Log.warn (fun m -> m "received unsigned notify, but %a already in progress"
+                       Domain_name.pp zone);
+          Ok (zones, [])
+        | Some (st, ip', name), Some _ ->
+          if Ipaddr.V4.compare ip ip' = 0 then begin
+            (* we received a signed notify! let's check SOA if present, and act *)
+            match st, notify, Udns_trie.lookup zone Rr_map.Soa t.data with
+            | Transferred _, None, _ ->
               begin match query_soa t `Tcp now ts zone name with
-                | None -> zones, []
+                | None ->
+                  Log.warn (fun m -> m "received signed notify for %a, but couldn't sign soa?" Domain_name.pp zone);
+                  Ok (zones, [])
                 | Some (st, buf) ->
-                  Domain_name.Map.add zone (st, ip, name) zones,
-                  [ (`Tcp, ip, buf) ]
+                  Ok (Domain_name.Map.add zone (st, ip, name) zones,
+                      [ `Tcp, ip, buf ])
               end
-            | Some _ ->
-              Log.warn (fun m -> m "already in zones requesting, skipping");
-              zones, []
-          in
-          Ok (zones, out)
-        | Some (_, ip', _) ->
-          Log.warn (fun m -> m "ignoring notify for %a from %a (%a is primary)"
-                       Domain_name.pp zone Ipaddr.V4.pp ip Ipaddr.V4.pp ip') ;
-          Error Rcode.Refused
+            | _, None, _ ->
+              Log.warn (fun m -> m "received signed notify for %a, but no SOA (already in progress)"
+                           Domain_name.pp zone);
+              Ok (zones, [])
+            | _, Some soa, Error _ ->
+              Log.info (fun m -> m "received signed notify for %a, soa %a couldn't find a local SOA"
+                           Domain_name.pp zone Soa.pp soa);
+              begin match axfr t `Tcp now ts zone name with
+                | None ->
+                  Log.warn (fun m -> m "received signed notify for %a, but couldn't sign axfr" Domain_name.pp zone);
+                  Ok (zones, [])
+                | Some (st, buf) ->
+                  Ok (Domain_name.Map.add zone (st, ip, name) zones,
+                      [ `Tcp, ip, buf ])
+              end
+            | _, Some soa, Ok old ->
+              if Soa.newer ~old soa then
+                match axfr t `Tcp now ts zone name with
+                  | None ->
+                    Log.warn (fun m -> m "received signed notify for %a, but couldn't sign axfr" Domain_name.pp zone);
+                    Ok (zones, [])
+                  | Some (st, buf) ->
+                    Log.info (fun m -> m "received signed notify for %a, axfr" Domain_name.pp zone);
+                    Ok (Domain_name.Map.add zone (st, ip, name) zones,
+                        [ `Tcp, ip, buf ])
+              else begin
+                Log.warn (fun m -> m "received signed notify for %a with SOA %a not newer %a" Domain_name.pp zone Soa.pp soa Soa.pp old);
+                Ok (Domain_name.Map.add zone (Transferred ts, ip, name) zones, [])
+              end
+          end else begin
+            Log.warn (fun m -> m "ignoring notify for %a from %a (%a is primary)"
+                         Domain_name.pp zone Ipaddr.V4.pp ip Ipaddr.V4.pp ip');
+            Error Rcode.Refused
+          end
       end
     | _ ->
       Log.warn (fun m -> m "ignoring notify %a" Packet.Question.pp (zone, typ));
@@ -1164,7 +1234,7 @@ module Secondary = struct
       Log.warn (fun m -> m "ignoring update reply (we'll never send updates out)");
       (t, zones), None, []
     | `Notify n ->
-      let zones, flags, answer, out = match handle_notify t zones now ts ip p.question n with
+      let zones, flags, answer, out = match handle_notify t zones now ts ip p.question n keyname with
         | Ok (zones, out) -> zones, authoritative, `Notify_ack, out
         | Error rcode -> zones, err_flags rcode, `Rcode_error (rcode, Opcode.Notify, None), []
       in
