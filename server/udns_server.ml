@@ -746,7 +746,7 @@ module Primary = struct
     | `Axfr_reply data ->
       Logs.warn (fun m -> m "unsolicited AXFR reply %a, ignoring" Packet.Axfr.pp data);
       (t, l, ns), None, [], None
-    | `Notify_ack ->
+    | `Notify_ack | `Rcode_error (Rcode.NotAuth, Opcode.Notify, _) ->
       let ns' = Notification.received_reply ns ip p in
       (t, l, ns'), None, [], None
     | `Notify soa ->
