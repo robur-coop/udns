@@ -528,8 +528,8 @@ module Notification = struct
     let remotes = to_notify conn ~data:server.data ~auth:server.auth zone in
     Log.debug (fun m -> m "notifying %a: %a" Domain_name.pp zone
                   Fmt.(list ~sep:(unit ",@ ")
-                         (pair ~sep:(unit ", key") Ipaddr.V4.pp
-                            (option ~none:(unit "no key") Domain_name.pp)))
+                         (pair ~sep:(unit ", key ") Ipaddr.V4.pp
+                            (option ~none:(unit "none") Domain_name.pp)))
                   (IPM.bindings remotes));
     let packet =
       let question = Packet.Question.create zone Soa
@@ -787,7 +787,10 @@ module Primary = struct
         t, answer, out, notify
       in
       let server, _, ns = t in
-      let mac = Notification.mac ns ip p in
+      let mac = match p.Packet.data with
+        | `Notify_ack | `Rcode_error _ -> Notification.mac ns ip p
+        | _ -> None
+      in
       match handle_tsig ?mac server now p buf with
       | Error (e, data) ->
         Log.err (fun m -> m "error %a while handling tsig" Tsig_op.pp_e e) ;
