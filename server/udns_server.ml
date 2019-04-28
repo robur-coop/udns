@@ -1172,12 +1172,15 @@ module Secondary = struct
                   Fmt.(option ~none:(unit "no") Packet.Query.pp) data);
       (t, zones), None, []
 
-  let find_mac zones (name, _) =
-    match Domain_name.Map.find name zones with
-    | None -> None
-    | Some (Requested_axfr (_, _, mac), _, _) -> Some mac
-    | Some (Requested_soa (_, _, _, mac), _, _) -> Some mac
-    | _ -> None
+  let find_mac zones p =
+    match p.Packet.data with
+    | #Packet.request -> None
+    | #Packet.reply ->
+      match Domain_name.Map.find (fst p.question) zones with
+      | None -> None
+      | Some (Requested_axfr (_, _, mac), _, _) -> Some mac
+      | Some (Requested_soa (_, _, _, mac), _, _) -> Some mac
+      | _ -> None
 
   let handle_buf t now ts proto ip buf =
     match
@@ -1200,7 +1203,7 @@ module Secondary = struct
         t, answer, out
       in
       let server, zones = t in
-      let mac = find_mac zones p.question in
+      let mac = find_mac zones p in
       match handle_tsig ?mac server now p buf with
       | Error (e, data) ->
         Logs.err (fun m -> m "error %a while handling tsig" Tsig_op.pp_e e) ;
