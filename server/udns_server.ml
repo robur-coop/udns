@@ -383,6 +383,18 @@ let handle_rr_update trie name = function
         Udns_trie.insert name k add trie
     end
 
+let sign_outgoing ?max_size tsig_sign keyname key signed packet buf =
+  match Tsig.dnskey_to_tsig_algo key with
+  | Error (`Msg msg) ->
+    Log.err (fun m -> m "couldn't convert algorithm: %s" msg) ; None
+  | Ok algorithm ->
+    let original_id = fst packet.Packet.header in
+    match Tsig.tsig ~algorithm ~original_id ~signed () with
+    | None -> Log.err (fun m -> m "creation of tsig failed") ; None
+    | Some tsig -> match tsig_sign ?mac:None ?max_size keyname tsig ~key packet buf with
+      | None -> Log.err (fun m -> m "signing failed") ; None
+      | Some res -> Some res
+
 module Notification = struct
   (* TODO dnskey authentication of outgoing packets (preserve in connections, name of key should be enough) *)
 
@@ -847,19 +859,9 @@ module Secondary = struct
     in
     (create ~tsig_verify ~tsig_sign Udns_trie.empty (keys, a) rng, zones)
 
-  let maybe_sign ?max_size t name signed original_id packet buf =
+  let maybe_sign ?max_size t name signed packet buf =
     match Authentication.find_key t.auth name with
-    | Some key ->
-      begin match Tsig.dnskey_to_tsig_algo key with
-        | Ok algorithm ->
-          begin match Tsig.tsig ~algorithm ~original_id ~signed () with
-            | None -> Log.err (fun m -> m "creation of tsig failed") ; None
-            | Some tsig -> match t.tsig_sign ?mac:None ?max_size name tsig ~key packet buf with
-              | None -> Log.err (fun m -> m "signing failed") ; None
-              | Some res -> Some res
-          end
-        | Error (`Msg msg) -> Log.err (fun m -> m "couldn't convert algorithm: %s" msg) ; None
-      end
+    | Some key -> sign_outgoing ?max_size t.tsig_sign name key signed packet buf
     | _ -> Log.err (fun m -> m "key %a not found (or multiple)" Domain_name.pp name) ; None
 
   let header rng () =
@@ -872,7 +874,7 @@ module Secondary = struct
     in
     let p = Packet.create header question `Axfr_request in
     let buf, max_size = Packet.encode proto p in
-    match maybe_sign ~max_size t name now (fst header) p buf with
+    match maybe_sign ~max_size t name now p buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_axfr (ts, fst header, mac), buf)
 
@@ -882,7 +884,7 @@ module Secondary = struct
     in
     let p = Packet.create header question `Query in
     let buf, max_size = Packet.encode proto p in
-    match maybe_sign ~max_size t name now (fst header) p buf with
+    match maybe_sign ~max_size t name now p buf with
     | None -> None
     | Some (buf, mac) -> Some (Requested_soa (ts, fst header, retry, mac), buf)
 
