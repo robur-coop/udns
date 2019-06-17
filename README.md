@@ -2,7 +2,8 @@
 
 [![Build Status](https://travis-ci.org/roburio/udns.svg?branch=master)](https://travis-ci.org/roburio/udns)
 
-(c) 2017,2018 Hannes Mehnert (robur.io, Center for the Cultivation of Technology)
+(c) 2017-2019 Hannes Mehnert (robur.io,
+Center for the Cultivation of Technology)
 
 %%VERSION%%
 
@@ -75,12 +76,17 @@ The µDNS library is published under the 2 clause BSD license.
 You first need to install [OCaml](https://ocaml.org) (at least 4.04.0) and
 [opam](https://opam.ocaml.org), the OCaml package manager (at least 2.0.0) on
 your machine (you can use opam to install an up-to-date OCaml (`opam switch
-4.07.1`)).  You may want to follow the [mirage installation
+4.07.1`)).
+
+You may want to follow the [mirage installation
 instructions](https://mirage.io/wiki/install) to get `mirage` installed on your
 computer.
 
-µDNS is not released yet, but you can install it and its dependencies via opam:
-`opam pin add dns https://github.com/roburio/udns.git`
+To lower the amount of run-time dependencies for each individual functionality,
+the library is split across a number of opam packages.
+
+µDNS is not released yet, but you can install it and its dependencies via opam,
+see [Development](#Development).
 
 Now the µDNS library is installed, and you can try out the examples.  Find some
 examples at the [unikernel repository](https://github.com/roburio/unikernels).
@@ -88,3 +94,50 @@ examples at the [unikernel repository](https://github.com/roburio/unikernels).
 ## Documentation
 
 API documentation [is available online](https://roburio.github.io/udns/doc/).
+
+## Development
+
+To work with the [opam](https://opam.ocaml.org/) packages provided when
+developing modifications to µDNS, or when pinning a specific version,
+you will have to pin the same *version* for all of them:
+
+```csh
+: csh syntax
+set version=2.0.0
+
+set repo=git+https://github.com/roburio/udns.git
+
+# the -y parameter means "force" or
+# "do go ahead and register a new package"
+
+# the -n parameter means
+# "just register the pin, don't actually install it yet"
+
+foreach pkg ( dns dns-{certify,cli,client{,-lwt,-unix}} \
+              dns-mirage{,-certify,-client,-resolver,-server} \
+              dns-{resolver,server,tsig,zone} )
+  opam pin add -y -n $pkg.$version --dev $repo
+end
+```
+
+```bash
+: bash syntax
+version=2.0.0
+repo=git+https://github.com/roburio/udns.git
+
+for pkg in dns dns-{certify,cli,client{,-lwt,-unix}} \
+           dns-mirage{,-certify,-client,-resolver,-server} \
+           dns-{resolver,server,tsig,zone}
+do
+  opam pin add -y -n $pkg.$version --dev $repo
+done
+```
+
+Now you can install the packages you need, for instance:
+```shell
+opam install dns-client-lwt
+```
+or
+```shell
+opam install dns-resolver
+```
