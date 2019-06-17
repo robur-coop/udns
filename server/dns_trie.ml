@@ -20,7 +20,7 @@ let bindings t =
     (pre, e) ::
     List.fold_left
       (fun acc (pre', va) ->
-         acc @ go (Domain_name.prepend_exn ~hostname:false pre pre') va) [] subs
+         acc @ go (Domain_name.prepend_label_exn pre pre') va) [] subs
   in
   go Domain_name.root t
 
@@ -33,15 +33,15 @@ let pp ppf t = List.iter (fun (name, map) -> pp_map name ppf map) (bindings t)
 let rec equal (N (sub, map)) (N (sub', map')) =
   Rr_map.equal { f = Rr_map.equal_rr } map map' && M.equal equal sub sub'
 
-type e = [ `Delegation of Domain_name.t * (int32 * Domain_name.Set.t)
-         | `EmptyNonTerminal of Domain_name.t * Soa.t
+type e = [ `Delegation of [ `domain ] Domain_name.t * (int32 * Domain_name.Host_set.t)
+         | `EmptyNonTerminal of [ `domain ] Domain_name.t * Soa.t
          | `NotAuthoritative
-         | `NotFound of Domain_name.t * Soa.t ]
+         | `NotFound of [ `domain ] Domain_name.t * Soa.t ]
 
 let pp_e ppf = function
   | `Delegation (name, (ttl, ns)) ->
     Fmt.pf ppf "delegation %a to TTL %lu %a" Domain_name.pp name ttl
-      Fmt.(list ~sep:(unit ",@,") Domain_name.pp) (Domain_name.Set.elements ns)
+      Fmt.(list ~sep:(unit ",@,") Domain_name.pp) (Domain_name.Host_set.elements ns)
   | `EmptyNonTerminal (name, soa) ->
     Fmt.pf ppf "empty non terminal %a SOA %a" Domain_name.pp name Soa.pp soa
   | `NotAuthoritative -> Fmt.string ppf "not authoritative"
@@ -59,7 +59,7 @@ let ent name map =
 let to_ns name map =
   let ttl, ns =
     match Rr_map.find Ns map with
-    | None -> 0l, Domain_name.Set.empty
+    | None -> 0l, Domain_name.Host_set.empty
     | Some (ttl, ns) -> ttl, ns
   in
   (name, ttl, ns)
@@ -158,7 +158,7 @@ let fold key (N (sub, map)) f s =
   in
   let rec collect name sub acc =
     List.fold_left (fun acc (pre, N (sub, map)) ->
-        let n' = Domain_name.prepend_exn ~hostname:false name pre in
+        let n' = Domain_name.prepend_label_exn name pre in
         let keys = get n' map acc in
         collect n' sub keys)
       acc (M.bindings sub)
@@ -180,7 +180,7 @@ let collect_rrs name sub map =
     let entries = collect_map name map in
     List.fold_left
       (fun acc (pre, N (sub, map)) ->
-         acc @ go (Domain_name.prepend_exn ~hostname:false name pre) sub map)
+         acc @ go (Domain_name.prepend_label_exn name pre) sub map)
       entries (M.bindings sub)
   in
   go name sub map
@@ -190,7 +190,7 @@ let collect_entries name sub map =
     match Rr_map.find Soa map with
     | Some v -> Some v
     | None when Domain_name.(equal root name) ->
-      Some { Soa.nameserver = Domain_name.root ;
+      Some { Soa.nameserver = Domain_name.(host_exn root) ;
              hostmaster = Domain_name.root ;
              serial = 0l ; refresh = 0l ; retry = 0l ;
              expiry = 0l ; minimum = 0l }
@@ -207,6 +207,7 @@ let collect_entries name sub map =
     Ok (soa, map)
 
 let entries name t =
+  let name = Domain_name.domain name in
   lookup_aux name t >>= fun (zone, sub, map) ->
   match zone with
   | None -> Error `NotAuthoritative
@@ -216,12 +217,12 @@ let entries name t =
     collect_entries name sub map
   | Some (`Soa (_, _)) -> Error `NotAuthoritative
 
-type zone_check = [ `Missing_soa of Domain_name.t
-                  | `Cname_other of Domain_name.t
-                  | `Bad_ttl of Domain_name.t * Rr_map.b
-                  | `Empty of Domain_name.t * Rr_map.k
-                  | `Missing_address of Domain_name.t
-                  | `Soa_not_ns of Domain_name.t ]
+type zone_check = [ `Missing_soa of [ `domain ] Domain_name.t
+                  | `Cname_other of [ `domain ] Domain_name.t
+                  | `Bad_ttl of [ `domain ] Domain_name.t * Rr_map.b
+                  | `Empty of [ `domain ] Domain_name.t * Rr_map.k
+                  | `Missing_address of [ `host ] Domain_name.t
+                  | `Soa_not_ns of [ `host ] Domain_name.t ]
 
 let pp_zone_check ppf = function
   | `Missing_soa name -> Fmt.pf ppf "missing soa for %a" Domain_name.pp name
@@ -242,7 +243,7 @@ let check trie =
       | _ -> false
   in
   let rec check_sub names state sub map =
-    let name = Domain_name.of_strings_exn ~hostname:false names in
+    let name = Domain_name.of_strings_exn names in
     let state' =
       match Rr_map.find Soa map with
       | None -> begin match Rr_map.find Ns map with
@@ -263,11 +264,11 @@ let check trie =
           else Ok ()
         | B (Ns, (ttl, names)) ->
           if ttl < 0l then Error (`Bad_ttl (name, v))
-          else if Domain_name.Set.cardinal names = 0 then
+          else if Domain_name.Host_set.cardinal names = 0 then
             Error (`Empty (name, K Ns))
           else
             let domain = match state' with `None -> name | `Soa zone -> zone in
-            Domain_name.Set.fold (fun name r ->
+            Domain_name.Host_set.fold (fun name r ->
                 r >>= fun () ->
                 if Domain_name.sub ~subdomain:name ~domain then
                   guard (has_address name) (`Missing_address name)
@@ -290,11 +291,11 @@ let check trie =
                   Ok ())
               mxs (Ok ())
         | B (Ptr, (ttl, name)) ->
-          if ttl < 0l then Error (`Bad_ttl (name, v)) else Ok ()
+          if ttl < 0l then Error (`Bad_ttl (Domain_name.domain name, v)) else Ok ()
         | B (Soa, soa) ->
           begin match Rr_map.find Ns map with
             | Some (_, names) ->
-              if Domain_name.Set.mem soa.nameserver names then
+              if Domain_name.Host_set.mem soa.nameserver names then
                 Ok ()
               else
                 Error (`Soa_not_ns soa.nameserver)

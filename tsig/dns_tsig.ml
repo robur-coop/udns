@@ -152,14 +152,20 @@ let encode_and_sign ?(proto = `Udp) p now key keyname =
       | None -> Error `Sign
       | Some r -> Ok r
 
-type e = [ `Decode of Packet.err | `Unsigned of Packet.t | `Crypto of Tsig_op.e | `Invalid_key of Domain_name.t * Domain_name.t ]
+type e = [
+  | `Decode of Packet.err
+  | `Unsigned of Packet.t
+  | `Crypto of Tsig_op.e
+  | `Invalid_key of [ `domain ] Domain_name.t * [ `domain ] Domain_name.t
+]
 
 let pp_e ppf = function
   | `Decode err -> Fmt.pf ppf "decode %a" Packet.pp_err err
   | `Unsigned res -> Fmt.pf ppf "unsigned %a" Packet.pp res
   | `Crypto c -> Fmt.pf ppf "crypto %a" Tsig_op.pp_e c
-  | `Invalid_key (key, used) -> Fmt.pf ppf "invalid key, expected %a, but %a was used"
-                                  Domain_name.pp key Domain_name.pp used
+  | `Invalid_key (key, used) ->
+    Fmt.pf ppf "invalid key, expected %a, but %a was used"
+      Domain_name.pp key Domain_name.pp used
 
 let decode_and_verify now key keyname ?mac buf =
   match Packet.decode buf with

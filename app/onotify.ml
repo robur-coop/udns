@@ -5,7 +5,7 @@ open Dns
 let notify zone serial key now =
   let question = Packet.Question.create zone Soa
   and soa =
-    { Soa.nameserver = zone ; hostmaster = zone ; serial ;
+    { Soa.nameserver = zone ; hostmaster = Domain_name.domain zone ; serial ;
       refresh = 0l; retry = 0l ; expiry = 0l ; minimum = 0l }
   and header = Random.int 0xFFFF, Packet.Flags.singleton `Authoritative
   in
@@ -19,6 +19,7 @@ let notify zone serial key now =
     | Error e -> Error e
 
 let jump _ serverip port zone key serial =
+  let zone = Domain_name.host_exn zone in
   Random.self_init () ;
   let now = Ptime_clock.now () in
   Logs.app (fun m -> m "notifying to %a:%d zone %a serial %lu"
